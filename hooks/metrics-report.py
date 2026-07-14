@@ -350,6 +350,8 @@ def render_trend_chart(records, window_colors):
         + (r.get("cache_creation_tokens", 0) or 0)
         for r in ordered
     ]
+    # Spans both lists so "por tipo de token" (4-field stack) can never exceed
+    # "por aba" (2-field bar) height and overflow the plot with negative y.
     max_total = max(totals + token_totals) or 1
 
     width = 420
@@ -542,6 +544,7 @@ def render_html(records, subagents_by_session):
       .session-row .tokens-total { color: var(--text-secondary); width: 55px; flex-shrink: 0; text-align: right; }
       .session-row .tmux-window { width: 90px; flex-shrink: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
       .comp-legend { display: flex; gap: 14px; padding: 8px 10px; font-size: 11px; color: var(--text-secondary); border-bottom: 1px solid var(--border); font-family: monospace; }
+      .legend-chip { display: inline-flex; align-items: center; }
       .legend-swatch { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 4px; }
       .legend-swatch.series-1 { background: var(--series-1); }
       .legend-swatch.series-2 { background: var(--series-2); }
