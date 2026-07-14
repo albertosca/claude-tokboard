@@ -350,9 +350,15 @@ def render_trend_chart(records, window_colors):
         + (r.get("cache_creation_tokens", 0) or 0)
         for r in ordered
     ]
-    # Spans both lists so "por tipo de token" (4-field stack) can never exceed
-    # "por aba" (2-field bar) height and overflow the plot with negative y.
-    max_total = max(totals + token_totals) or 1
+    # Each mode gets its OWN scale/axis. Cache tokens routinely dwarf
+    # input+output by 100x+, so a shared max_total made "por aba" bars
+    # (which only plot input+output) collapse to near-zero height whenever
+    # cache dominated the file-wide max — this was a real regression, not a
+    # hypothetical: real dashboards showed an apparently-empty "por aba"
+    # chart. Decoupling the scales means neither mode can ever overflow the
+    # other's plot area, and each mode's bars actually fill its own chart.
+    max_pane = max(totals) or 1
+    max_tokens = max(token_totals) or 1
 
     width = 420
     height = 150
@@ -366,17 +372,19 @@ def render_trend_chart(records, window_colors):
     step = plot_width / n
     bar_width = step * 0.6
 
-    def y_for(value):
-        return padding_top + plot_height - (value / max_total) * plot_height
+    def y_for(value, max_value):
+        return padding_top + plot_height - (value / max_value) * plot_height
 
-    y_axis = []
-    for frac in (0, 0.25, 0.5, 0.75, 1.0):
-        value = max_total * frac
-        y = y_for(value)
-        y_axis.append(
-            f'<line x1="{padding_left}" y1="{y:.1f}" x2="{width - padding_right}" y2="{y:.1f}" class="chart-gridline" />'
-            f'<text x="4" y="{y + 3:.1f}" class="chart-axis-label">{format_tokens(value)}</text>'
-        )
+    def build_y_axis(max_value):
+        parts = []
+        for frac in (0, 0.25, 0.5, 0.75, 1.0):
+            value = max_value * frac
+            y = y_for(value, max_value)
+            parts.append(
+                f'<line x1="{padding_left}" y1="{y:.1f}" x2="{width - padding_right}" y2="{y:.1f}" class="chart-gridline" />'
+                f'<text x="4" y="{y + 3:.1f}" class="chart-axis-label">{format_tokens(value)}</text>'
+            )
+        return "".join(parts)
 
     x_axis = []
     tick_count = min(5, n)
@@ -387,7 +395,6 @@ def render_trend_chart(records, window_colors):
         x_axis.append(
             f'<text x="{x:.1f}" y="{height - 4}" class="chart-axis-label" text-anchor="middle">{tick_date}</text>'
         )
-    y_axis_html = "".join(y_axis)
     x_axis_html = "".join(x_axis)
 
     def bars_for_pane():
@@ -399,7 +406,7 @@ def render_trend_chart(records, window_colors):
             label = format_tokens(total)
             window = record.get("tmux_window")
             window_class = window_colors.get(window, "window-color-none")
-            y = y_for(total)
+            y = y_for(total, max_pane)
             bar_height = padding_top + plot_height - y
             bars.append(
                 f'<rect x="{x:.1f}" y="{y:.1f}" width="{bar_width:.1f}" height="{bar_height:.1f}" '
@@ -425,7 +432,7 @@ def render_trend_chart(records, window_colors):
             for css_class, value in segments:
                 if value <= 0:
                     continue
-                seg_height = (value / max_total) * plot_height if max_total else 0
+                seg_height = (value / max_tokens) * plot_height if max_tokens else 0
                 y_cursor -= seg_height
                 bars.append(
                     f'<rect x="{x:.1f}" y="{y_cursor:.1f}" width="{bar_width:.1f}" height="{seg_height:.1f}" '
@@ -436,11 +443,11 @@ def render_trend_chart(records, window_colors):
 
     pane_svg = (
         f'<svg viewBox="0 0 {width} {height}" class="trend-svg" id="chart-pane" preserveAspectRatio="xMidYMid meet">'
-        f"{y_axis_html}{x_axis_html}{bars_for_pane()}</svg>"
+        f"{build_y_axis(max_pane)}{x_axis_html}{bars_for_pane()}</svg>"
     )
     tokens_svg = (
         f'<svg viewBox="0 0 {width} {height}" class="trend-svg" id="chart-tokens" style="display:none" preserveAspectRatio="xMidYMid meet">'
-        f"{y_axis_html}{x_axis_html}{bars_for_tokens()}</svg>"
+        f"{build_y_axis(max_tokens)}{x_axis_html}{bars_for_tokens()}</svg>"
     )
 
     return (
