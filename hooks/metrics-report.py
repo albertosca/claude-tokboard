@@ -52,7 +52,7 @@ def assign_window_colors(records):
     return assignment
 
 
-def group_records_by_window(records):
+def build_window_groups(records, window_colors):
     ordered_desc = list(reversed(records))
     groups = {}
     window_order = []
@@ -62,10 +62,16 @@ def group_records_by_window(records):
             groups[window] = []
             window_order.append(window)
         groups[window].append(record)
-    grouped = []
+    result = []
     for window in window_order:
-        grouped.extend(groups[window])
-    return grouped
+        result.append(
+            {
+                "window": window,
+                "class": window_colors.get(window, "window-color-none"),
+                "records": groups[window],
+            }
+        )
+    return result
 
 
 def format_tokens(n):
@@ -284,7 +290,7 @@ def render_composition_bar(record):
     return f'<div class="comp-bar">{"".join(parts)}</div>'
 
 
-def render_session_row(record, is_active, window_colors):
+def render_session_row(record, is_active, window_colors, group_index):
     session_id = record.get("session_id") or ""
     tag = html.escape(record.get("tag") or "-")
     branch = html.escape(record.get("git_branch") or "-")
@@ -299,6 +305,7 @@ def render_session_row(record, is_active, window_colors):
     window_class = window_colors.get(tmux_window_raw, "window-color-none")
     return (
         f'<div class="session-row {window_class}{active_class}" id="row-{session_id}" '
+        f'data-group="{group_index}" '
         f"onclick=\"showSession('{session_id}')\">"
         f'<span class="sid">{session_id[:12]}</span>'
         f'<span class="date-col">{date_str}</span>'
@@ -309,6 +316,18 @@ def render_session_row(record, is_active, window_colors):
         f'<span class="tokens-total">{total_tokens}</span>'
         f"{render_composition_bar(record)}"
         f"</div>"
+    )
+
+
+def render_group_header(group_index, group):
+    window_label = html.escape(group["window"] or "sem aba")
+    count = len(group["records"])
+    return (
+        f'<div class="group-header {group["class"]}" id="group-{group_index}" '
+        f"onclick=\"toggleGroup({group_index})\">"
+        '<span class="group-icon">▾</span>'
+        f"<span>{window_label} ({count} sessões)</span>"
+        "</div>"
     )
 
 
@@ -479,16 +498,20 @@ def render_trend_chart(records, window_colors):
 
 def render_html(records, subagents_by_session):
     window_colors = assign_window_colors(records)
-    ordered = group_records_by_window(records)
+    groups = build_window_groups(records, window_colors)
     rows_html = []
     panels_html = []
-    for i, record in enumerate(ordered):
-        session_id = record.get("session_id") or ""
-        is_active = i == 0
-        rows_html.append(render_session_row(record, is_active, window_colors))
-        panels_html.append(
-            render_detail_panel(session_id, subagents_by_session.get(session_id, []), is_active)
-        )
+    row_index = 0
+    for group_index, group in enumerate(groups):
+        rows_html.append(render_group_header(group_index, group))
+        for record in group["records"]:
+            session_id = record.get("session_id") or ""
+            is_active = row_index == 0
+            rows_html.append(render_session_row(record, is_active, window_colors, group_index))
+            panels_html.append(
+                render_detail_panel(session_id, subagents_by_session.get(session_id, []), is_active)
+            )
+            row_index += 1
 
     trend_html = render_trend_chart(records, window_colors)
 
@@ -596,6 +619,17 @@ def render_html(records, subagents_by_session):
       .session-row.window-color-7 { background: var(--window-7-tint); border-left: 3px solid var(--window-7); }
       .session-row.window-color-8 { background: var(--window-8-tint); border-left: 3px solid var(--window-8); }
       .session-row.window-color-none { border-left: 3px solid var(--window-none); }
+      .group-header { display: flex; align-items: center; gap: 6px; padding: 6px 10px; font-size: 11px; font-weight: bold; cursor: pointer; border-bottom: 1px solid var(--border); background: var(--surface-1); }
+      .group-header.window-color-1 { border-left: 3px solid var(--window-1); }
+      .group-header.window-color-2 { border-left: 3px solid var(--window-2); }
+      .group-header.window-color-3 { border-left: 3px solid var(--window-3); }
+      .group-header.window-color-4 { border-left: 3px solid var(--window-4); }
+      .group-header.window-color-5 { border-left: 3px solid var(--window-5); }
+      .group-header.window-color-6 { border-left: 3px solid var(--window-6); }
+      .group-header.window-color-7 { border-left: 3px solid var(--window-7); }
+      .group-header.window-color-8 { border-left: 3px solid var(--window-8); }
+      .group-header.window-color-none { border-left: 3px solid var(--window-none); }
+      .group-icon { width: 10px; display: inline-block; }
       .detail-container { flex: 1; }
       .detail-panel { padding: 16px; font-family: monospace; }
       .subagent-row { display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; padding: 4px 0; border-bottom: 1px solid var(--border); }
@@ -605,12 +639,27 @@ def render_html(records, subagents_by_session):
     script = """
     <script>
     function showSession(id) {
+      var row = document.getElementById('row-' + id);
+      if (row) {
+        var groupId = row.getAttribute('data-group');
+        var header = document.getElementById('group-' + groupId);
+        if (header && header.classList.contains('collapsed')) { toggleGroup(parseInt(groupId, 10)); }
+      }
       document.querySelectorAll('.detail-panel').forEach(function(el) { el.style.display = 'none'; });
       document.querySelectorAll('.session-row').forEach(function(el) { el.classList.remove('active'); });
       var panel = document.getElementById('detail-' + id);
       if (panel) { panel.style.display = 'block'; }
-      var row = document.getElementById('row-' + id);
       if (row) { row.classList.add('active'); }
+    }
+    function toggleGroup(id) {
+      var header = document.getElementById('group-' + id);
+      if (!header) { return; }
+      var collapsed = header.classList.contains('collapsed');
+      var rows = document.querySelectorAll('.session-row[data-group="' + id + '"]');
+      rows.forEach(function(el) { el.style.display = collapsed ? 'flex' : 'none'; });
+      header.classList.toggle('collapsed');
+      var icon = header.querySelector('.group-icon');
+      if (icon) { icon.textContent = collapsed ? '▾' : '▸'; }
     }
     function showChartMode(mode) {
       var pane = document.getElementById('chart-pane');
