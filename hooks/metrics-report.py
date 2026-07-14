@@ -36,6 +36,22 @@ def filter_records(records, tag=None, project=None):
     return filtered
 
 
+def assign_window_colors(records):
+    assignment = {}
+    next_slot = 0
+    for record in records:
+        window = record.get("tmux_window")
+        if window in assignment:
+            continue
+        if window is None:
+            assignment[window] = "window-color-none"
+        else:
+            slot = (next_slot % 8) + 1
+            assignment[window] = f"window-color-{slot}"
+            next_slot += 1
+    return assignment
+
+
 def format_tokens(n):
     if n is None:
         return "-"
@@ -360,6 +376,15 @@ def render_html(records, subagents_by_session):
         --series-2: #1baf7a;
         --series-3: #eda100;
         --series-4: #008300;
+        --window-1: #2a78d6; --window-1-tint: rgba(42,120,214,0.08);
+        --window-2: #1baf7a; --window-2-tint: rgba(27,175,122,0.08);
+        --window-3: #eda100; --window-3-tint: rgba(237,161,0,0.08);
+        --window-4: #008300; --window-4-tint: rgba(0,131,0,0.08);
+        --window-5: #4a3aa7; --window-5-tint: rgba(74,58,167,0.08);
+        --window-6: #e34948; --window-6-tint: rgba(227,73,72,0.08);
+        --window-7: #e87ba4; --window-7-tint: rgba(232,123,164,0.08);
+        --window-8: #eb6834; --window-8-tint: rgba(235,104,52,0.08);
+        --window-none: #898781; --window-none-tint: transparent;
       }
       @media (prefers-color-scheme: dark) {
         :root {
@@ -372,6 +397,15 @@ def render_html(records, subagents_by_session):
           --series-2: #199e70;
           --series-3: #c98500;
           --series-4: #008300;
+          --window-1: #3987e5; --window-1-tint: rgba(57,135,229,0.12);
+          --window-2: #199e70; --window-2-tint: rgba(25,158,112,0.12);
+          --window-3: #c98500; --window-3-tint: rgba(201,133,0,0.12);
+          --window-4: #008300; --window-4-tint: rgba(0,131,0,0.12);
+          --window-5: #9085e9; --window-5-tint: rgba(144,133,233,0.12);
+          --window-6: #e66767; --window-6-tint: rgba(230,103,103,0.12);
+          --window-7: #d55181; --window-7-tint: rgba(213,81,129,0.12);
+          --window-8: #d95926; --window-8-tint: rgba(217,89,38,0.12);
+          --window-none: #898781; --window-none-tint: transparent;
         }
       }
       .trend-container { padding: 12px 16px; border-bottom: 1px solid var(--border); }
@@ -392,6 +426,15 @@ def render_html(records, subagents_by_session):
       .comp-seg.series-2 { background: var(--series-2); }
       .comp-seg.series-3 { background: var(--series-3); }
       .comp-seg.series-4 { background: var(--series-4); }
+      .session-row.window-color-1 { background: var(--window-1-tint); border-left: 3px solid var(--window-1); }
+      .session-row.window-color-2 { background: var(--window-2-tint); border-left: 3px solid var(--window-2); }
+      .session-row.window-color-3 { background: var(--window-3-tint); border-left: 3px solid var(--window-3); }
+      .session-row.window-color-4 { background: var(--window-4-tint); border-left: 3px solid var(--window-4); }
+      .session-row.window-color-5 { background: var(--window-5-tint); border-left: 3px solid var(--window-5); }
+      .session-row.window-color-6 { background: var(--window-6-tint); border-left: 3px solid var(--window-6); }
+      .session-row.window-color-7 { background: var(--window-7-tint); border-left: 3px solid var(--window-7); }
+      .session-row.window-color-8 { background: var(--window-8-tint); border-left: 3px solid var(--window-8); }
+      .session-row.window-color-none { border-left: 3px solid var(--window-none); }
       .detail-container { flex: 1; }
       .detail-panel { padding: 16px; font-family: monospace; }
       .subagent-row { display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; padding: 4px 0; border-bottom: 1px solid var(--border); }
