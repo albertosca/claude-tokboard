@@ -52,6 +52,22 @@ def assign_window_colors(records):
     return assignment
 
 
+def group_records_by_window(records):
+    ordered_desc = list(reversed(records))
+    groups = {}
+    window_order = []
+    for record in ordered_desc:
+        window = record.get("tmux_window")
+        if window not in groups:
+            groups[window] = []
+            window_order.append(window)
+        groups[window].append(record)
+    grouped = []
+    for window in window_order:
+        grouped.extend(groups[window])
+    return grouped
+
+
 def format_tokens(n):
     if n is None:
         return "-"
@@ -238,6 +254,17 @@ def format_summary(records):
     )
 
 
+def render_composition_legend():
+    return (
+        '<div class="comp-legend">'
+        '<span class="legend-chip"><span class="legend-swatch series-1"></span>input</span>'
+        '<span class="legend-chip"><span class="legend-swatch series-2"></span>output</span>'
+        '<span class="legend-chip"><span class="legend-swatch series-3"></span>cache read</span>'
+        '<span class="legend-chip"><span class="legend-swatch series-4"></span>cache creation</span>'
+        "</div>"
+    )
+
+
 def render_composition_bar(record):
     segments = [
         ("series-1", record.get("input_tokens", 0) or 0),
@@ -257,25 +284,27 @@ def render_composition_bar(record):
     return f'<div class="comp-bar">{"".join(parts)}</div>'
 
 
-def render_session_row(record, is_active):
+def render_session_row(record, is_active, window_colors):
     session_id = record.get("session_id") or ""
     tag = html.escape(record.get("tag") or "-")
     branch = html.escape(record.get("git_branch") or "-")
-    tmux_window = html.escape(record.get("tmux_window") or "-")
+    tmux_window_raw = record.get("tmux_window")
+    tmux_window = html.escape(tmux_window_raw or "-")
     task_label = html.escape(record.get("task_label") or "-")
     date_str = format_date(record.get("timestamp_start"))
     duration = record.get("duration_seconds")
     duration_str = f"{duration:.0f}s" if duration is not None else "-"
     total_tokens = format_tokens((record.get("input_tokens", 0) or 0) + (record.get("output_tokens", 0) or 0))
     active_class = " active" if is_active else ""
+    window_class = window_colors.get(tmux_window_raw, "window-color-none")
     return (
-        f'<div class="session-row{active_class}" id="row-{session_id}" '
+        f'<div class="session-row {window_class}{active_class}" id="row-{session_id}" '
         f"onclick=\"showSession('{session_id}')\">"
         f'<span class="sid">{session_id[:12]}</span>'
         f"<span>{date_str}</span>"
+        f'<span class="tmux-window">{tmux_window}</span>'
         f"<span>{task_label}</span>"
         f"<span>{tag}</span><span>{branch}</span>"
-        f"<span>{tmux_window}</span>"
         f"<span>{duration_str}</span>"
         f'<span class="tokens-total">{total_tokens}</span>'
         f"{render_composition_bar(record)}"
@@ -351,13 +380,14 @@ def render_trend_line(records):
 
 
 def render_html(records, subagents_by_session):
-    ordered = list(reversed(records))
+    window_colors = assign_window_colors(records)
+    ordered = group_records_by_window(records)
     rows_html = []
     panels_html = []
     for i, record in enumerate(ordered):
         session_id = record.get("session_id") or ""
         is_active = i == 0
-        rows_html.append(render_session_row(record, is_active))
+        rows_html.append(render_session_row(record, is_active, window_colors))
         panels_html.append(
             render_detail_panel(session_id, subagents_by_session.get(session_id, []), is_active)
         )
@@ -420,6 +450,13 @@ def render_html(records, subagents_by_session):
       .session-row.active { background: rgba(42, 120, 214, 0.16); font-weight: bold; }
       .session-row .sid { color: var(--text-muted); width: 90px; flex-shrink: 0; }
       .session-row .tokens-total { color: var(--text-secondary); width: 55px; flex-shrink: 0; text-align: right; }
+      .session-row .tmux-window { width: 90px; flex-shrink: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .comp-legend { display: flex; gap: 14px; padding: 8px 10px; font-size: 11px; color: var(--text-secondary); border-bottom: 1px solid var(--border); font-family: monospace; }
+      .legend-swatch { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 4px; }
+      .legend-swatch.series-1 { background: var(--series-1); }
+      .legend-swatch.series-2 { background: var(--series-2); }
+      .legend-swatch.series-3 { background: var(--series-3); }
+      .legend-swatch.series-4 { background: var(--series-4); }
       .comp-bar { display: flex; gap: 2px; width: 90px; height: 10px; flex-shrink: 0; background: var(--border); }
       .comp-bar-empty { background: var(--border); }
       .comp-seg.series-1 { background: var(--series-1); }
@@ -459,7 +496,7 @@ def render_html(records, subagents_by_session):
         "<body>"
         f"{trend_html}"
         '<div class="main-row">'
-        f'<div class="session-list">{"".join(rows_html)}</div>'
+        f'<div class="session-list">{render_composition_legend()}{"".join(rows_html)}</div>'
         f'<div class="detail-container">{"".join(panels_html)}</div>'
         "</div>"
         f"{script}"
