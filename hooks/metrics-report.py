@@ -343,7 +343,14 @@ def render_trend_chart(records, window_colors):
         return ""
 
     totals = [(r.get("input_tokens", 0) or 0) + (r.get("output_tokens", 0) or 0) for r in ordered]
-    max_total = max(totals) or 1
+    token_totals = [
+        (r.get("input_tokens", 0) or 0)
+        + (r.get("output_tokens", 0) or 0)
+        + (r.get("cache_read_tokens", 0) or 0)
+        + (r.get("cache_creation_tokens", 0) or 0)
+        for r in ordered
+    ]
+    max_total = max(totals + token_totals) or 1
 
     width = 420
     height = 150
