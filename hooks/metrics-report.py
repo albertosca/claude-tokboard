@@ -301,14 +301,30 @@ def render_session_row(record, is_active, window_colors):
         f'<div class="session-row {window_class}{active_class}" id="row-{session_id}" '
         f"onclick=\"showSession('{session_id}')\">"
         f'<span class="sid">{session_id[:12]}</span>'
-        f"<span>{date_str}</span>"
+        f'<span class="date-col">{date_str}</span>'
         f'<span class="tmux-window">{tmux_window}</span>'
-        f"<span>{task_label}</span>"
-        f"<span>{tag}</span><span>{branch}</span>"
-        f"<span>{duration_str}</span>"
+        f'<span class="label-col">{task_label}</span>'
+        f'<span class="tag-col">{tag}</span><span class="branch-col">{branch}</span>'
+        f'<span class="duration-col">{duration_str}</span>'
         f'<span class="tokens-total">{total_tokens}</span>'
         f"{render_composition_bar(record)}"
         f"</div>"
+    )
+
+
+def render_session_header():
+    return (
+        '<div class="session-row session-header">'
+        '<span class="sid">id</span>'
+        '<span class="date-col">data</span>'
+        '<span class="tmux-window">aba</span>'
+        '<span class="label-col">tarefa</span>'
+        '<span class="tag-col">tag</span>'
+        '<span class="branch-col">branch</span>'
+        '<span class="duration-col">duração</span>'
+        '<span class="tokens-total">tokens</span>'
+        '<span class="comp-header">composição</span>'
+        "</div>"
     )
 
 
@@ -543,13 +559,21 @@ def render_html(records, subagents_by_session):
       .chart-bar.series-4 { fill: var(--series-4); }
       body { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; margin: 0; background: var(--surface-1); color: var(--text-primary); }
       .main-row { display: flex; }
-      .session-list { width: 46%; border-right: 1px solid var(--border); max-height: calc(100vh - 20px); overflow-y: auto; font-family: monospace; }
+      .session-list { width: 46%; border-right: 1px solid var(--border); max-height: calc(100vh - 20px); overflow-y: auto; overflow-x: auto; font-family: monospace; }
       .session-row { display: flex; align-items: center; gap: 8px; padding: 6px 10px; cursor: pointer; border-bottom: 1px solid var(--border); font-size: 12px; }
       .session-row:hover { background: rgba(42, 120, 214, 0.08); }
       .session-row.active { background: rgba(42, 120, 214, 0.16); font-weight: bold; }
       .session-row .sid { color: var(--text-muted); width: 90px; flex-shrink: 0; }
       .session-row .tokens-total { color: var(--text-secondary); width: 55px; flex-shrink: 0; text-align: right; }
       .session-row .tmux-window { width: 90px; flex-shrink: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .session-header { position: sticky; top: 0; z-index: 1; background: var(--surface-1); font-weight: bold; color: var(--text-muted); font-size: 10px; cursor: default; border-bottom: 2px solid var(--border); }
+      .session-header:hover { background: var(--surface-1); }
+      .session-row .date-col { width: 65px; flex-shrink: 0; }
+      .session-row .label-col { width: 160px; flex-shrink: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .session-row .tag-col { width: 50px; flex-shrink: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .session-row .branch-col { width: 70px; flex-shrink: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .session-row .duration-col { width: 55px; flex-shrink: 0; text-align: right; }
+      .session-row .comp-header { width: 90px; flex-shrink: 0; }
       .comp-legend { display: flex; gap: 14px; padding: 8px 10px; font-size: 11px; color: var(--text-secondary); border-bottom: 1px solid var(--border); font-family: monospace; }
       .legend-chip { display: inline-flex; align-items: center; }
       .legend-swatch { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 4px; }
@@ -606,7 +630,7 @@ def render_html(records, subagents_by_session):
         "<body>"
         f"{trend_html}"
         '<div class="main-row">'
-        f'<div class="session-list">{render_composition_legend()}{"".join(rows_html)}</div>'
+        f'<div class="session-list">{render_composition_legend()}{render_session_header()}{"".join(rows_html)}</div>'
         f'<div class="detail-container">{"".join(panels_html)}</div>'
         "</div>"
         f"{script}"
