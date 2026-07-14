@@ -336,7 +336,7 @@ def render_detail_panel(session_id, subagents, is_active):
     )
 
 
-def render_trend_line(records):
+def render_trend_chart(records, window_colors):
     ordered = [r for r in records if r.get("timestamp_start")]
     ordered.sort(key=lambda r: r["timestamp_start"])
     if len(ordered) < 2:
@@ -345,37 +345,103 @@ def render_trend_line(records):
     totals = [(r.get("input_tokens", 0) or 0) + (r.get("output_tokens", 0) or 0) for r in ordered]
     max_total = max(totals) or 1
 
-    width = 800
-    height = 120
-    padding = 10
+    width = 420
+    height = 150
+    padding_left = 45
+    padding_right = 10
+    padding_top = 10
+    padding_bottom = 20
+    plot_width = width - padding_left - padding_right
+    plot_height = height - padding_top - padding_bottom
     n = len(ordered)
-    step = (width - 2 * padding) / (n - 1)
+    step = plot_width / n
+    bar_width = step * 0.6
 
-    points = []
-    for i, total in enumerate(totals):
-        x = padding + i * step
-        y = height - padding - (total / max_total) * (height - 2 * padding)
-        points.append((x, y))
+    def y_for(value):
+        return padding_top + plot_height - (value / max_total) * plot_height
 
-    polyline_points = " ".join(f"{x:.1f},{y:.1f}" for x, y in points)
-
-    circles = []
-    for (x, y), record, total in zip(points, ordered, totals):
-        session_id = record.get("session_id") or ""
-        label = format_tokens(total)
-        date_str = format_date(record.get("timestamp_start"))
-        circles.append(
-            f'<circle cx="{x:.1f}" cy="{y:.1f}" r="4" class="trend-point" '
-            f"onclick=\"showSession('{session_id}')\">"
-            f"<title>{date_str} - {label} tokens</title></circle>"
+    y_axis = []
+    for frac in (0, 0.25, 0.5, 0.75, 1.0):
+        value = max_total * frac
+        y = y_for(value)
+        y_axis.append(
+            f'<line x1="{padding_left}" y1="{y:.1f}" x2="{width - padding_right}" y2="{y:.1f}" class="chart-gridline" />'
+            f'<text x="4" y="{y + 3:.1f}" class="chart-axis-label">{format_tokens(value)}</text>'
         )
+
+    x_axis = []
+    tick_count = min(5, n)
+    for t in range(tick_count):
+        idx = round(t * (n - 1) / (tick_count - 1)) if tick_count > 1 else 0
+        x = padding_left + idx * step + bar_width / 2
+        tick_date = format_date(ordered[idx].get("timestamp_start")).split(" ")[0]
+        x_axis.append(
+            f'<text x="{x:.1f}" y="{height - 4}" class="chart-axis-label" text-anchor="middle">{tick_date}</text>'
+        )
+    y_axis_html = "".join(y_axis)
+    x_axis_html = "".join(x_axis)
+
+    def bars_for_pane():
+        bars = []
+        for i, (record, total) in enumerate(zip(ordered, totals)):
+            x = padding_left + i * step + (step - bar_width) / 2
+            session_id = record.get("session_id") or ""
+            date_str = format_date(record.get("timestamp_start"))
+            label = format_tokens(total)
+            window = record.get("tmux_window")
+            window_class = window_colors.get(window, "window-color-none")
+            y = y_for(total)
+            bar_height = padding_top + plot_height - y
+            bars.append(
+                f'<rect x="{x:.1f}" y="{y:.1f}" width="{bar_width:.1f}" height="{bar_height:.1f}" '
+                f'class="chart-bar {window_class}" onclick="showSession(\'{session_id}\')">'
+                f"<title>{date_str} - {label} tokens</title></rect>"
+            )
+        return "".join(bars)
+
+    def bars_for_tokens():
+        bars = []
+        for i, (record, total) in enumerate(zip(ordered, totals)):
+            x = padding_left + i * step + (step - bar_width) / 2
+            session_id = record.get("session_id") or ""
+            date_str = format_date(record.get("timestamp_start"))
+            label = format_tokens(total)
+            segments = [
+                ("series-1", record.get("input_tokens", 0) or 0),
+                ("series-2", record.get("output_tokens", 0) or 0),
+                ("series-3", record.get("cache_read_tokens", 0) or 0),
+                ("series-4", record.get("cache_creation_tokens", 0) or 0),
+            ]
+            y_cursor = padding_top + plot_height
+            for css_class, value in segments:
+                if value <= 0:
+                    continue
+                seg_height = (value / max_total) * plot_height if max_total else 0
+                y_cursor -= seg_height
+                bars.append(
+                    f'<rect x="{x:.1f}" y="{y_cursor:.1f}" width="{bar_width:.1f}" height="{seg_height:.1f}" '
+                    f'class="chart-bar {css_class}" onclick="showSession(\'{session_id}\')">'
+                    f"<title>{date_str} - {label} tokens</title></rect>"
+                )
+        return "".join(bars)
+
+    pane_svg = (
+        f'<svg viewBox="0 0 {width} {height}" class="trend-svg" id="chart-pane" preserveAspectRatio="xMidYMid meet">'
+        f"{y_axis_html}{x_axis_html}{bars_for_pane()}</svg>"
+    )
+    tokens_svg = (
+        f'<svg viewBox="0 0 {width} {height}" class="trend-svg" id="chart-tokens" style="display:none" preserveAspectRatio="xMidYMid meet">'
+        f"{y_axis_html}{x_axis_html}{bars_for_tokens()}</svg>"
+    )
 
     return (
         '<div class="trend-container">'
-        f'<svg viewBox="0 0 {width} {height}" class="trend-svg" preserveAspectRatio="none">'
-        f'<polyline points="{polyline_points}" class="trend-line" fill="none" />'
-        f"{''.join(circles)}"
-        "</svg></div>"
+        '<div class="chart-toggle">'
+        '<span class="chart-toggle-btn active" id="toggle-pane" onclick="showChartMode(\'pane\')">por aba</span>'
+        '<span class="chart-toggle-btn" id="toggle-tokens" onclick="showChartMode(\'tokens\')">por tipo de token</span>'
+        "</div>"
+        f"{pane_svg}{tokens_svg}"
+        "</div>"
     )
 
 
@@ -392,7 +458,7 @@ def render_html(records, subagents_by_session):
             render_detail_panel(session_id, subagents_by_session.get(session_id, []), is_active)
         )
 
-    trend_html = render_trend_line(records)
+    trend_html = render_trend_chart(records, window_colors)
 
     style = """
     <style>
@@ -439,9 +505,26 @@ def render_html(records, subagents_by_session):
         }
       }
       .trend-container { padding: 12px 16px; border-bottom: 1px solid var(--border); }
-      .trend-svg { width: 100%; height: 120px; display: block; }
-      .trend-line { stroke: var(--series-1); stroke-width: 2; }
-      .trend-point { fill: var(--series-1); cursor: pointer; }
+      .trend-svg { width: 100%; max-width: 420px; height: auto; display: block; margin: 0 auto; }
+      .chart-toggle { display: flex; gap: 6px; padding: 0 0 6px; font-size: 11px; max-width: 420px; margin: 0 auto; }
+      .chart-toggle-btn { padding: 3px 8px; border-radius: 4px; cursor: pointer; color: var(--text-muted); }
+      .chart-toggle-btn.active { background: rgba(42, 120, 214, 0.15); border: 1px solid var(--series-1); color: var(--text-primary); }
+      .chart-gridline { stroke: var(--border); stroke-width: 1; }
+      .chart-axis-label { fill: var(--text-muted); font-size: 8px; }
+      .chart-bar { cursor: pointer; }
+      .chart-bar.window-color-1 { fill: var(--window-1); }
+      .chart-bar.window-color-2 { fill: var(--window-2); }
+      .chart-bar.window-color-3 { fill: var(--window-3); }
+      .chart-bar.window-color-4 { fill: var(--window-4); }
+      .chart-bar.window-color-5 { fill: var(--window-5); }
+      .chart-bar.window-color-6 { fill: var(--window-6); }
+      .chart-bar.window-color-7 { fill: var(--window-7); }
+      .chart-bar.window-color-8 { fill: var(--window-8); }
+      .chart-bar.window-color-none { fill: var(--window-none); }
+      .chart-bar.series-1 { fill: var(--series-1); }
+      .chart-bar.series-2 { fill: var(--series-2); }
+      .chart-bar.series-3 { fill: var(--series-3); }
+      .chart-bar.series-4 { fill: var(--series-4); }
       body { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; margin: 0; background: var(--surface-1); color: var(--text-primary); }
       .main-row { display: flex; }
       .session-list { width: 46%; border-right: 1px solid var(--border); max-height: calc(100vh - 20px); overflow-y: auto; font-family: monospace; }
@@ -487,6 +570,16 @@ def render_html(records, subagents_by_session):
       if (panel) { panel.style.display = 'block'; }
       var row = document.getElementById('row-' + id);
       if (row) { row.classList.add('active'); }
+    }
+    function showChartMode(mode) {
+      var pane = document.getElementById('chart-pane');
+      var tokens = document.getElementById('chart-tokens');
+      if (pane) { pane.style.display = mode === 'pane' ? 'block' : 'none'; }
+      if (tokens) { tokens.style.display = mode === 'tokens' ? 'block' : 'none'; }
+      var paneBtn = document.getElementById('toggle-pane');
+      var tokensBtn = document.getElementById('toggle-tokens');
+      if (paneBtn) { paneBtn.classList.toggle('active', mode === 'pane'); }
+      if (tokensBtn) { tokensBtn.classList.toggle('active', mode === 'tokens'); }
     }
     </script>
     """
