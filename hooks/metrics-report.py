@@ -452,8 +452,10 @@ def render_trend_chart(records, window_colors):
     max_pane = max(totals) or 1
     max_tokens = max(token_totals) or 1
 
-    # Width scales with how many dated sessions are actually being plotted
-    # (itself controlled by --days at generation time), clamped so a single
+    # Width scales with how many dated sessions are actually being plotted.
+    # main() passes the FULL --days-filtered pool here (not the -n-limited
+    # table/session-list set) specifically so --days controls this, rather
+    # than being masked by whatever -n happens to be. Clamped so a single
     # day's handful of sessions doesn't stretch absurdly wide and a long
     # history doesn't compress into illegibility.
     width = max(320, min(40 + n * 12, 1000))
@@ -556,8 +558,8 @@ def render_trend_chart(records, window_colors):
     )
 
 
-def render_html(records, subagents_by_session):
-    window_colors = assign_window_colors(records)
+def render_html(records, subagents_by_session, chart_records):
+    window_colors = assign_window_colors(chart_records)
     groups = build_window_groups(records, window_colors)
     rows_html = []
     panels_html = []
@@ -573,7 +575,7 @@ def render_html(records, subagents_by_session):
             )
             row_index += 1
 
-    trend_html = render_trend_chart(records, window_colors)
+    trend_html = render_trend_chart(chart_records, window_colors)
 
     style = """
     <style>
@@ -772,6 +774,7 @@ def main():
     records = load_records(METRICS_FILE)
     records = filter_records(records, tag=args.tag, project=args.project)
     records = filter_by_days(records, args.days)
+    chart_records = records
     records = records[-args.limit:]
 
     if args.html:
@@ -785,7 +788,7 @@ def main():
         for record in records:
             record["task_label"] = get_task_label(record, label_cache)
         save_label_cache(label_cache)
-        html_output = render_html(records, subagents_by_session)
+        html_output = render_html(records, subagents_by_session, chart_records)
         output_path = os.path.expanduser("~/.claude/metrics/dashboard.html")
         with open(output_path, "w") as f:
             f.write(html_output)
