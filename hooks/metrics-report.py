@@ -4,7 +4,7 @@ import html
 import json
 import os
 import subprocess
-from datetime import datetime
+from datetime import datetime, timedelta
 
 METRICS_FILE = os.path.expanduser("~/.claude/metrics/sessions.jsonl")
 SUBAGENTS_FILE = os.path.expanduser("~/.claude/metrics/subagents.jsonl")
@@ -34,6 +34,24 @@ def filter_records(records, tag=None, project=None):
         filtered = [r for r in filtered if r.get("tag") == tag]
     if project is not None:
         filtered = [r for r in filtered if r.get("project_path") == project]
+    return filtered
+
+
+def filter_by_days(records, days):
+    if days is None:
+        return records
+    cutoff = datetime.now().astimezone() - timedelta(days=days)
+    filtered = []
+    for r in records:
+        timestamp_start = r.get("timestamp_start")
+        if not timestamp_start:
+            continue
+        try:
+            dt = datetime.fromisoformat(timestamp_start.replace("Z", "+00:00")).astimezone()
+        except (ValueError, AttributeError, TypeError):
+            continue
+        if dt >= cutoff:
+            filtered.append(r)
     return filtered
 
 
@@ -415,6 +433,7 @@ def render_trend_chart(records, window_colors):
     if len(ordered) < 2:
         return ""
 
+    n = len(ordered)
     totals = [(r.get("input_tokens", 0) or 0) + (r.get("output_tokens", 0) or 0) for r in ordered]
     token_totals = [
         (r.get("input_tokens", 0) or 0)
@@ -433,7 +452,11 @@ def render_trend_chart(records, window_colors):
     max_pane = max(totals) or 1
     max_tokens = max(token_totals) or 1
 
-    width = 420
+    # Width scales with how many dated sessions are actually being plotted
+    # (itself controlled by --days at generation time), clamped so a single
+    # day's handful of sessions doesn't stretch absurdly wide and a long
+    # history doesn't compress into illegibility.
+    width = max(320, min(40 + n * 12, 1000))
     height = 150
     padding_left = 45
     padding_right = 10
@@ -441,7 +464,6 @@ def render_trend_chart(records, window_colors):
     padding_bottom = 20
     plot_width = width - padding_left - padding_right
     plot_height = height - padding_top - padding_bottom
-    n = len(ordered)
     step = plot_width / n
     bar_width = step * 0.6
 
@@ -524,7 +546,7 @@ def render_trend_chart(records, window_colors):
     )
 
     return (
-        '<div class="trend-container">'
+        f'<div class="trend-container" style="max-width:{width}px;margin:0 auto;">'
         '<div class="chart-toggle">'
         '<span class="chart-toggle-btn active" id="toggle-pane" onclick="showChartMode(\'pane\')">por aba</span>'
         '<span class="chart-toggle-btn" id="toggle-tokens" onclick="showChartMode(\'tokens\')">por tipo de token</span>'
@@ -598,8 +620,8 @@ def render_html(records, subagents_by_session):
         }
       }
       .trend-container { padding: 12px 16px; border-bottom: 1px solid var(--border); }
-      .trend-svg { width: 100%; max-width: 420px; height: auto; display: block; margin: 0 auto; }
-      .chart-toggle { display: flex; gap: 6px; padding: 0 0 6px; font-size: 11px; max-width: 420px; margin: 0 auto; }
+      .trend-svg { width: 100%; height: auto; display: block; margin: 0 auto; }
+      .chart-toggle { display: flex; gap: 6px; padding: 0 0 6px; font-size: 11px; }
       .chart-toggle-btn { padding: 3px 8px; border-radius: 4px; cursor: pointer; color: var(--text-muted); }
       .chart-toggle-btn.active { background: rgba(42, 120, 214, 0.15); border: 1px solid var(--series-1); color: var(--text-primary); }
       .chart-gridline { stroke: var(--border); stroke-width: 1; }
@@ -744,10 +766,12 @@ def main():
     parser.add_argument("--project", default=None, help="Filter by project path")
     parser.add_argument("-n", "--limit", type=int, default=20, help="Number of most recent sessions to show")
     parser.add_argument("--html", action="store_true", help="Generate an HTML dashboard instead of printing a table")
+    parser.add_argument("--days", type=int, default=None, help="Only include sessions from the last N days")
     args = parser.parse_args()
 
     records = load_records(METRICS_FILE)
     records = filter_records(records, tag=args.tag, project=args.project)
+    records = filter_by_days(records, args.days)
     records = records[-args.limit:]
 
     if args.html:
