@@ -263,10 +263,10 @@ def format_summary(records):
 def render_composition_legend():
     return (
         '<div class="comp-legend">'
-        '<span class="legend-chip"><span class="legend-swatch series-1"></span>input</span>'
-        '<span class="legend-chip"><span class="legend-swatch series-2"></span>output</span>'
-        '<span class="legend-chip"><span class="legend-swatch series-3"></span>cache read</span>'
-        '<span class="legend-chip"><span class="legend-swatch series-4"></span>cache creation</span>'
+        '<span class="legend-chip" onclick="highlightTokenType(\'series-1\')"><span class="legend-swatch series-1"></span>input</span>'
+        '<span class="legend-chip" onclick="highlightTokenType(\'series-2\')"><span class="legend-swatch series-2"></span>output</span>'
+        '<span class="legend-chip" onclick="highlightTokenType(\'series-3\')"><span class="legend-swatch series-3"></span>cache read</span>'
+        '<span class="legend-chip" onclick="highlightTokenType(\'series-4\')"><span class="legend-swatch series-4"></span>cache creation</span>'
         "</div>"
     )
 
@@ -604,6 +604,10 @@ def render_html(records, subagents_by_session):
       .legend-swatch.series-2 { background: var(--series-2); }
       .legend-swatch.series-3 { background: var(--series-3); }
       .legend-swatch.series-4 { background: var(--series-4); }
+      body[data-highlight="series-1"] .comp-seg:not(.series-1), body[data-highlight="series-1"] .chart-bar.series-2, body[data-highlight="series-1"] .chart-bar.series-3, body[data-highlight="series-1"] .chart-bar.series-4 { opacity: 0.25; }
+      body[data-highlight="series-2"] .comp-seg:not(.series-2), body[data-highlight="series-2"] .chart-bar.series-1, body[data-highlight="series-2"] .chart-bar.series-3, body[data-highlight="series-2"] .chart-bar.series-4 { opacity: 0.25; }
+      body[data-highlight="series-3"] .comp-seg:not(.series-3), body[data-highlight="series-3"] .chart-bar.series-1, body[data-highlight="series-3"] .chart-bar.series-2, body[data-highlight="series-3"] .chart-bar.series-4 { opacity: 0.25; }
+      body[data-highlight="series-4"] .comp-seg:not(.series-4), body[data-highlight="series-4"] .chart-bar.series-1, body[data-highlight="series-4"] .chart-bar.series-2, body[data-highlight="series-4"] .chart-bar.series-3 { opacity: 0.25; }
       .comp-bar { display: flex; gap: 2px; width: 90px; height: 10px; flex-shrink: 0; background: var(--border); }
       .comp-bar-empty { background: var(--border); }
       .comp-seg.series-1 { background: var(--series-1); }
@@ -660,6 +664,15 @@ def render_html(records, subagents_by_session):
       header.classList.toggle('collapsed');
       var icon = header.querySelector('.group-icon');
       if (icon) { icon.textContent = collapsed ? '▾' : '▸'; }
+    }
+    function highlightTokenType(type) {
+      var body = document.body;
+      var current = body.getAttribute('data-highlight');
+      if (current === type) {
+        body.removeAttribute('data-highlight');
+      } else {
+        body.setAttribute('data-highlight', type);
+      }
     }
     function showChartMode(mode) {
       var pane = document.getElementById('chart-pane');
