@@ -9,6 +9,7 @@ from datetime import datetime
 METRICS_FILE = os.path.expanduser("~/.claude/metrics/sessions.jsonl")
 SUBAGENTS_FILE = os.path.expanduser("~/.claude/metrics/subagents.jsonl")
 TASK_LABELS_FILE = os.path.expanduser("~/.claude/metrics/task_labels.json")
+AGENT_LABELS_FILE = os.path.expanduser("~/.claude/metrics/agent_labels.json")
 
 
 def load_records(path):
@@ -214,6 +215,39 @@ def get_task_label(record, cache):
     return label
 
 
+def load_agent_label_cache():
+    if not os.path.exists(AGENT_LABELS_FILE):
+        return {}
+    try:
+        with open(AGENT_LABELS_FILE, "r") as f:
+            return json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+
+def save_agent_label_cache(cache):
+    os.makedirs(os.path.dirname(AGENT_LABELS_FILE), exist_ok=True)
+    with open(AGENT_LABELS_FILE, "w") as f:
+        json.dump(cache, f, indent=2)
+
+
+def get_agent_label(subagent_record, cache):
+    agent_id = subagent_record.get("agent_id")
+    if not agent_id:
+        return None
+    if agent_id in cache:
+        return cache[agent_id]
+
+    source = cold_summary_source(subagent_record.get("agent_transcript_path"))
+    if not source:
+        return None
+
+    label = compress_to_label(source)
+    if label:
+        cache[agent_id] = label
+    return label
+
+
 def group_subagents_by_session(subagent_records):
     grouped = {}
     for record in subagent_records:
@@ -356,11 +390,15 @@ def render_detail_panel(session_id, subagents, is_active):
         for subagent in subagents:
             duration = subagent.get("duration_seconds")
             duration_str = f"{duration:.0f}s" if duration is not None else "-"
+            agent_type = html.escape(subagent.get("agent_type") or "-")
+            agent_label = html.escape(subagent.get("agent_label") or "-")
+            in_tok = format_tokens(subagent.get("input_tokens", 0))
+            out_tok = format_tokens(subagent.get("output_tokens", 0))
             rows.append(
                 '<div class="subagent-row">'
-                f'<span>{subagent.get("agent_type", "-")}</span>'
+                f"<span>{agent_type} — {agent_label}</span>"
                 f"<span>{duration_str}</span>"
-                f'<span>{subagent.get("input_tokens", 0)}/{subagent.get("output_tokens", 0)} tok</span>'
+                f'<span>{in_tok}/{out_tok} tok</span>'
                 f'<span>{subagent.get("tool_call_count", 0)} tools</span>'
                 "</div>"
             )
@@ -714,6 +752,10 @@ def main():
 
     if args.html:
         subagent_records = load_records(SUBAGENTS_FILE)
+        agent_label_cache = load_agent_label_cache()
+        for subagent in subagent_records:
+            subagent["agent_label"] = get_agent_label(subagent, agent_label_cache)
+        save_agent_label_cache(agent_label_cache)
         subagents_by_session = group_subagents_by_session(subagent_records)
         label_cache = load_label_cache()
         for record in records:
