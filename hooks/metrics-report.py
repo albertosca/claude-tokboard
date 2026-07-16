@@ -774,8 +774,18 @@ def main():
     records = load_records(METRICS_FILE)
     records = filter_records(records, tag=args.tag, project=args.project)
     records = filter_by_days(records, args.days)
-    chart_records = records
-    records = records[-args.limit:]
+    if args.days is None:
+        # No period specified: the chart shouldn't render the entire
+        # unbounded history (thousands of bars, sub-pixel width, a
+        # multi-megabyte file) — fall back to the same -n-limited set the
+        # table shows, matching the original pre---days behavior.
+        records = records[-args.limit:]
+        chart_records = records
+    else:
+        # --days given: the chart reflects the whole period, uncapped by
+        # -n, so --days genuinely controls chart width as intended.
+        chart_records = records
+        records = records[-args.limit:]
 
     if args.html:
         subagent_records = load_records(SUBAGENTS_FILE)
