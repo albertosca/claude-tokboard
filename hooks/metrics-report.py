@@ -55,39 +55,39 @@ def filter_by_days(records, days):
     return filtered
 
 
-def assign_window_colors(records):
+def assign_group_colors(records):
     assignment = {}
     next_slot = 0
     for record in records:
-        window = record.get("tmux_window")
-        if window in assignment:
+        project = record.get("project_path")
+        if project in assignment:
             continue
-        if window is None:
-            assignment[window] = "window-color-none"
+        if project is None:
+            assignment[project] = "group-color-none"
         else:
             slot = (next_slot % 8) + 1
-            assignment[window] = f"window-color-{slot}"
+            assignment[project] = f"group-color-{slot}"
             next_slot += 1
     return assignment
 
 
-def build_window_groups(records, window_colors):
+def build_project_groups(records, group_colors):
     ordered_desc = list(reversed(records))
     groups = {}
-    window_order = []
+    project_order = []
     for record in ordered_desc:
-        window = record.get("tmux_window")
-        if window not in groups:
-            groups[window] = []
-            window_order.append(window)
-        groups[window].append(record)
+        project = record.get("project_path")
+        if project not in groups:
+            groups[project] = []
+            project_order.append(project)
+        groups[project].append(record)
     result = []
-    for window in window_order:
+    for project in project_order:
         result.append(
             {
-                "window": window,
-                "class": window_colors.get(window, "window-color-none"),
-                "records": groups[window],
+                "project": project,
+                "class": group_colors.get(project, "group-color-none"),
+                "records": groups[project],
             }
         )
     return result
@@ -342,21 +342,20 @@ def render_composition_bar(record):
     return f'<div class="comp-bar">{"".join(parts)}</div>'
 
 
-def render_session_row(record, is_active, window_colors, group_index):
+def render_session_row(record, is_active, group_colors, group_index):
     session_id = record.get("session_id") or ""
     tag = html.escape(record.get("tag") or "-")
     branch = html.escape(record.get("git_branch") or "-")
-    tmux_window_raw = record.get("tmux_window")
-    tmux_window = html.escape(tmux_window_raw or "-")
+    tmux_window = html.escape(record.get("tmux_window") or "-")
     task_label = html.escape(record.get("task_label") or "-")
     date_str = format_date(record.get("timestamp_start"))
     duration = record.get("duration_seconds")
     duration_str = f"{duration:.0f}s" if duration is not None else "-"
     total_tokens = format_tokens((record.get("input_tokens", 0) or 0) + (record.get("output_tokens", 0) or 0))
     active_class = " active" if is_active else ""
-    window_class = window_colors.get(tmux_window_raw, "window-color-none")
+    group_class = group_colors.get(record.get("project_path"), "group-color-none")
     return (
-        f'<div class="session-row {window_class}{active_class}" id="row-{session_id}" '
+        f'<div class="session-row {group_class}{active_class}" id="row-{session_id}" '
         f'data-group="{group_index}" '
         f"onclick=\"showSession('{session_id}')\">"
         f'<span class="sid">{session_id[:12]}</span>'
@@ -372,13 +371,18 @@ def render_session_row(record, is_active, window_colors, group_index):
 
 
 def render_group_header(group_index, group):
-    window_label = html.escape(group["window"] or "sem aba")
+    project_path = group["project"]
+    if project_path:
+        label = os.path.basename(project_path.rstrip("/")) or project_path
+    else:
+        label = "sem projeto"
     count = len(group["records"])
+    title_attr = f' title="{html.escape(project_path)}"' if project_path else ""
     return (
-        f'<div class="group-header {group["class"]}" id="group-{group_index}" '
+        f'<div class="group-header {group["class"]}" id="group-{group_index}"{title_attr} '
         f"onclick=\"toggleGroup({group_index})\">"
         '<span class="group-icon">▾</span>'
-        f"<span>{window_label} ({count} sessões)</span>"
+        f"<span>{html.escape(label)} ({count} sessões)</span>"
         "</div>"
     )
 
@@ -427,7 +431,7 @@ def render_detail_panel(session_id, subagents, is_active):
     )
 
 
-def render_trend_chart(records, window_colors):
+def render_trend_chart(records, group_colors):
     ordered = [r for r in records if r.get("timestamp_start")]
     ordered.sort(key=lambda r: r["timestamp_start"])
     if len(ordered) < 2:
@@ -501,13 +505,13 @@ def render_trend_chart(records, window_colors):
             session_id = record.get("session_id") or ""
             date_str = format_date(record.get("timestamp_start"))
             label = format_tokens(total)
-            window = record.get("tmux_window")
-            window_class = window_colors.get(window, "window-color-none")
+            project = record.get("project_path")
+            group_class = group_colors.get(project, "group-color-none")
             y = y_for(total, max_pane)
             bar_height = padding_top + plot_height - y
             bars.append(
                 f'<rect x="{x:.1f}" y="{y:.1f}" width="{bar_width:.1f}" height="{bar_height:.1f}" '
-                f'class="chart-bar {window_class}" onclick="showSession(\'{session_id}\')">'
+                f'class="chart-bar {group_class}" onclick="showSession(\'{session_id}\')">'
                 f"<title>{date_str} - {label} tokens</title></rect>"
             )
         return "".join(bars)
@@ -559,8 +563,8 @@ def render_trend_chart(records, window_colors):
 
 
 def render_html(records, subagents_by_session, chart_records):
-    window_colors = assign_window_colors(chart_records)
-    groups = build_window_groups(records, window_colors)
+    group_colors = assign_group_colors(chart_records)
+    groups = build_project_groups(records, group_colors)
     rows_html = []
     panels_html = []
     row_index = 0
@@ -569,13 +573,13 @@ def render_html(records, subagents_by_session, chart_records):
         for record in group["records"]:
             session_id = record.get("session_id") or ""
             is_active = row_index == 0
-            rows_html.append(render_session_row(record, is_active, window_colors, group_index))
+            rows_html.append(render_session_row(record, is_active, group_colors, group_index))
             panels_html.append(
                 render_detail_panel(session_id, subagents_by_session.get(session_id, []), is_active)
             )
             row_index += 1
 
-    trend_html = render_trend_chart(chart_records, window_colors)
+    trend_html = render_trend_chart(chart_records, group_colors)
 
     style = """
     <style>
@@ -589,15 +593,15 @@ def render_html(records, subagents_by_session, chart_records):
         --series-2: #1baf7a;
         --series-3: #eda100;
         --series-4: #008300;
-        --window-1: #2a78d6; --window-1-tint: rgba(42,120,214,0.08);
-        --window-2: #1baf7a; --window-2-tint: rgba(27,175,122,0.08);
-        --window-3: #eda100; --window-3-tint: rgba(237,161,0,0.08);
-        --window-4: #008300; --window-4-tint: rgba(0,131,0,0.08);
-        --window-5: #4a3aa7; --window-5-tint: rgba(74,58,167,0.08);
-        --window-6: #e34948; --window-6-tint: rgba(227,73,72,0.08);
-        --window-7: #e87ba4; --window-7-tint: rgba(232,123,164,0.08);
-        --window-8: #eb6834; --window-8-tint: rgba(235,104,52,0.08);
-        --window-none: #898781; --window-none-tint: transparent;
+        --group-1: #2a78d6; --group-1-tint: rgba(42,120,214,0.08);
+        --group-2: #1baf7a; --group-2-tint: rgba(27,175,122,0.08);
+        --group-3: #eda100; --group-3-tint: rgba(237,161,0,0.08);
+        --group-4: #008300; --group-4-tint: rgba(0,131,0,0.08);
+        --group-5: #4a3aa7; --group-5-tint: rgba(74,58,167,0.08);
+        --group-6: #e34948; --group-6-tint: rgba(227,73,72,0.08);
+        --group-7: #e87ba4; --group-7-tint: rgba(232,123,164,0.08);
+        --group-8: #eb6834; --group-8-tint: rgba(235,104,52,0.08);
+        --group-none: #898781; --group-none-tint: transparent;
       }
       @media (prefers-color-scheme: dark) {
         :root {
@@ -610,15 +614,15 @@ def render_html(records, subagents_by_session, chart_records):
           --series-2: #199e70;
           --series-3: #c98500;
           --series-4: #008300;
-          --window-1: #3987e5; --window-1-tint: rgba(57,135,229,0.12);
-          --window-2: #199e70; --window-2-tint: rgba(25,158,112,0.12);
-          --window-3: #c98500; --window-3-tint: rgba(201,133,0,0.12);
-          --window-4: #008300; --window-4-tint: rgba(0,131,0,0.12);
-          --window-5: #9085e9; --window-5-tint: rgba(144,133,233,0.12);
-          --window-6: #e66767; --window-6-tint: rgba(230,103,103,0.12);
-          --window-7: #d55181; --window-7-tint: rgba(213,81,129,0.12);
-          --window-8: #d95926; --window-8-tint: rgba(217,89,38,0.12);
-          --window-none: #898781; --window-none-tint: transparent;
+          --group-1: #3987e5; --group-1-tint: rgba(57,135,229,0.12);
+          --group-2: #199e70; --group-2-tint: rgba(25,158,112,0.12);
+          --group-3: #c98500; --group-3-tint: rgba(201,133,0,0.12);
+          --group-4: #008300; --group-4-tint: rgba(0,131,0,0.12);
+          --group-5: #9085e9; --group-5-tint: rgba(144,133,233,0.12);
+          --group-6: #e66767; --group-6-tint: rgba(230,103,103,0.12);
+          --group-7: #d55181; --group-7-tint: rgba(213,81,129,0.12);
+          --group-8: #d95926; --group-8-tint: rgba(217,89,38,0.12);
+          --group-none: #898781; --group-none-tint: transparent;
         }
       }
       .trend-container { padding: 12px 16px; border-bottom: 1px solid var(--border); }
@@ -629,15 +633,15 @@ def render_html(records, subagents_by_session, chart_records):
       .chart-gridline { stroke: var(--border); stroke-width: 1; }
       .chart-axis-label { fill: var(--text-muted); font-size: 8px; }
       .chart-bar { cursor: pointer; }
-      .chart-bar.window-color-1 { fill: var(--window-1); }
-      .chart-bar.window-color-2 { fill: var(--window-2); }
-      .chart-bar.window-color-3 { fill: var(--window-3); }
-      .chart-bar.window-color-4 { fill: var(--window-4); }
-      .chart-bar.window-color-5 { fill: var(--window-5); }
-      .chart-bar.window-color-6 { fill: var(--window-6); }
-      .chart-bar.window-color-7 { fill: var(--window-7); }
-      .chart-bar.window-color-8 { fill: var(--window-8); }
-      .chart-bar.window-color-none { fill: var(--window-none); }
+      .chart-bar.group-color-1 { fill: var(--group-1); }
+      .chart-bar.group-color-2 { fill: var(--group-2); }
+      .chart-bar.group-color-3 { fill: var(--group-3); }
+      .chart-bar.group-color-4 { fill: var(--group-4); }
+      .chart-bar.group-color-5 { fill: var(--group-5); }
+      .chart-bar.group-color-6 { fill: var(--group-6); }
+      .chart-bar.group-color-7 { fill: var(--group-7); }
+      .chart-bar.group-color-8 { fill: var(--group-8); }
+      .chart-bar.group-color-none { fill: var(--group-none); }
       .chart-bar.series-1 { fill: var(--series-1); }
       .chart-bar.series-2 { fill: var(--series-2); }
       .chart-bar.series-3 { fill: var(--series-3); }
@@ -676,25 +680,25 @@ def render_html(records, subagents_by_session, chart_records):
       .comp-seg.series-2 { background: var(--series-2); }
       .comp-seg.series-3 { background: var(--series-3); }
       .comp-seg.series-4 { background: var(--series-4); }
-      .session-row.window-color-1 { background: var(--window-1-tint); border-left: 3px solid var(--window-1); }
-      .session-row.window-color-2 { background: var(--window-2-tint); border-left: 3px solid var(--window-2); }
-      .session-row.window-color-3 { background: var(--window-3-tint); border-left: 3px solid var(--window-3); }
-      .session-row.window-color-4 { background: var(--window-4-tint); border-left: 3px solid var(--window-4); }
-      .session-row.window-color-5 { background: var(--window-5-tint); border-left: 3px solid var(--window-5); }
-      .session-row.window-color-6 { background: var(--window-6-tint); border-left: 3px solid var(--window-6); }
-      .session-row.window-color-7 { background: var(--window-7-tint); border-left: 3px solid var(--window-7); }
-      .session-row.window-color-8 { background: var(--window-8-tint); border-left: 3px solid var(--window-8); }
-      .session-row.window-color-none { border-left: 3px solid var(--window-none); }
+      .session-row.group-color-1 { background: var(--group-1-tint); border-left: 3px solid var(--group-1); }
+      .session-row.group-color-2 { background: var(--group-2-tint); border-left: 3px solid var(--group-2); }
+      .session-row.group-color-3 { background: var(--group-3-tint); border-left: 3px solid var(--group-3); }
+      .session-row.group-color-4 { background: var(--group-4-tint); border-left: 3px solid var(--group-4); }
+      .session-row.group-color-5 { background: var(--group-5-tint); border-left: 3px solid var(--group-5); }
+      .session-row.group-color-6 { background: var(--group-6-tint); border-left: 3px solid var(--group-6); }
+      .session-row.group-color-7 { background: var(--group-7-tint); border-left: 3px solid var(--group-7); }
+      .session-row.group-color-8 { background: var(--group-8-tint); border-left: 3px solid var(--group-8); }
+      .session-row.group-color-none { border-left: 3px solid var(--group-none); }
       .group-header { display: flex; align-items: center; gap: 6px; padding: 6px 10px; font-size: 11px; font-weight: bold; cursor: pointer; border-bottom: 1px solid var(--border); background: var(--surface-1); }
-      .group-header.window-color-1 { border-left: 3px solid var(--window-1); }
-      .group-header.window-color-2 { border-left: 3px solid var(--window-2); }
-      .group-header.window-color-3 { border-left: 3px solid var(--window-3); }
-      .group-header.window-color-4 { border-left: 3px solid var(--window-4); }
-      .group-header.window-color-5 { border-left: 3px solid var(--window-5); }
-      .group-header.window-color-6 { border-left: 3px solid var(--window-6); }
-      .group-header.window-color-7 { border-left: 3px solid var(--window-7); }
-      .group-header.window-color-8 { border-left: 3px solid var(--window-8); }
-      .group-header.window-color-none { border-left: 3px solid var(--window-none); }
+      .group-header.group-color-1 { border-left: 3px solid var(--group-1); }
+      .group-header.group-color-2 { border-left: 3px solid var(--group-2); }
+      .group-header.group-color-3 { border-left: 3px solid var(--group-3); }
+      .group-header.group-color-4 { border-left: 3px solid var(--group-4); }
+      .group-header.group-color-5 { border-left: 3px solid var(--group-5); }
+      .group-header.group-color-6 { border-left: 3px solid var(--group-6); }
+      .group-header.group-color-7 { border-left: 3px solid var(--group-7); }
+      .group-header.group-color-8 { border-left: 3px solid var(--group-8); }
+      .group-header.group-color-none { border-left: 3px solid var(--group-none); }
       .group-icon { width: 10px; display: inline-block; }
       .detail-container { flex: 1; }
       .detail-panel { padding: 16px; font-family: monospace; }
