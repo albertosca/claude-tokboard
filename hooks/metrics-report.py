@@ -363,9 +363,9 @@ def render_session_row(record, is_active, group_colors, group_index):
         f'<span class="tmux-window">{tmux_window}</span>'
         f'<span class="label-col">{task_label}</span>'
         f'<span class="tag-col">{tag}</span><span class="branch-col">{branch}</span>'
-        f'<span class="duration-col">{duration_str}</span>'
         f'<span class="tokens-total">{total_tokens}</span>'
         f"{render_composition_bar(record)}"
+        f'<span class="duration-col">{duration_str}</span>'
         f"</div>"
     )
 
@@ -396,9 +396,9 @@ def render_session_header():
         '<span class="label-col">tarefa</span>'
         '<span class="tag-col">tag</span>'
         '<span class="branch-col">branch</span>'
-        '<span class="duration-col">duração</span>'
         '<span class="tokens-total">tokens</span>'
         '<span class="comp-header">composição</span>'
+        '<span class="duration-col">duração</span>'
         "</div>"
     )
 
