@@ -405,29 +405,37 @@ def render_session_header():
 
 def render_detail_panel(session_id, subagents, is_active):
     display = "block" if is_active else "none"
+    title = ""
     if not subagents:
         body = '<p class="empty">Nenhum subagente nesta sessão.</p>'
     else:
-        rows = []
-        for subagent in subagents:
+        title = f'<h4 class="subagent-title">Subagentes despachados ({len(subagents)})</h4>'
+        header = (
+            '<div class="subagent-row subagent-header">'
+            "<span>tarefa</span><span>tokens</span><span>tools</span><span>duração</span>"
+            "</div>"
+        )
+        rows = [header]
+        for i, subagent in enumerate(subagents):
             duration = subagent.get("duration_seconds")
             duration_str = f"{duration:.0f}s" if duration is not None else "-"
             agent_type = html.escape(subagent.get("agent_type") or "-")
             agent_label = html.escape(subagent.get("agent_label") or "-")
             in_tok = format_tokens(subagent.get("input_tokens", 0))
             out_tok = format_tokens(subagent.get("output_tokens", 0))
+            zebra_class = " subagent-row-odd" if i % 2 == 1 else ""
             rows.append(
-                '<div class="subagent-row">'
+                f'<div class="subagent-row{zebra_class}">'
                 f"<span>{agent_type} — {agent_label}</span>"
-                f"<span>{duration_str}</span>"
                 f'<span>{in_tok}/{out_tok} tok</span>'
                 f'<span>{subagent.get("tool_call_count", 0)} tools</span>'
+                f"<span>{duration_str}</span>"
                 "</div>"
             )
         body = "\n".join(rows)
     return (
         f'<div class="detail-panel" id="detail-{session_id}" style="display:{display}">'
-        f"<h3>{session_id}</h3>{body}</div>"
+        f"<h3>{session_id}</h3>{title}{body}</div>"
     )
 
 
@@ -702,7 +710,10 @@ def render_html(records, subagents_by_session, chart_records):
       .group-icon { width: 10px; display: inline-block; }
       .detail-container { flex: 1; }
       .detail-panel { padding: 16px; font-family: monospace; }
-      .subagent-row { display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; padding: 4px 0; border-bottom: 1px solid var(--border); }
+      .subagent-row { display: grid; grid-template-columns: 1.6fr 0.9fr 0.6fr 0.7fr; padding: 4px 8px; border-bottom: 1px solid var(--border); }
+      .subagent-title { font-size: 12px; margin: 12px 0 6px; color: var(--text-secondary); }
+      .subagent-row.subagent-header { font-weight: bold; color: var(--text-muted); font-size: 10px; border-bottom: 2px solid var(--border); }
+      .subagent-row-odd { background: rgba(0,0,0,0.02); }
       .empty { color: var(--text-muted); }
     </style>
     """
