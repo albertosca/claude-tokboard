@@ -356,7 +356,7 @@ def render_session_row(record, is_active, group_colors, group_index):
     group_class = group_colors.get(record.get("project_path"), "group-color-none")
     return (
         f'<div class="session-row {group_class}{active_class}" id="row-{session_id}" '
-        f'data-group="{group_index}" '
+        f'data-group="{group_index}" style="display:none" '
         f"onclick=\"showSession('{session_id}')\">"
         f'<span class="sid">{session_id[:12]}</span>'
         f'<span class="date-col">{date_str}</span>'
@@ -377,12 +377,15 @@ def render_group_header(group_index, group):
     else:
         label = "sem projeto"
     count = len(group["records"])
+    total_tokens = format_tokens(
+        sum((r.get("input_tokens", 0) or 0) + (r.get("output_tokens", 0) or 0) for r in group["records"])
+    )
     title_attr = f' title="{html.escape(project_path)}"' if project_path else ""
     return (
-        f'<div class="group-header {group["class"]}" id="group-{group_index}"{title_attr} '
+        f'<div class="group-header collapsed {group["class"]}" id="group-{group_index}"{title_attr} '
         f"onclick=\"toggleGroup({group_index})\">"
-        '<span class="group-icon">▾</span>'
-        f"<span>{html.escape(label)} ({count} sessões)</span>"
+        '<span class="group-icon">▸</span>'
+        f"<span>{html.escape(label)} ({count} sessões · {total_tokens} tokens)</span>"
         "</div>"
     )
 
