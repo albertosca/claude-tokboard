@@ -458,47 +458,83 @@ def render_detail_panel(session_id, subagents, is_active):
     )
 
 
+def aggregate_by_day(records):
+    dated = [r for r in records if r.get("timestamp_start")]
+    days = {}
+    day_order = []
+    for r in dated:
+        timestamp_start = r.get("timestamp_start")
+        try:
+            day_key = datetime.fromisoformat(timestamp_start.replace("Z", "+00:00")).astimezone().strftime("%Y-%m-%d")
+        except (ValueError, AttributeError, TypeError):
+            continue
+        if day_key not in days:
+            days[day_key] = []
+            day_order.append(day_key)
+        days[day_key].append(r)
+    day_order.sort()
+    return [{"day": day, "records": days[day]} for day in day_order]
+
+
 def render_trend_chart(records, group_colors):
-    ordered = [r for r in records if r.get("timestamp_start")]
-    ordered.sort(key=lambda r: r["timestamp_start"])
-    if len(ordered) < 2:
+    days = aggregate_by_day(records)
+    n = len(days)
+    if n < 2:
         return ""
 
-    n = len(ordered)
-    totals = [(r.get("input_tokens", 0) or 0) + (r.get("output_tokens", 0) or 0) for r in ordered]
-    token_totals = [
-        (r.get("input_tokens", 0) or 0)
-        + (r.get("output_tokens", 0) or 0)
-        + (r.get("cache_read_tokens", 0) or 0)
-        + (r.get("cache_creation_tokens", 0) or 0)
-        for r in ordered
+    day_totals = [
+        sum((r.get("input_tokens", 0) or 0) + (r.get("output_tokens", 0) or 0) for r in day["records"])
+        for day in days
     ]
-    # Each mode gets its OWN scale/axis. Cache tokens routinely dwarf
-    # input+output by 100x+, so a shared max_total made "por aba" bars
-    # (which only plot input+output) collapse to near-zero height whenever
-    # cache dominated the file-wide max — this was a real regression, not a
-    # hypothetical: real dashboards showed an apparently-empty "por aba"
-    # chart. Decoupling the scales means neither mode can ever overflow the
-    # other's plot area, and each mode's bars actually fill its own chart.
-    max_pane = max(totals) or 1
-    max_tokens = max(token_totals) or 1
+    day_token_totals = [
+        sum(
+            (r.get("input_tokens", 0) or 0)
+            + (r.get("output_tokens", 0) or 0)
+            + (r.get("cache_read_tokens", 0) or 0)
+            + (r.get("cache_creation_tokens", 0) or 0)
+            for r in day["records"]
+        )
+        for day in days
+    ]
+    # Each mode gets its OWN scale/axis — see the note on this in an
+    # earlier round's fix: sharing one denominator between the two modes
+    # let cache-heavy days starve the "por projeto" bars to near-zero
+    # height. That's still true per-day, so the same split applies here.
+    max_pane = max(day_totals) or 1
+    max_tokens = max(day_token_totals) or 1
 
-    # Width scales with how many dated sessions are actually being plotted.
-    # main() passes the FULL --days-filtered pool here (not the -n-limited
-    # table/session-list set) specifically so --days controls this, rather
-    # than being masked by whatever -n happens to be. Clamped so a single
-    # day's handful of sessions doesn't stretch absurdly wide and a long
-    # history doesn't compress into illegibility.
-    width = max(320, min(40 + n * 12, 1000))
     height = 150
     padding_left = 45
     padding_right = 10
     padding_top = 10
     padding_bottom = 20
-    plot_width = width - padding_left - padding_right
-    plot_height = height - padding_top - padding_bottom
+    min_bar_width = 8
+    bar_gap = 2
+
+    # Bars represent DAYS now, not sessions, so n is naturally much
+    # smaller/bounded than the old per-session count ever was — but a
+    # long --days/--all history can still have many distinct days. Try
+    # the normal clamp-based width first; if that would squeeze bars
+    # below the 8px floor (dataviz's minimum mark size), size the chart
+    # to fit every bar at exactly the floor width instead and let it
+    # scroll horizontally — this function has already shipped two real
+    # geometry bugs from letting bar width shrink toward zero, so this
+    # floor is a hard rule, not a suggestion.
+    candidate_width = max(320, min(40 + n * 12, 1000))
+    plot_width = candidate_width - padding_left - padding_right
     step = plot_width / n
     bar_width = step * 0.6
+    if bar_width < min_bar_width:
+        step = min_bar_width + bar_gap
+        bar_width = min_bar_width
+        plot_width = step * n
+        width = plot_width + padding_left + padding_right
+        scrollable = True
+    else:
+        width = candidate_width
+        scrollable = False
+
+    plot_height = height - padding_top - padding_bottom
 
     def y_for(value, max_value):
         return padding_top + plot_height - (value / max_value) * plot_height
@@ -519,42 +555,67 @@ def render_trend_chart(records, group_colors):
     for t in range(tick_count):
         idx = round(t * (n - 1) / (tick_count - 1)) if tick_count > 1 else 0
         x = padding_left + idx * step + bar_width / 2
-        tick_date = format_date(ordered[idx].get("timestamp_start")).split(" ")[0]
+        day_dt = datetime.strptime(days[idx]["day"], "%Y-%m-%d")
+        tick_date = day_dt.strftime("%d/%m")
         x_axis.append(
             f'<text x="{x:.1f}" y="{height - 4}" class="chart-axis-label" text-anchor="middle">{tick_date}</text>'
         )
     x_axis_html = "".join(x_axis)
 
+    # Highlight band for the last 7 calendar days present in the data.
+    highlight_html = ""
+    last_day_dt = datetime.strptime(days[-1]["day"], "%Y-%m-%d")
+    highlight_start_idx = None
+    for i, day in enumerate(days):
+        day_dt = datetime.strptime(day["day"], "%Y-%m-%d")
+        if (last_day_dt - day_dt).days < 7:
+            highlight_start_idx = i
+            break
+    if highlight_start_idx is not None and highlight_start_idx > 0:
+        hx = padding_left + highlight_start_idx * step
+        hwidth = (n - highlight_start_idx) * step
+        highlight_html = (
+            f'<rect x="{hx:.1f}" y="{padding_top}" width="{hwidth:.1f}" height="{plot_height}" '
+            'class="chart-highlight-band" />'
+        )
+
     def bars_for_pane():
         bars = []
-        for i, (record, total) in enumerate(zip(ordered, totals)):
+        for i, day in enumerate(days):
             x = padding_left + i * step + (step - bar_width) / 2
-            session_id = record.get("session_id") or ""
-            date_str = format_date(record.get("timestamp_start"))
-            label = format_tokens(total)
-            project = record.get("project_path")
-            group_class = group_colors.get(project, "group-color-none")
-            y = y_for(total, max_pane)
-            bar_height = padding_top + plot_height - y
-            bars.append(
-                f'<rect x="{x:.1f}" y="{y:.1f}" width="{bar_width:.1f}" height="{bar_height:.1f}" '
-                f'class="chart-bar {group_class}" onclick="showSession(\'{session_id}\')">'
-                f"<title>{date_str} - {label} tokens</title></rect>"
-            )
+            by_project = {}
+            project_order = []
+            for r in day["records"]:
+                project = r.get("project_path")
+                if project not in by_project:
+                    by_project[project] = 0
+                    project_order.append(project)
+                by_project[project] += (r.get("input_tokens", 0) or 0) + (r.get("output_tokens", 0) or 0)
+            y_cursor = padding_top + plot_height
+            for project in project_order:
+                value = by_project[project]
+                if value <= 0:
+                    continue
+                seg_height = (value / max_pane) * plot_height if max_pane else 0
+                y_cursor -= seg_height
+                group_class = group_colors.get(project, "group-color-none")
+                project_label = os.path.basename(project.rstrip("/")) if project else "sem projeto"
+                bars.append(
+                    f'<rect x="{x:.1f}" y="{y_cursor:.1f}" width="{bar_width:.1f}" height="{seg_height:.1f}" '
+                    f'class="chart-bar {group_class}">'
+                    f"<title>{html.escape(project_label)} · {day['day']} - {format_tokens(value)} tokens</title></rect>"
+                )
         return "".join(bars)
 
     def bars_for_tokens():
         bars = []
-        for i, (record, total) in enumerate(zip(ordered, totals)):
+        for i, day in enumerate(days):
             x = padding_left + i * step + (step - bar_width) / 2
-            session_id = record.get("session_id") or ""
-            date_str = format_date(record.get("timestamp_start"))
-            label = format_tokens(total)
             segments = [
-                ("series-1", record.get("input_tokens", 0) or 0),
-                ("series-2", record.get("output_tokens", 0) or 0),
-                ("series-3", record.get("cache_read_tokens", 0) or 0),
-                ("series-4", record.get("cache_creation_tokens", 0) or 0),
+                ("series-1", sum(r.get("input_tokens", 0) or 0 for r in day["records"])),
+                ("series-2", sum(r.get("output_tokens", 0) or 0 for r in day["records"])),
+                ("series-3", sum(r.get("cache_read_tokens", 0) or 0 for r in day["records"])),
+                ("series-4", sum(r.get("cache_creation_tokens", 0) or 0 for r in day["records"])),
             ]
             y_cursor = padding_top + plot_height
             for css_class, value in segments:
@@ -564,27 +625,32 @@ def render_trend_chart(records, group_colors):
                 y_cursor -= seg_height
                 bars.append(
                     f'<rect x="{x:.1f}" y="{y_cursor:.1f}" width="{bar_width:.1f}" height="{seg_height:.1f}" '
-                    f'class="chart-bar {css_class}" onclick="showSession(\'{session_id}\')">'
-                    f"<title>{date_str} - {label} tokens</title></rect>"
+                    f'class="chart-bar {css_class}" onclick="highlightTokenType(\'{css_class}\')">'
+                    f"<title>{day['day']} - {format_tokens(value)} tokens</title></rect>"
                 )
         return "".join(bars)
 
     pane_svg = (
-        f'<svg viewBox="0 0 {width} {height}" class="trend-svg" id="chart-pane" preserveAspectRatio="xMidYMid meet">'
-        f"{build_y_axis(max_pane)}{x_axis_html}{bars_for_pane()}</svg>"
+        f'<svg viewBox="0 0 {width} {height}" class="trend-svg" id="chart-pane" preserveAspectRatio="xMidYMid meet" '
+        f'style="width:{width}px;min-width:{width}px">'
+        f"{highlight_html}{build_y_axis(max_pane)}{x_axis_html}{bars_for_pane()}</svg>"
     )
     tokens_svg = (
-        f'<svg viewBox="0 0 {width} {height}" class="trend-svg" id="chart-tokens" style="display:none" preserveAspectRatio="xMidYMid meet">'
-        f"{build_y_axis(max_tokens)}{x_axis_html}{bars_for_tokens()}</svg>"
+        f'<svg viewBox="0 0 {width} {height}" class="trend-svg" id="chart-tokens" preserveAspectRatio="xMidYMid meet" '
+        f'style="display:none;width:{width}px;min-width:{width}px">'
+        f"{highlight_html}{build_y_axis(max_tokens)}{x_axis_html}{bars_for_tokens()}</svg>"
     )
 
+    scroll_style = "overflow-x:auto;" if scrollable else ""
     return (
-        f'<div class="trend-container" style="max-width:{width}px;margin:0 auto;">'
+        '<div class="trend-container" style="max-width:1000px;margin:0 auto;">'
         '<div class="chart-toggle">'
-        '<span class="chart-toggle-btn active" id="toggle-pane" onclick="showChartMode(\'pane\')">por aba</span>'
+        '<span class="chart-toggle-btn active" id="toggle-pane" onclick="showChartMode(\'pane\')">por projeto</span>'
         '<span class="chart-toggle-btn" id="toggle-tokens" onclick="showChartMode(\'tokens\')">por tipo de token</span>'
         "</div>"
+        f'<div class="trend-scroll" style="{scroll_style}">'
         f"{pane_svg}{tokens_svg}"
+        "</div>"
         "</div>"
     )
 
@@ -653,7 +719,9 @@ def render_html(records, subagents_by_session, chart_records):
         }
       }
       .trend-container { padding: 12px 16px; border-bottom: 1px solid var(--border); }
-      .trend-svg { width: 100%; height: auto; display: block; margin: 0 auto; }
+      .trend-scroll { overflow-x: visible; }
+      .trend-svg { height: auto; display: block; margin: 0 auto; }
+      .chart-highlight-band { fill: var(--series-1); opacity: 0.06; }
       .chart-toggle { display: flex; gap: 6px; padding: 0 0 6px; font-size: 11px; }
       .chart-toggle-btn { padding: 3px 8px; border-radius: 4px; cursor: pointer; color: var(--text-muted); }
       .chart-toggle-btn.active { background: rgba(42, 120, 214, 0.15); border: 1px solid var(--series-1); color: var(--text-primary); }
