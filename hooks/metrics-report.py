@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import glob
 import html
 import json
 import os
@@ -53,6 +54,38 @@ def filter_by_days(records, days):
         if dt >= cutoff:
             filtered.append(r)
     return filtered
+
+
+def compute_project_first_seen(records):
+    first_seen = {}
+    for r in records:
+        project = r.get("project_path")
+        timestamp_start = r.get("timestamp_start")
+        if not project or not timestamp_start:
+            continue
+        if project not in first_seen or timestamp_start < first_seen[project]:
+            first_seen[project] = timestamp_start
+    return first_seen
+
+
+def get_open_projects(sessions_dir=None):
+    if sessions_dir is None:
+        sessions_dir = os.path.expanduser("~/.claude/sessions")
+    open_projects = set()
+    try:
+        paths = glob.glob(os.path.join(sessions_dir, "*.json"))
+    except Exception:
+        return open_projects
+    for path in paths:
+        try:
+            with open(path, "r") as f:
+                data = json.load(f)
+        except Exception:
+            continue
+        cwd = data.get("cwd")
+        if cwd:
+            open_projects.add(cwd)
+    return open_projects
 
 
 def assign_group_colors(records):
@@ -655,7 +688,64 @@ def render_trend_chart(records, group_colors):
     )
 
 
-def render_html(records, subagents_by_session, chart_records):
+def render_project_totals_chart(records, project_first_seen, open_projects):
+    totals = {}
+    for r in records:
+        project = r.get("project_path")
+        totals[project] = totals.get(project, 0) + (r.get("input_tokens", 0) or 0) + (r.get("output_tokens", 0) or 0)
+    if not totals:
+        return ""
+
+    ordered_projects = sorted(totals.keys(), key=lambda p: totals[p], reverse=True)
+    max_total = max(totals.values()) or 1
+
+    row_height = 24
+    bar_max_width = 300
+    label_x = 4
+    width = 460
+    height = len(ordered_projects) * row_height + 20
+
+    rows = []
+    y = 14
+    for project in ordered_projects:
+        total = totals[project]
+        label = os.path.basename(project.rstrip("/")) if project else "sem projeto"
+        title_attr = f' title="{html.escape(project)}"' if project else ""
+        bar_width = (total / max_total) * bar_max_width if max_total else 0
+        is_open = project in open_projects
+        bar_class = "project-color-open" if is_open else "project-color-historical"
+        days_running = ""
+        first_seen = project_first_seen.get(project)
+        if first_seen:
+            try:
+                first_dt = datetime.fromisoformat(first_seen.replace("Z", "+00:00")).astimezone()
+                days_running = f" · há {(datetime.now().astimezone() - first_dt).days} dias"
+            except (ValueError, AttributeError, TypeError):
+                days_running = ""
+        rows.append(
+            f'<text x="{label_x}" y="{y}" class="project-chart-label"{title_attr}>{html.escape(label)}</text>'
+            f'<rect x="{label_x}" y="{y + 6}" width="{bar_max_width}" height="14" class="project-chart-track" />'
+            f'<rect x="{label_x}" y="{y + 6}" width="{bar_width:.1f}" height="14" class="project-chart-bar {bar_class}" />'
+            f'<text x="{label_x + bar_max_width + 6}" y="{y + 17}" class="chart-axis-label">{format_tokens(total)}{days_running}</text>'
+        )
+        y += row_height
+
+    legend = (
+        '<div class="project-chart-legend">'
+        '<span class="legend-chip"><span class="legend-swatch project-color-historical"></span>histórico</span>'
+        '<span class="legend-chip"><span class="legend-swatch project-color-open"></span>sessão aberta agora</span>'
+        "</div>"
+    )
+    return (
+        '<div class="project-chart-container">'
+        '<h3 class="project-chart-title">Total de tokens por projeto</h3>'
+        f'<svg viewBox="0 0 {width} {height}" class="project-chart-svg">{"".join(rows)}</svg>'
+        f"{legend}"
+        "</div>"
+    )
+
+
+def render_html(records, subagents_by_session, chart_records, project_first_seen, open_projects):
     group_colors = assign_group_colors(chart_records)
     groups = build_project_groups(records, group_colors)
     rows_html = []
@@ -673,6 +763,7 @@ def render_html(records, subagents_by_session, chart_records):
             row_index += 1
 
     trend_html = render_trend_chart(chart_records, group_colors)
+    project_totals_html = render_project_totals_chart(chart_records, project_first_seen, open_projects)
 
     style = """
     <style>
@@ -722,6 +813,16 @@ def render_html(records, subagents_by_session, chart_records):
       .trend-scroll { overflow-x: visible; }
       .trend-svg { height: auto; display: block; margin: 0 auto; }
       .chart-highlight-band { fill: var(--series-1); opacity: 0.06; }
+      .project-chart-container { padding: 12px 16px; border-bottom: 1px solid var(--border); }
+      .project-chart-title { font-size: 13px; margin: 0 0 8px; color: var(--text-secondary); }
+      .project-chart-svg { width: 100%; max-width: 600px; display: block; }
+      .project-chart-label { font-size: 10px; fill: var(--text-primary); }
+      .project-chart-track { fill: var(--border); }
+      .project-chart-bar.project-color-historical { fill: var(--series-1); }
+      .project-chart-bar.project-color-open { fill: var(--series-2); }
+      .project-chart-legend { display: flex; gap: 14px; padding: 6px 0 0; font-size: 10px; color: var(--text-secondary); }
+      .legend-swatch.project-color-historical { background: var(--series-1); }
+      .legend-swatch.project-color-open { background: var(--series-2); }
       .chart-toggle { display: flex; gap: 6px; padding: 0 0 6px; font-size: 11px; }
       .chart-toggle-btn { padding: 3px 8px; border-radius: 4px; cursor: pointer; color: var(--text-muted); }
       .chart-toggle-btn.active { background: rgba(42, 120, 214, 0.15); border: 1px solid var(--series-1); color: var(--text-primary); }
@@ -861,6 +962,7 @@ def render_html(records, subagents_by_session, chart_records):
         f"<title>Claude Code Metrics Dashboard</title>{style}</head>"
         "<body>"
         f"{trend_html}"
+        f"{project_totals_html}"
         '<div class="main-row">'
         f'<div class="session-list">{render_composition_legend(compute_token_type_totals(records))}{render_session_header()}{"".join(rows_html)}</div>'
         f'<div class="detail-container">{"".join(panels_html)}</div>'
@@ -923,7 +1025,9 @@ def main():
         for record in records:
             record["task_label"] = get_task_label(record, label_cache)
         save_label_cache(label_cache)
-        html_output = render_html(records, subagents_by_session, chart_records)
+        project_first_seen = compute_project_first_seen(all_time_records)
+        open_projects = get_open_projects()
+        html_output = render_html(records, subagents_by_session, chart_records, project_first_seen, open_projects)
         output_path = os.path.expanduser("~/.claude/metrics/dashboard.html")
         with open(output_path, "w") as f:
             f.write(html_output)
