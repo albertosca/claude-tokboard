@@ -877,21 +877,38 @@ def main():
     parser.add_argument("-n", "--limit", type=int, default=20, help="Number of most recent sessions to show")
     parser.add_argument("--html", action="store_true", help="Generate an HTML dashboard instead of printing a table")
     parser.add_argument("--days", type=int, default=None, help="Only include sessions from the last N days")
+    parser.add_argument(
+        "--all", action="store_true",
+        help="Show the full history, bypassing the default 30-day active-project window",
+    )
     args = parser.parse_args()
 
     records = load_records(METRICS_FILE)
     records = filter_records(records, tag=args.tag, project=args.project)
-    records = filter_by_days(records, args.days)
-    if args.days is None:
-        # No period specified: the chart shouldn't render the entire
-        # unbounded history (thousands of bars, sub-pixel width, a
-        # multi-megabyte file) — fall back to the same -n-limited set the
-        # table shows, matching the original pre---days behavior.
+    all_time_records = records
+
+    if args.days is not None:
+        effective_days = args.days
+    elif args.all:
+        effective_days = None
+    else:
+        # No explicit --days and no --all: default to a 30-day
+        # active-project window rather than the entire history, so the
+        # everyday view stays focused on what's actually being worked on.
+        effective_days = 30
+
+    records = filter_by_days(records, effective_days)
+    if effective_days is None:
+        # No period in effect (either --all, or an explicit --days that
+        # somehow resolved to None — can't currently happen, but the
+        # bound-to--n fallback is the safe default either way): the chart
+        # shouldn't render the entire unbounded history — fall back to the
+        # same -n-limited set the table shows.
         records = records[-args.limit:]
         chart_records = records
     else:
-        # --days given: the chart reflects the whole period, uncapped by
-        # -n, so --days genuinely controls chart width as intended.
+        # A period IS in effect (the new 30-day default, or an explicit
+        # --days): the chart reflects the whole period, uncapped by -n.
         chart_records = records
         records = records[-args.limit:]
 
