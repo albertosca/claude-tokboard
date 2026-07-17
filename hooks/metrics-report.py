@@ -312,13 +312,26 @@ def format_summary(records):
     )
 
 
-def render_composition_legend():
+def compute_token_type_totals(records):
+    return {
+        "series-1": sum(r.get("input_tokens", 0) or 0 for r in records),
+        "series-2": sum(r.get("output_tokens", 0) or 0 for r in records),
+        "series-3": sum(r.get("cache_read_tokens", 0) or 0 for r in records),
+        "series-4": sum(r.get("cache_creation_tokens", 0) or 0 for r in records),
+    }
+
+
+def render_composition_legend(totals):
     return (
         '<div class="comp-legend">'
-        '<span class="legend-chip" onclick="highlightTokenType(\'series-1\')"><span class="legend-swatch series-1"></span>input</span>'
-        '<span class="legend-chip" onclick="highlightTokenType(\'series-2\')"><span class="legend-swatch series-2"></span>output</span>'
-        '<span class="legend-chip" onclick="highlightTokenType(\'series-3\')"><span class="legend-swatch series-3"></span>cache read</span>'
-        '<span class="legend-chip" onclick="highlightTokenType(\'series-4\')"><span class="legend-swatch series-4"></span>cache creation</span>'
+        f'<span class="legend-chip" onclick="highlightTokenType(\'series-1\')"><span class="legend-swatch series-1"></span>input · '
+        f'<span class="legend-total" data-series="series-1">{format_tokens(totals.get("series-1", 0))}</span></span>'
+        f'<span class="legend-chip" onclick="highlightTokenType(\'series-2\')"><span class="legend-swatch series-2"></span>output · '
+        f'<span class="legend-total" data-series="series-2">{format_tokens(totals.get("series-2", 0))}</span></span>'
+        f'<span class="legend-chip" onclick="highlightTokenType(\'series-3\')"><span class="legend-swatch series-3"></span>cache read · '
+        f'<span class="legend-total" data-series="series-3">{format_tokens(totals.get("series-3", 0))}</span></span>'
+        f'<span class="legend-chip" onclick="highlightTokenType(\'series-4\')"><span class="legend-swatch series-4"></span>cache creation · '
+        f'<span class="legend-total" data-series="series-4">{format_tokens(totals.get("series-4", 0))}</span></span>'
         "</div>"
     )
 
@@ -338,7 +351,10 @@ def render_composition_bar(record):
         if value <= 0:
             continue
         pct = value / total * 100
-        parts.append(f'<span class="comp-seg {css_class}" style="width:{pct:.2f}%"></span>')
+        parts.append(
+            f'<span class="comp-seg {css_class}" style="width:{pct:.2f}%" '
+            f'onclick="highlightTokenType(\'{css_class}\')"></span>'
+        )
     return f'<div class="comp-bar">{"".join(parts)}</div>'
 
 
@@ -681,6 +697,12 @@ def render_html(records, subagents_by_session, chart_records):
       .legend-swatch.series-2 { background: var(--series-2); }
       .legend-swatch.series-3 { background: var(--series-3); }
       .legend-swatch.series-4 { background: var(--series-4); }
+      .legend-total { font-weight: 600; }
+      body[data-highlight] .legend-total { opacity: 0.4; font-weight: 400; }
+      body[data-highlight="series-1"] .legend-total[data-series="series-1"],
+      body[data-highlight="series-2"] .legend-total[data-series="series-2"],
+      body[data-highlight="series-3"] .legend-total[data-series="series-3"],
+      body[data-highlight="series-4"] .legend-total[data-series="series-4"] { opacity: 1; font-weight: 700; font-size: 13px; }
       body[data-highlight="series-1"] .comp-seg:not(.series-1), body[data-highlight="series-1"] .chart-bar.series-2, body[data-highlight="series-1"] .chart-bar.series-3, body[data-highlight="series-1"] .chart-bar.series-4 { opacity: 0.25; }
       body[data-highlight="series-2"] .comp-seg:not(.series-2), body[data-highlight="series-2"] .chart-bar.series-1, body[data-highlight="series-2"] .chart-bar.series-3, body[data-highlight="series-2"] .chart-bar.series-4 { opacity: 0.25; }
       body[data-highlight="series-3"] .comp-seg:not(.series-3), body[data-highlight="series-3"] .chart-bar.series-1, body[data-highlight="series-3"] .chart-bar.series-2, body[data-highlight="series-3"] .chart-bar.series-4 { opacity: 0.25; }
@@ -772,7 +794,7 @@ def render_html(records, subagents_by_session, chart_records):
         "<body>"
         f"{trend_html}"
         '<div class="main-row">'
-        f'<div class="session-list">{render_composition_legend()}{render_session_header()}{"".join(rows_html)}</div>'
+        f'<div class="session-list">{render_composition_legend(compute_token_type_totals(records))}{render_session_header()}{"".join(rows_html)}</div>'
         f'<div class="detail-container">{"".join(panels_html)}</div>'
         "</div>"
         f"{script}"
