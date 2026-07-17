@@ -991,12 +991,17 @@ def main():
 
     if args.days is not None:
         effective_days = args.days
-    elif args.all:
+    elif args.all or not args.html:
+        # No explicit --days and no --all: only the --html dashboard
+        # defaults to a 30-day active-project window. Terminal-table mode
+        # keeps its original behavior (no default period) per this plan's
+        # "terminal mode stays behaviorally unchanged" constraint.
         effective_days = None
     else:
-        # No explicit --days and no --all: default to a 30-day
-        # active-project window rather than the entire history, so the
-        # everyday view stays focused on what's actually being worked on.
+        # No explicit --days and no --all, --html requested: default to a
+        # 30-day active-project window rather than the entire history, so
+        # the everyday dashboard view stays focused on what's actually
+        # being worked on.
         effective_days = 30
 
     records = filter_by_days(records, effective_days)
