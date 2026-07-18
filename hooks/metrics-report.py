@@ -1016,6 +1016,15 @@ def render_html(records, subagents_by_session, chart_records, project_first_seen
       var btn = document.getElementById('tab-btn-' + name);
       if (pane) { pane.classList.add('active'); }
       if (btn) { btn.classList.add('active'); }
+      // .trend-scroll lives inside the Panorama pane, which starts
+      // display:none (Sessões is always the default-active tab) -- an
+      // element in a display:none subtree reports scrollWidth 0, so
+      // scrolling it at page load (before any tab is ever switched) is a
+      // no-op. Re-run the scroll-to-end here, once the pane is actually
+      // visible, so it has real dimensions to scroll against.
+      if (pane) {
+        pane.querySelectorAll('.trend-scroll').forEach(function(el) { el.scrollLeft = el.scrollWidth; });
+      }
     }
     function toggleProjectsMore() {
       var svg = document.getElementById('project-chart-more');
@@ -1054,9 +1063,6 @@ def render_html(records, subagents_by_session, chart_records, project_first_seen
       if (paneBtn) { paneBtn.classList.toggle('active', mode === 'pane'); }
       if (tokensBtn) { tokensBtn.classList.toggle('active', mode === 'tokens'); }
     }
-    document.querySelectorAll('.trend-scroll').forEach(function(el) {
-      el.scrollLeft = el.scrollWidth;
-    });
     </script>
     """
     tabs_html = (
