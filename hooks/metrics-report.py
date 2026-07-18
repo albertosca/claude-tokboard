@@ -844,7 +844,7 @@ def render_html(records, subagents_by_session, chart_records, project_first_seen
       .chart-bar.series-4 { fill: var(--series-4); }
       body { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; margin: 0; background: var(--surface-1); color: var(--text-primary); }
       .main-row { display: flex; }
-      .session-list { width: 46%; border-right: 1px solid var(--border); max-height: calc(100vh - 20px); overflow-y: auto; overflow-x: auto; font-family: monospace; }
+      .session-list { width: 62%; border-right: 1px solid var(--border); max-height: calc(100vh - 20px); overflow-y: auto; overflow-x: auto; font-family: monospace; }
       .session-row { display: flex; align-items: center; gap: 8px; padding: 6px 10px; cursor: pointer; border-bottom: 1px solid var(--border); font-size: 12px; }
       .session-row:hover { background: rgba(42, 120, 214, 0.08); }
       .session-row.active { background: rgba(42, 120, 214, 0.16); font-weight: bold; }
