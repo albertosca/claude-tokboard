@@ -5,6 +5,7 @@ import html
 import json
 import os
 import subprocess
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 
 METRICS_FILE = os.path.expanduser("~/.claude/metrics/sessions.jsonl")
@@ -293,12 +294,16 @@ def save_label_cache(cache):
         json.dump(cache, f, indent=2)
 
 
+_NO_LABEL = "__no_label__"
+
+
 def get_task_label(record, cache):
     session_id = record.get("session_id")
     if not session_id:
         return None
     if session_id in cache:
-        return cache[session_id]
+        cached = cache[session_id]
+        return None if cached == _NO_LABEL else cached
 
     internal_name = record.get("internal_name")
     if internal_name and len(internal_name.split()) <= 6:
@@ -309,11 +314,11 @@ def get_task_label(record, cache):
     if not source:
         source = cold_summary_source(record.get("transcript_path"))
     if not source:
+        cache[session_id] = _NO_LABEL
         return None
 
     label = compress_to_label(source)
-    if label:
-        cache[session_id] = label
+    cache[session_id] = label or _NO_LABEL
     return label
 
 
@@ -338,15 +343,16 @@ def get_agent_label(subagent_record, cache):
     if not agent_id:
         return None
     if agent_id in cache:
-        return cache[agent_id]
+        cached = cache[agent_id]
+        return None if cached == _NO_LABEL else cached
 
     source = cold_summary_source(subagent_record.get("agent_transcript_path"))
     if not source:
+        cache[agent_id] = _NO_LABEL
         return None
 
     label = compress_to_label(source)
-    if label:
-        cache[agent_id] = label
+    cache[agent_id] = label or _NO_LABEL
     return label
 
 
@@ -1164,13 +1170,20 @@ def main():
     if args.html:
         subagent_records = load_records(SUBAGENTS_FILE)
         agent_label_cache = load_agent_label_cache()
-        for subagent in subagent_records:
-            subagent["agent_label"] = get_agent_label(subagent, agent_label_cache)
+        with ThreadPoolExecutor(max_workers=8) as executor:
+            agent_labels = list(
+                executor.map(lambda s: get_agent_label(s, agent_label_cache), subagent_records)
+            )
+        for subagent, label in zip(subagent_records, agent_labels):
+            subagent["agent_label"] = label
         save_agent_label_cache(agent_label_cache)
         subagents_by_session = group_subagents_by_session(subagent_records)
+
         label_cache = load_label_cache()
-        for record in records:
-            record["task_label"] = get_task_label(record, label_cache)
+        with ThreadPoolExecutor(max_workers=8) as executor:
+            task_labels = list(executor.map(lambda r: get_task_label(r, label_cache), records))
+        for record, label in zip(records, task_labels):
+            record["task_label"] = label
         save_label_cache(label_cache)
         project_first_seen = compute_project_first_seen(all_time_records)
         project_last_seen = compute_project_last_seen(all_time_records)
