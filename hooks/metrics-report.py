@@ -876,6 +876,14 @@ def render_html(records, subagents_by_session, chart_records, project_first_seen
       body[data-highlight="series-2"] .comp-seg:not(.series-2), body[data-highlight="series-2"] .chart-bar.series-1, body[data-highlight="series-2"] .chart-bar.series-3, body[data-highlight="series-2"] .chart-bar.series-4 { opacity: 0.25; }
       body[data-highlight="series-3"] .comp-seg:not(.series-3), body[data-highlight="series-3"] .chart-bar.series-1, body[data-highlight="series-3"] .chart-bar.series-2, body[data-highlight="series-3"] .chart-bar.series-4 { opacity: 0.25; }
       body[data-highlight="series-4"] .comp-seg:not(.series-4), body[data-highlight="series-4"] .chart-bar.series-1, body[data-highlight="series-4"] .chart-bar.series-2, body[data-highlight="series-4"] .chart-bar.series-3 { opacity: 0.25; }
+      body[data-highlight="series-1"] .comp-seg.series-1 { outline: 1px solid var(--series-1); outline-offset: 1px; }
+      body[data-highlight="series-2"] .comp-seg.series-2 { outline: 1px solid var(--series-2); outline-offset: 1px; }
+      body[data-highlight="series-3"] .comp-seg.series-3 { outline: 1px solid var(--series-3); outline-offset: 1px; }
+      body[data-highlight="series-4"] .comp-seg.series-4 { outline: 1px solid var(--series-4); outline-offset: 1px; }
+      body[data-highlight="series-1"] .chart-bar.series-1 { stroke: var(--series-1); stroke-width: 1.5px; }
+      body[data-highlight="series-2"] .chart-bar.series-2 { stroke: var(--series-2); stroke-width: 1.5px; }
+      body[data-highlight="series-3"] .chart-bar.series-3 { stroke: var(--series-3); stroke-width: 1.5px; }
+      body[data-highlight="series-4"] .chart-bar.series-4 { stroke: var(--series-4); stroke-width: 1.5px; }
       .comp-bar { display: flex; gap: 2px; width: 90px; height: 10px; flex-shrink: 0; background: var(--border); }
       .comp-bar-empty { background: var(--border); }
       .comp-seg.series-1 { background: var(--series-1); }
