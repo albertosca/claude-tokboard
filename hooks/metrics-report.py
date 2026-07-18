@@ -783,7 +783,7 @@ def render_project_totals_chart(records, project_first_seen, project_last_seen, 
 
     def render_rows(projects):
         rows = []
-        y = 14
+        y = 0
         for project in projects:
             total = totals[project]
             label = project_display_label(project)
@@ -794,9 +794,9 @@ def render_project_totals_chart(records, project_first_seen, project_last_seen, 
             days_running = project_days_running(project_first_seen, project)
             rows.append(
                 f'<text x="{label_x}" y="{y}" class="project-chart-label"{title_attr}>{html.escape(label)}</text>'
-                f'<rect x="{label_x}" y="{y + 6}" width="{bar_max_width}" height="14" class="project-chart-track" />'
-                f'<rect x="{label_x}" y="{y + 6}" width="{bar_width:.1f}" height="14" class="project-chart-bar {bar_class}" />'
-                f'<text x="{label_x + bar_max_width + 6}" y="{y + 17}" class="chart-axis-label">{format_tokens(total)}{days_running}</text>'
+                f'<rect x="{label_x}" y="{y + 9}" width="{bar_max_width}" height="14" class="project-chart-track" />'
+                f'<rect x="{label_x}" y="{y + 9}" width="{bar_width:.1f}" height="14" class="project-chart-bar {bar_class}" />'
+                f'<text x="{label_x + bar_max_width + 6}" y="{y + 20}" class="chart-axis-label">{format_tokens(total)}{days_running}</text>'
             )
             y += row_height
         height = len(projects) * row_height + 20
@@ -905,7 +905,7 @@ def render_html(records, subagents_by_session, chart_records, project_first_seen
       .project-chart-container { padding: 12px 16px; border-bottom: 1px solid var(--border); }
       .project-chart-title { font-size: 13px; margin: 0 0 8px; color: var(--text-secondary); }
       .project-chart-svg { width: 100%; max-width: 600px; display: block; }
-      .project-chart-label { font-size: 10px; fill: var(--text-primary); }
+      .project-chart-label { font-size: 10px; fill: var(--text-primary); font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
       .project-chart-track { fill: var(--border); }
       .project-chart-bar.project-color-historical { fill: var(--series-1); }
       .project-chart-bar.project-color-open { fill: var(--series-2); }
@@ -917,7 +917,7 @@ def render_html(records, subagents_by_session, chart_records, project_first_seen
       .trend-section-title { font-size: 13px; margin: 12px 0 8px; color: var(--text-secondary); }
       .trend-section-title:first-child { margin-top: 0; }
       .chart-gridline { stroke: var(--border); stroke-width: 1; }
-      .chart-axis-label { fill: var(--text-muted); font-size: 8px; }
+      .chart-axis-label { fill: var(--text-muted); font-size: 8px; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
       .chart-bar { cursor: pointer; }
       .chart-bar.group-color-1 { fill: var(--group-1); }
       .chart-bar.group-color-2 { fill: var(--group-2); }
