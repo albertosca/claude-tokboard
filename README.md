@@ -34,6 +34,23 @@ event in `~/.claude/settings.json` — see `albertosca/dotfiles`'s
 `config/claude/settings.json` for the exact hook configuration this
 project expects.
 
+## Terminal dashboard (TUI)
+
+A navigable terminal-native dashboard, feature-equivalent to the HTML
+one, for when a browser isn't convenient. Uses `textual` +
+`textual-plotext` (this project's only non-stdlib dependencies) —
+isolated to their own virtualenv:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements-tui.txt
+python3 hooks/metrics-tui.py
+```
+
+Same filtering flags as the HTML/table modes (`--tag`, `--project`,
+`-n`, `--days`, `--all`).
+
 ## Design docs
 
 Full design history in `docs/superpowers/specs/` and

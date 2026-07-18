@@ -1,0 +1,2 @@
+textual>=8.0
+textual-plotext>=1.0
