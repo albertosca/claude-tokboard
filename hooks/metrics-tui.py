@@ -159,26 +159,20 @@ class CompositionLegend(Static):
         ("series-4", "cache creation"),
     ]
 
-    def __init__(self, totals, **kwargs):
+    def __init__(self, totals, mr, **kwargs):
         super().__init__(**kwargs)
         self.totals = totals
+        self.mr = mr
 
     def render(self):
         chips = []
         for series, name in self.SERIES:
             total = self.totals.get(series, 0)
-            formatted = self._format(total)
+            formatted = self.mr.format_tokens(total)
             style = "bold reverse" if self.highlighted == series else ""
             chip = f"[{style}]{name} · {formatted}[/{style}]" if style else f"{name} · {formatted}"
             chips.append(chip)
         return "   ".join(chips)
-
-    def _format(self, n):
-        if abs(n) >= 1_000_000:
-            return f"{n / 1_000_000:.1f}M"
-        if abs(n) >= 1_000:
-            return f"{n / 1_000:.1f}k"
-        return str(n)
 
     def on_click(self, event):
         x = event.x
