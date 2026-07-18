@@ -1179,10 +1179,24 @@ def main():
         # then permanently lock in whichever thread wrote last, even if it
         # was the failure. Deduping also avoids redundant subprocess calls
         # for the same underlying record.
+        #
+        # The representative must be a SOURCE-BEARING duplicate when one
+        # exists, not just the first one seen: real data has sessions where
+        # the first-seen duplicate lacks internal_name/transcript_path
+        # (found during final review) - picking it as representative would
+        # generate no label, negative-cache the failure, and silently lose
+        # a label another duplicate of the same session could have
+        # produced. Falls back to first-seen only when no duplicate has a
+        # usable source.
         unique_agents = {}
         for subagent in subagent_records:
             key = subagent.get("agent_id")
-            if key is not None and key not in unique_agents:
+            if key is None:
+                continue
+            existing = unique_agents.get(key)
+            if existing is None:
+                unique_agents[key] = subagent
+            elif not existing.get("agent_transcript_path") and subagent.get("agent_transcript_path"):
                 unique_agents[key] = subagent
         agent_keys = list(unique_agents.keys())
         with ThreadPoolExecutor(max_workers=8) as executor:
@@ -1199,7 +1213,14 @@ def main():
         unique_sessions = {}
         for record in records:
             key = record.get("session_id")
-            if key is not None and key not in unique_sessions:
+            if key is None:
+                continue
+            existing = unique_sessions.get(key)
+            if existing is None:
+                unique_sessions[key] = record
+            elif not (existing.get("internal_name") or existing.get("transcript_path")) and (
+                record.get("internal_name") or record.get("transcript_path")
+            ):
                 unique_sessions[key] = record
         session_keys = list(unique_sessions.keys())
         with ThreadPoolExecutor(max_workers=8) as executor:
