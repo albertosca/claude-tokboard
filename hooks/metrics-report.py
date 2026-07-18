@@ -437,7 +437,7 @@ def render_composition_legend(totals):
     chips = []
     for css_class, name in SERIES_NAMES.items():
         chips.append(
-            f'<span class="legend-chip" data-series="{css_class}" onclick="highlightTokenType(\'{css_class}\')">'
+            f'<span class="legend-chip" data-series="{css_class}" onclick="highlightTokenType(\'{css_class}\', event)">'
             f'<span class="legend-swatch {css_class}"></span>{name} · '
             f'<span class="legend-total" data-series="{css_class}">{format_tokens(totals.get(css_class, 0))}</span></span>'
         )
@@ -463,7 +463,7 @@ def render_composition_bar(record):
         parts.append(
             f'<span class="comp-seg {css_class}" style="width:{pct:.2f}%" '
             f'title="{name} · {format_tokens(value)} ({pct:.0f}%)" '
-            f'onclick="highlightTokenType(\'{css_class}\')"></span>'
+            f'onclick="highlightTokenType(\'{css_class}\', event)"></span>'
         )
     return f'<div class="comp-bar">{"".join(parts)}</div>'
 
@@ -744,7 +744,7 @@ def render_trend_chart(records, group_colors):
                 y_cursor -= seg_height
                 bars.append(
                     f'<rect x="{x:.1f}" y="{y_cursor:.1f}" width="{bar_width:.1f}" height="{seg_height:.1f}" '
-                    f'class="chart-bar {css_class}" onclick="highlightTokenType(\'{css_class}\')">'
+                    f'class="chart-bar {css_class}" onclick="highlightTokenType(\'{css_class}\', event)">'
                     f"<title>{day['day']} - {format_tokens(value)} tokens</title></rect>"
                 )
         return "".join(bars)
@@ -967,7 +967,7 @@ def render_html(records, subagents_by_session, chart_records, project_first_seen
       .session-row .duration-col { width: 55px; flex-shrink: 0; text-align: right; }
       .session-row .comp-header { width: 90px; flex-shrink: 0; }
       .comp-legend { display: flex; gap: 14px; padding: 8px 10px; font-size: 11px; color: var(--text-secondary); border-bottom: 1px solid var(--border); font-family: monospace; }
-      .legend-chip { display: inline-flex; align-items: center; }
+      .legend-chip { display: inline-flex; align-items: center; cursor: pointer; }
       .legend-swatch { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 4px; }
       .legend-swatch.series-1 { background: var(--series-1); }
       .legend-swatch.series-2 { background: var(--series-2); }
@@ -976,26 +976,26 @@ def render_html(records, subagents_by_session, chart_records, project_first_seen
       .legend-total { font-weight: 600; }
       body[data-highlight] .legend-chip { opacity: 0.4; }
       body[data-highlight] .legend-chip .legend-total { font-weight: 400; }
-      body[data-highlight="series-1"] .legend-chip[data-series="series-1"],
-      body[data-highlight="series-2"] .legend-chip[data-series="series-2"],
-      body[data-highlight="series-3"] .legend-chip[data-series="series-3"],
-      body[data-highlight="series-4"] .legend-chip[data-series="series-4"] { opacity: 1; font-weight: 700; }
-      body[data-highlight="series-1"] .legend-chip[data-series="series-1"] .legend-total,
-      body[data-highlight="series-2"] .legend-chip[data-series="series-2"] .legend-total,
-      body[data-highlight="series-3"] .legend-chip[data-series="series-3"] .legend-total,
-      body[data-highlight="series-4"] .legend-chip[data-series="series-4"] .legend-total { font-weight: 700; font-size: 13px; opacity: 1; }
-      body[data-highlight="series-1"] .comp-seg:not(.series-1), body[data-highlight="series-1"] .chart-bar.series-2, body[data-highlight="series-1"] .chart-bar.series-3, body[data-highlight="series-1"] .chart-bar.series-4 { opacity: 0.25; }
-      body[data-highlight="series-2"] .comp-seg:not(.series-2), body[data-highlight="series-2"] .chart-bar.series-1, body[data-highlight="series-2"] .chart-bar.series-3, body[data-highlight="series-2"] .chart-bar.series-4 { opacity: 0.25; }
-      body[data-highlight="series-3"] .comp-seg:not(.series-3), body[data-highlight="series-3"] .chart-bar.series-1, body[data-highlight="series-3"] .chart-bar.series-2, body[data-highlight="series-3"] .chart-bar.series-4 { opacity: 0.25; }
-      body[data-highlight="series-4"] .comp-seg:not(.series-4), body[data-highlight="series-4"] .chart-bar.series-1, body[data-highlight="series-4"] .chart-bar.series-2, body[data-highlight="series-4"] .chart-bar.series-3 { opacity: 0.25; }
-      body[data-highlight="series-1"] .comp-seg.series-1 { outline: 1px solid var(--series-1); outline-offset: 1px; }
-      body[data-highlight="series-2"] .comp-seg.series-2 { outline: 1px solid var(--series-2); outline-offset: 1px; }
-      body[data-highlight="series-3"] .comp-seg.series-3 { outline: 1px solid var(--series-3); outline-offset: 1px; }
-      body[data-highlight="series-4"] .comp-seg.series-4 { outline: 1px solid var(--series-4); outline-offset: 1px; }
-      body[data-highlight="series-1"] .chart-bar.series-1 { stroke: var(--series-1); stroke-width: 1.5px; }
-      body[data-highlight="series-2"] .chart-bar.series-2 { stroke: var(--series-2); stroke-width: 1.5px; }
-      body[data-highlight="series-3"] .chart-bar.series-3 { stroke: var(--series-3); stroke-width: 1.5px; }
-      body[data-highlight="series-4"] .chart-bar.series-4 { stroke: var(--series-4); stroke-width: 1.5px; }
+      body[data-highlight~="series-1"] .legend-chip[data-series="series-1"],
+      body[data-highlight~="series-2"] .legend-chip[data-series="series-2"],
+      body[data-highlight~="series-3"] .legend-chip[data-series="series-3"],
+      body[data-highlight~="series-4"] .legend-chip[data-series="series-4"] { opacity: 1; font-weight: 700; }
+      body[data-highlight~="series-1"] .legend-chip[data-series="series-1"] .legend-total,
+      body[data-highlight~="series-2"] .legend-chip[data-series="series-2"] .legend-total,
+      body[data-highlight~="series-3"] .legend-chip[data-series="series-3"] .legend-total,
+      body[data-highlight~="series-4"] .legend-chip[data-series="series-4"] .legend-total { font-weight: 700; font-size: 13px; opacity: 1; }
+      body[data-highlight~="series-1"] .comp-seg:not(.series-1), body[data-highlight~="series-1"] .chart-bar.series-2, body[data-highlight~="series-1"] .chart-bar.series-3, body[data-highlight~="series-1"] .chart-bar.series-4 { opacity: 0.25; }
+      body[data-highlight~="series-2"] .comp-seg:not(.series-2), body[data-highlight~="series-2"] .chart-bar.series-1, body[data-highlight~="series-2"] .chart-bar.series-3, body[data-highlight~="series-2"] .chart-bar.series-4 { opacity: 0.25; }
+      body[data-highlight~="series-3"] .comp-seg:not(.series-3), body[data-highlight~="series-3"] .chart-bar.series-1, body[data-highlight~="series-3"] .chart-bar.series-2, body[data-highlight~="series-3"] .chart-bar.series-4 { opacity: 0.25; }
+      body[data-highlight~="series-4"] .comp-seg:not(.series-4), body[data-highlight~="series-4"] .chart-bar.series-1, body[data-highlight~="series-4"] .chart-bar.series-2, body[data-highlight~="series-4"] .chart-bar.series-3 { opacity: 0.25; }
+      body[data-highlight~="series-1"] .comp-seg.series-1 { outline: 1px solid var(--series-1); outline-offset: 1px; }
+      body[data-highlight~="series-2"] .comp-seg.series-2 { outline: 1px solid var(--series-2); outline-offset: 1px; }
+      body[data-highlight~="series-3"] .comp-seg.series-3 { outline: 1px solid var(--series-3); outline-offset: 1px; }
+      body[data-highlight~="series-4"] .comp-seg.series-4 { outline: 1px solid var(--series-4); outline-offset: 1px; }
+      body[data-highlight~="series-1"] .chart-bar.series-1 { stroke: var(--series-1); stroke-width: 1.5px; }
+      body[data-highlight~="series-2"] .chart-bar.series-2 { stroke: var(--series-2); stroke-width: 1.5px; }
+      body[data-highlight~="series-3"] .chart-bar.series-3 { stroke: var(--series-3); stroke-width: 1.5px; }
+      body[data-highlight~="series-4"] .chart-bar.series-4 { stroke: var(--series-4); stroke-width: 1.5px; }
       .comp-bar { display: flex; gap: 2px; width: 90px; height: 10px; flex-shrink: 0; background: var(--border); }
       .comp-bar-empty { background: var(--border); }
       .comp-seg.series-1 { background: var(--series-1); }
@@ -1090,13 +1090,25 @@ def render_html(records, subagents_by_session, chart_records, project_first_seen
       var icon = header.querySelector('.group-icon');
       if (icon) { icon.textContent = collapsed ? '▾' : '▸'; }
     }
-    function highlightTokenType(type) {
+    function highlightTokenType(type, event) {
       var body = document.body;
       var current = body.getAttribute('data-highlight');
-      if (current === type) {
+      var currentSet = current ? current.split(' ') : [];
+      var shiftHeld = event && event.shiftKey;
+      if (shiftHeld) {
+        var index = currentSet.indexOf(type);
+        if (index === -1) {
+          currentSet.push(type);
+        } else {
+          currentSet.splice(index, 1);
+        }
+      } else {
+        currentSet = (currentSet.length === 1 && currentSet[0] === type) ? [] : [type];
+      }
+      if (currentSet.length === 0) {
         body.removeAttribute('data-highlight');
       } else {
-        body.setAttribute('data-highlight', type);
+        body.setAttribute('data-highlight', currentSet.join(' '));
       }
     }
     </script>
