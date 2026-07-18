@@ -16,7 +16,7 @@ from textual.app import App, ComposeResult
 from textual.containers import Horizontal, VerticalScroll
 from textual.message import Message
 from textual.reactive import reactive
-from textual.widgets import Static, TabbedContent, TabPane, Tree
+from textual.widgets import Footer, Static, TabbedContent, TabPane, Tree
 from textual_plotext import PlotextPlot
 
 
@@ -332,6 +332,10 @@ class MetricsTUIApp(App):
                     self.data["project_last_seen"],
                     self.data["open_projects"],
                 )
+        yield Footer()
+
+    def on_mount(self):
+        self.query_one(Tree).focus()
 
     def on_tree_node_selected(self, event):
         session_data = event.node.data
