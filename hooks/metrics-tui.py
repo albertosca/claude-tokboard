@@ -13,6 +13,8 @@ import importlib.util
 import os
 
 from textual.containers import VerticalScroll
+from textual.message import Message
+from textual.reactive import reactive
 from textual.widgets import Static, Tree
 
 
@@ -140,6 +142,51 @@ class SessionDetailPanel(VerticalScroll):
                     f"{task:<40}{in_tok}/{out_tok:<8}{subagent.get('tool_call_count', 0):>8}{duration_str:>10}"
                 )
         self._body.update("\n".join(lines))
+
+
+class CompositionLegend(Static):
+    highlighted = reactive(None)
+
+    class Highlight(Message):
+        def __init__(self, series):
+            self.series = series
+            super().__init__()
+
+    SERIES = [
+        ("series-1", "input"),
+        ("series-2", "output"),
+        ("series-3", "cache read"),
+        ("series-4", "cache creation"),
+    ]
+
+    def __init__(self, totals, **kwargs):
+        super().__init__(**kwargs)
+        self.totals = totals
+
+    def render(self):
+        chips = []
+        for series, name in self.SERIES:
+            total = self.totals.get(series, 0)
+            formatted = self._format(total)
+            style = "bold reverse" if self.highlighted == series else ""
+            chip = f"[{style}]{name} · {formatted}[/{style}]" if style else f"{name} · {formatted}"
+            chips.append(chip)
+        return "   ".join(chips)
+
+    def _format(self, n):
+        if abs(n) >= 1_000_000:
+            return f"{n / 1_000_000:.1f}M"
+        if abs(n) >= 1_000:
+            return f"{n / 1_000:.1f}k"
+        return str(n)
+
+    def on_click(self, event):
+        x = event.x
+        chip_width = self.size.width // 4 if self.size.width else 0
+        index = min(x // max(chip_width, 1), 3) if chip_width else 0
+        series = self.SERIES[index][0]
+        self.highlighted = None if self.highlighted == series else series
+        self.post_message(self.Highlight(self.highlighted))
 
 
 def build_arg_parser():
