@@ -967,7 +967,8 @@ def render_html(records, subagents_by_session, chart_records, project_first_seen
       .session-row .duration-col { width: 55px; flex-shrink: 0; text-align: right; }
       .session-row .comp-header { width: 90px; flex-shrink: 0; }
       .comp-legend { display: flex; gap: 14px; padding: 8px 10px; font-size: 11px; color: var(--text-secondary); border-bottom: 1px solid var(--border); font-family: monospace; }
-      .legend-chip { display: inline-flex; align-items: center; cursor: pointer; }
+      .legend-chip { display: inline-flex; align-items: center; }
+      .comp-legend .legend-chip { cursor: pointer; }
       .legend-swatch { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 4px; }
       .legend-swatch.series-1 { background: var(--series-1); }
       .legend-swatch.series-2 { background: var(--series-2); }
