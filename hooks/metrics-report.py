@@ -731,27 +731,28 @@ def render_trend_chart(records, group_colors):
     )
     tokens_svg = (
         f'<svg viewBox="0 0 {width} {height}" class="trend-svg" id="chart-tokens" preserveAspectRatio="xMidYMid meet" '
-        f'style="display:none;width:{width}px;min-width:{width}px">'
+        f'style="width:{width}px;min-width:{width}px">'
         f"{highlight_html}{build_y_axis(max_tokens)}{x_axis_html}{bars_for_tokens()}</svg>"
     )
 
     # Always scrollable now, not just in the floor-hit (scrollable=True)
-    # case: with the width cap removed (this task), a long real history can
-    # make the chart genuinely very wide — the outer .trend-scroll container
-    # (CSS, always overflow-x:auto) keeps the page itself from breaking, and
-    # the auto-scroll-to-end script (below, in render_html) shows the most
-    # recent days by default rather than the oldest. data-floor-hit is kept
-    # purely as a debugging/testing signal for whether the (now much harder
-    # to reach, see the comment on candidate_width above) 8px floor engaged.
+    # case: with the width cap removed (an earlier round), a long real
+    # history can make the chart genuinely very wide — the outer
+    # .trend-scroll container (CSS, always overflow-x:auto) keeps the page
+    # itself from breaking, and the auto-scroll-to-end script (below, in
+    # render_html) shows the most recent days by default rather than the
+    # oldest. data-floor-hit is kept purely as a debugging/testing signal
+    # for whether the 8px floor engaged.
+    #
+    # Both modes render unconditionally now (round 5) - no more
+    # click-to-swap toggle, since a hidden chart's meaning wasn't
+    # discoverable without clicking first.
     return (
         '<div class="trend-container">'
-        '<div class="chart-toggle">'
-        '<span class="chart-toggle-btn active" id="toggle-pane" onclick="showChartMode(\'pane\')">por projeto</span>'
-        '<span class="chart-toggle-btn" id="toggle-tokens" onclick="showChartMode(\'tokens\')">por tipo de token</span>'
-        "</div>"
-        f'<div class="trend-scroll" data-floor-hit="{str(scrollable).lower()}">'
-        f"{pane_svg}{tokens_svg}"
-        "</div>"
+        '<h4 class="trend-section-title">por projeto</h4>'
+        f'<div class="trend-scroll" data-floor-hit="{str(scrollable).lower()}">{pane_svg}</div>'
+        '<h4 class="trend-section-title">por tipo de token</h4>'
+        f'<div class="trend-scroll" data-floor-hit="{str(scrollable).lower()}">{tokens_svg}</div>'
         "</div>"
     )
 
@@ -900,9 +901,8 @@ def render_html(records, subagents_by_session, chart_records, project_first_seen
       .project-chart-toggle:hover { text-decoration: underline; }
       .legend-swatch.project-color-historical { background: var(--series-1); }
       .legend-swatch.project-color-open { background: var(--series-2); }
-      .chart-toggle { display: flex; gap: 6px; padding: 0 0 6px; font-size: 11px; }
-      .chart-toggle-btn { padding: 3px 8px; border-radius: 4px; cursor: pointer; color: var(--text-muted); }
-      .chart-toggle-btn.active { background: rgba(42, 120, 214, 0.15); border: 1px solid var(--series-1); color: var(--text-primary); }
+      .trend-section-title { font-size: 13px; margin: 12px 0 8px; color: var(--text-secondary); }
+      .trend-section-title:first-child { margin-top: 0; }
       .chart-gridline { stroke: var(--border); stroke-width: 1; }
       .chart-axis-label { fill: var(--text-muted); font-size: 8px; }
       .chart-bar { cursor: pointer; }
@@ -1072,16 +1072,6 @@ def render_html(records, subagents_by_session, chart_records, project_first_seen
       } else {
         body.setAttribute('data-highlight', type);
       }
-    }
-    function showChartMode(mode) {
-      var pane = document.getElementById('chart-pane');
-      var tokens = document.getElementById('chart-tokens');
-      if (pane) { pane.style.display = mode === 'pane' ? 'block' : 'none'; }
-      if (tokens) { tokens.style.display = mode === 'tokens' ? 'block' : 'none'; }
-      var paneBtn = document.getElementById('toggle-pane');
-      var tokensBtn = document.getElementById('toggle-tokens');
-      if (paneBtn) { paneBtn.classList.toggle('active', mode === 'pane'); }
-      if (tokensBtn) { tokensBtn.classList.toggle('active', mode === 'tokens'); }
     }
     </script>
     """
