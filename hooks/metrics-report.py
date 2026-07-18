@@ -949,7 +949,7 @@ def render_html(records, subagents_by_session, chart_records, project_first_seen
       .session-header { position: sticky; top: 0; z-index: 1; background: var(--surface-1); font-weight: bold; color: var(--text-muted); font-size: 10px; cursor: default; border-bottom: 2px solid var(--border); }
       .session-header:hover { background: var(--surface-1); }
       .session-row .date-col { width: 65px; flex-shrink: 0; }
-      .session-row .label-col { width: 160px; flex-shrink: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .session-row .label-col { width: 300px; flex-shrink: 0; white-space: normal; word-break: break-word; }
       .session-row .tag-col { width: 50px; flex-shrink: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
       .session-row .branch-col { width: 70px; flex-shrink: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
       .session-row .duration-col { width: 55px; flex-shrink: 0; text-align: right; }
@@ -1014,7 +1014,8 @@ def render_html(records, subagents_by_session, chart_records, project_first_seen
       .detail-panel { padding: 16px; font-family: monospace; }
       .detail-close { float: right; background: none; border: none; font-size: 18px; cursor: pointer; color: var(--text-muted); line-height: 1; padding: 0; }
       .detail-close:hover { color: var(--text-primary); }
-      .subagent-row { display: grid; grid-template-columns: 0.6fr 1.6fr 0.9fr 0.6fr 0.7fr; padding: 4px 8px; border-bottom: 1px solid var(--border); }
+      .subagent-row { display: grid; grid-template-columns: 0.6fr minmax(200px, 1.6fr) 0.9fr 0.6fr 0.7fr; padding: 4px 8px; border-bottom: 1px solid var(--border); }
+      .subagent-row > span:nth-child(2) { white-space: normal; word-break: break-word; }
       .subagent-title { font-size: 12px; margin: 12px 0 6px; color: var(--text-secondary); }
       .subagent-row.subagent-header { font-weight: bold; color: var(--text-muted); font-size: 10px; border-bottom: 2px solid var(--border); }
       .subagent-row-odd { background: rgba(0,0,0,0.02); }
