@@ -94,6 +94,31 @@ def project_display_label(project_path):
     return os.path.basename(normalized) or normalized
 
 
+def compute_project_totals(records, project_last_seen):
+    totals = {}
+    for r in records:
+        project = r.get("project_path")
+        totals[project] = totals.get(project, 0) + (r.get("input_tokens", 0) or 0) + (r.get("output_tokens", 0) or 0)
+    # Sorted by most-recent-activity, not by token volume — answers "what
+    # have I touched lately" rather than "what costs the most," and pairs
+    # naturally with the top-10-then-collapse cutoff callers apply (the most
+    # recently active projects are the ones most likely to matter right now).
+    ordered_projects = sorted(totals.keys(), key=lambda p: project_last_seen.get(p, ""), reverse=True)
+    max_total = max(totals.values()) if totals else 0
+    return ordered_projects, totals, max_total
+
+
+def project_days_running(project_first_seen, project):
+    first_seen = project_first_seen.get(project)
+    if not first_seen:
+        return ""
+    try:
+        first_dt = datetime.fromisoformat(first_seen.replace("Z", "+00:00")).astimezone()
+        return f" · há {(datetime.now().astimezone() - first_dt).days} dias"
+    except (ValueError, AttributeError, TypeError):
+        return ""
+
+
 def get_open_projects(sessions_dir=None):
     if sessions_dir is None:
         sessions_dir = os.path.expanduser("~/.claude/sessions")
@@ -726,19 +751,10 @@ def render_trend_chart(records, group_colors):
 
 
 def render_project_totals_chart(records, project_first_seen, project_last_seen, open_projects):
-    totals = {}
-    for r in records:
-        project = r.get("project_path")
-        totals[project] = totals.get(project, 0) + (r.get("input_tokens", 0) or 0) + (r.get("output_tokens", 0) or 0)
+    ordered_projects, totals, max_total = compute_project_totals(records, project_last_seen)
     if not totals:
         return ""
-
-    # Sorted by most-recent-activity, not by token volume — answers "what
-    # have I touched lately" rather than "what costs the most," and pairs
-    # naturally with the top-10-then-collapse cutoff below (the most
-    # recently active projects are the ones most likely to matter right now).
-    ordered_projects = sorted(totals.keys(), key=lambda p: project_last_seen.get(p, ""), reverse=True)
-    max_total = max(totals.values()) or 1
+    max_total = max_total or 1
 
     row_height = 24
     bar_max_width = 300
@@ -755,14 +771,7 @@ def render_project_totals_chart(records, project_first_seen, project_last_seen, 
             bar_width = (total / max_total) * bar_max_width if max_total else 0
             is_open = project in open_projects
             bar_class = "project-color-open" if is_open else "project-color-historical"
-            days_running = ""
-            first_seen = project_first_seen.get(project)
-            if first_seen:
-                try:
-                    first_dt = datetime.fromisoformat(first_seen.replace("Z", "+00:00")).astimezone()
-                    days_running = f" · há {(datetime.now().astimezone() - first_dt).days} dias"
-                except (ValueError, AttributeError, TypeError):
-                    days_running = ""
+            days_running = project_days_running(project_first_seen, project)
             rows.append(
                 f'<text x="{label_x}" y="{y}" class="project-chart-label"{title_attr}>{html.escape(label)}</text>'
                 f'<rect x="{label_x}" y="{y + 6}" width="{bar_max_width}" height="14" class="project-chart-track" />'

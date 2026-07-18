@@ -241,15 +241,11 @@ class ProjectRankingList(Static):
         self.expanded = not self.expanded
 
     def render(self):
-        totals = {}
-        for r in self.chart_records:
-            project = r.get("project_path")
-            totals[project] = totals.get(project, 0) + (r.get("input_tokens", 0) or 0) + (r.get("output_tokens", 0) or 0)
+        ordered, totals, max_total = self.mr.compute_project_totals(self.chart_records, self.project_last_seen)
         if not totals:
             return "[dim]Sem dados.[/dim]"
 
-        ordered = sorted(totals.keys(), key=lambda p: self.project_last_seen.get(p, ""), reverse=True)
-        max_total = max(totals.values()) or 1
+        max_total = max_total or 1
         visible = ordered[:10]
         hidden = ordered[10:]
         shown = visible + (hidden if self.expanded else [])
@@ -261,16 +257,7 @@ class ProjectRankingList(Static):
             bar_len = int((total / max_total) * 30)
             is_open = project in self.open_projects
             bar_char = "█" if is_open else "▓"
-            days_running = ""
-            first_seen = self.project_first_seen.get(project)
-            if first_seen:
-                try:
-                    from datetime import datetime
-                    first_dt = datetime.fromisoformat(first_seen.replace("Z", "+00:00")).astimezone()
-                    days = (datetime.now().astimezone() - first_dt).days
-                    days_running = f" · há {days} dias"
-                except (ValueError, AttributeError, TypeError):
-                    pass
+            days_running = self.mr.project_days_running(self.project_first_seen, project)
             lines.append(f"{label[:24]:<26}{bar_char * bar_len:<32}{self.mr.format_tokens(total)}{days_running}")
 
         if hidden:
