@@ -783,7 +783,7 @@ def render_project_totals_chart(records, project_first_seen, project_last_seen, 
 
     def render_rows(projects):
         rows = []
-        y = 0
+        y = 14
         for project in projects:
             total = totals[project]
             label = project_display_label(project)
