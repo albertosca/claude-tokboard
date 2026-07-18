@@ -11,6 +11,7 @@ like every HTML dashboard round was. Requires textual + textual-plotext
 import argparse
 import importlib.util
 import os
+from concurrent.futures import ThreadPoolExecutor
 
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, VerticalScroll
@@ -52,16 +53,60 @@ def load_data(args, mr=None):
         chart_records = records
         records = records[-args.limit:]
 
+    # Parallelized + deduped the same way as metrics-report.py's --html
+    # branch (see that file's main() and docs/superpowers/plans/
+    # 2026-07-18-dashboard-round5.md): each uncached label can spawn a
+    # claude -p subprocess (up to 30s), and real data has duplicate
+    # session_id/agent_id records with no dedup anywhere upstream. Deduping
+    # to one representative per key before the thread pool avoids both a
+    # cross-thread race on the same cache key and redundant subprocess
+    # calls; preferring a source-bearing duplicate as representative avoids
+    # silently losing a real label to a source-less duplicate of the same
+    # key.
     subagent_records = mr.load_records(mr.SUBAGENTS_FILE)
     agent_label_cache = mr.load_agent_label_cache()
+    unique_agents = {}
     for subagent in subagent_records:
-        subagent["agent_label"] = mr.get_agent_label(subagent, agent_label_cache)
+        key = subagent.get("agent_id")
+        if key is None:
+            continue
+        existing = unique_agents.get(key)
+        if existing is None:
+            unique_agents[key] = subagent
+        elif not existing.get("agent_transcript_path") and subagent.get("agent_transcript_path"):
+            unique_agents[key] = subagent
+    agent_keys = list(unique_agents.keys())
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        agent_labels = list(
+            executor.map(lambda k: mr.get_agent_label(unique_agents[k], agent_label_cache), agent_keys)
+        )
+    label_by_agent_id = dict(zip(agent_keys, agent_labels))
+    for subagent in subagent_records:
+        subagent["agent_label"] = label_by_agent_id.get(subagent.get("agent_id"))
     mr.save_agent_label_cache(agent_label_cache)
     subagents_by_session = mr.group_subagents_by_session(subagent_records)
 
     label_cache = mr.load_label_cache()
+    unique_sessions = {}
     for record in records:
-        record["task_label"] = mr.get_task_label(record, label_cache)
+        key = record.get("session_id")
+        if key is None:
+            continue
+        existing = unique_sessions.get(key)
+        if existing is None:
+            unique_sessions[key] = record
+        elif not (existing.get("internal_name") or existing.get("transcript_path")) and (
+            record.get("internal_name") or record.get("transcript_path")
+        ):
+            unique_sessions[key] = record
+    session_keys = list(unique_sessions.keys())
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        task_labels = list(
+            executor.map(lambda k: mr.get_task_label(unique_sessions[k], label_cache), session_keys)
+        )
+    label_by_session_id = dict(zip(session_keys, task_labels))
+    for record in records:
+        record["task_label"] = label_by_session_id.get(record.get("session_id"))
     mr.save_label_cache(label_cache)
 
     project_first_seen = mr.compute_project_first_seen(all_time_records)
