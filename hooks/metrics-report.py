@@ -577,7 +577,13 @@ def render_trend_chart(records, group_colors):
     # scroll horizontally — this function has already shipped two real
     # geometry bugs from letting bar width shrink toward zero, so this
     # floor is a hard rule, not a suggestion.
-    candidate_width = max(320, min(40 + n * 12, 1000))
+    # Panorama is now this chart's own tab (it no longer shares the page
+    # with the session table), so there's meaningfully more room. Bumps the
+    # per-day step (12px -> 16px, ~33% wider bars in the common case) and
+    # drops the old 1000px ceiling entirely, matching "sem teto fixo." The
+    # 8px floor / scrollable-fallback logic below this point is UNCHANGED —
+    # this only changes how generously wide the non-floor-hit case renders.
+    candidate_width = max(400, 40 + n * 16)
     plot_width = candidate_width - padding_left - padding_right
     step = plot_width / n
     bar_width = step * 0.6
@@ -698,14 +704,21 @@ def render_trend_chart(records, group_colors):
         f"{highlight_html}{build_y_axis(max_tokens)}{x_axis_html}{bars_for_tokens()}</svg>"
     )
 
-    scroll_style = "overflow-x:auto;" if scrollable else ""
+    # Always scrollable now, not just in the floor-hit (scrollable=True)
+    # case: with the width cap removed (this task), a long real history can
+    # make the chart genuinely very wide — the outer .trend-scroll container
+    # (CSS, always overflow-x:auto) keeps the page itself from breaking, and
+    # the auto-scroll-to-end script (below, in render_html) shows the most
+    # recent days by default rather than the oldest. data-floor-hit is kept
+    # purely as a debugging/testing signal for whether the (now much harder
+    # to reach, see the comment on candidate_width above) 8px floor engaged.
     return (
-        '<div class="trend-container" style="max-width:1000px;margin:0 auto;">'
+        '<div class="trend-container">'
         '<div class="chart-toggle">'
         '<span class="chart-toggle-btn active" id="toggle-pane" onclick="showChartMode(\'pane\')">por projeto</span>'
         '<span class="chart-toggle-btn" id="toggle-tokens" onclick="showChartMode(\'tokens\')">por tipo de token</span>'
         "</div>"
-        f'<div class="trend-scroll" style="{scroll_style}">'
+        f'<div class="trend-scroll" data-floor-hit="{str(scrollable).lower()}">'
         f"{pane_svg}{tokens_svg}"
         "</div>"
         "</div>"
@@ -857,7 +870,7 @@ def render_html(records, subagents_by_session, chart_records, project_first_seen
         }
       }
       .trend-container { padding: 12px 16px; border-bottom: 1px solid var(--border); }
-      .trend-scroll { overflow-x: visible; }
+      .trend-scroll { overflow-x: auto; max-width: 100%; }
       .trend-svg { height: auto; display: block; margin: 0 auto; }
       .chart-highlight-band { fill: var(--series-1); opacity: 0.06; }
       .project-chart-container { padding: 12px 16px; border-bottom: 1px solid var(--border); }
@@ -1041,6 +1054,9 @@ def render_html(records, subagents_by_session, chart_records, project_first_seen
       if (paneBtn) { paneBtn.classList.toggle('active', mode === 'pane'); }
       if (tokensBtn) { tokensBtn.classList.toggle('active', mode === 'tokens'); }
     }
+    document.querySelectorAll('.trend-scroll').forEach(function(el) {
+      el.scrollLeft = el.scrollWidth;
+    });
     </script>
     """
     tabs_html = (
