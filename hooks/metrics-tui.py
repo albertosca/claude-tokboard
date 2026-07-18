@@ -16,6 +16,7 @@ from textual.containers import VerticalScroll
 from textual.message import Message
 from textual.reactive import reactive
 from textual.widgets import Static, Tree
+from textual_plotext import PlotextPlot
 
 
 def import_metrics_report():
@@ -181,6 +182,48 @@ class CompositionLegend(Static):
         series = self.SERIES[index][0]
         self.highlighted = None if self.highlighted == series else series
         self.post_message(self.Highlight(self.highlighted))
+
+
+class TrendChart(PlotextPlot):
+    def __init__(self, mr, chart_records, **kwargs):
+        super().__init__(**kwargs)
+        self.mr = mr
+        self.chart_records = chart_records
+        self.mode = "pane"
+
+    def on_mount(self):
+        self.render_chart()
+
+    def toggle_mode(self):
+        self.mode = "tokens" if self.mode == "pane" else "pane"
+        self.render_chart()
+
+    def render_chart(self):
+        days = self.mr.aggregate_by_day(self.chart_records)
+        self.plt.clear_data()
+        if len(days) < 2:
+            self.refresh()
+            return
+        labels = [d["day"][5:] for d in days]  # MM-DD
+        if self.mode == "pane":
+            totals = [
+                sum((r.get("input_tokens", 0) or 0) + (r.get("output_tokens", 0) or 0) for r in d["records"])
+                for d in days
+            ]
+            self.plt.bar(labels, totals)
+            self.plt.title("Tokens por dia (por projeto)")
+        else:
+            input_totals = [sum(r.get("input_tokens", 0) or 0 for r in d["records"]) for d in days]
+            output_totals = [sum(r.get("output_tokens", 0) or 0 for r in d["records"]) for d in days]
+            cache_read_totals = [sum(r.get("cache_read_tokens", 0) or 0 for r in d["records"]) for d in days]
+            cache_creation_totals = [sum(r.get("cache_creation_tokens", 0) or 0 for r in d["records"]) for d in days]
+            self.plt.stacked_bar(
+                labels,
+                [input_totals, output_totals, cache_read_totals, cache_creation_totals],
+                labels=["input", "output", "cache read", "cache creation"],
+            )
+            self.plt.title("Tokens por dia (por tipo de token)")
+        self.refresh()
 
 
 def build_arg_parser():
