@@ -515,24 +515,31 @@ def render_detail_panel(session_id, subagents, is_active):
     if not subagents:
         body = '<p class="empty">Nenhum subagente nesta sessão.</p>'
     else:
-        title = f'<h4 class="subagent-title">Subagentes despachados ({len(subagents)})</h4>'
+        ordered = sorted(subagents, key=lambda s: s.get("timestamp_start") or "", reverse=True)
+        title = f'<h4 class="subagent-title">Subagentes despachados ({len(ordered)})</h4>'
         header = (
             '<div class="subagent-row subagent-header">'
-            "<span>tarefa</span><span>tokens</span><span>tools</span><span>duração</span>"
+            "<span>data</span><span>tarefa</span><span>tokens</span><span>tools</span><span>duração</span>"
             "</div>"
         )
         rows = [header]
-        for i, subagent in enumerate(subagents):
+        for i, subagent in enumerate(ordered):
             duration = subagent.get("duration_seconds")
             duration_str = f"{duration:.0f}s" if duration is not None else "-"
             agent_type = html.escape(subagent.get("agent_type") or "-")
-            agent_label = html.escape(subagent.get("agent_label") or "-")
+            agent_label = subagent.get("agent_label")
+            if agent_label:
+                task_text = f"{agent_type} — {html.escape(agent_label)}"
+            else:
+                task_text = f"{agent_type} (sem transcript salvo)"
+            date_str = format_date(subagent.get("timestamp_start"))
             in_tok = format_tokens(subagent.get("input_tokens", 0))
             out_tok = format_tokens(subagent.get("output_tokens", 0))
             zebra_class = " subagent-row-odd" if i % 2 == 1 else ""
             rows.append(
                 f'<div class="subagent-row{zebra_class}">'
-                f"<span>{agent_type} — {agent_label}</span>"
+                f"<span>{date_str}</span>"
+                f"<span>{task_text}</span>"
                 f'<span>{in_tok}/{out_tok} tok</span>'
                 f'<span>{subagent.get("tool_call_count", 0)} tools</span>'
                 f"<span>{duration_str}</span>"
@@ -1001,7 +1008,7 @@ def render_html(records, subagents_by_session, chart_records, project_first_seen
       .detail-panel { padding: 16px; font-family: monospace; }
       .detail-close { float: right; background: none; border: none; font-size: 18px; cursor: pointer; color: var(--text-muted); line-height: 1; padding: 0; }
       .detail-close:hover { color: var(--text-primary); }
-      .subagent-row { display: grid; grid-template-columns: 1.6fr 0.9fr 0.6fr 0.7fr; padding: 4px 8px; border-bottom: 1px solid var(--border); }
+      .subagent-row { display: grid; grid-template-columns: 0.6fr 1.6fr 0.9fr 0.6fr 0.7fr; padding: 4px 8px; border-bottom: 1px solid var(--border); }
       .subagent-title { font-size: 12px; margin: 12px 0 6px; color: var(--text-secondary); }
       .subagent-row.subagent-header { font-weight: bold; color: var(--text-muted); font-size: 10px; border-bottom: 2px solid var(--border); }
       .subagent-row-odd { background: rgba(0,0,0,0.02); }
