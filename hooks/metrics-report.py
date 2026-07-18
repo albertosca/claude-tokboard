@@ -487,6 +487,7 @@ def render_detail_panel(session_id, subagents, is_active):
         body = "\n".join(rows)
     return (
         f'<div class="detail-panel" id="detail-{session_id}" style="display:{display}">'
+        f'<button class="detail-close" onclick="closeDetail(\'{session_id}\')" aria-label="Fechar">×</button>'
         f"<h3>{session_id}</h3>{title}{body}</div>"
     )
 
@@ -750,17 +751,14 @@ def render_html(records, subagents_by_session, chart_records, project_first_seen
     groups = build_project_groups(records, group_colors)
     rows_html = []
     panels_html = []
-    row_index = 0
     for group_index, group in enumerate(groups):
         rows_html.append(render_group_header(group_index, group))
         for record in group["records"]:
             session_id = record.get("session_id") or ""
-            is_active = row_index == 0
-            rows_html.append(render_session_row(record, is_active, group_colors, group_index))
+            rows_html.append(render_session_row(record, False, group_colors, group_index))
             panels_html.append(
-                render_detail_panel(session_id, subagents_by_session.get(session_id, []), is_active)
+                render_detail_panel(session_id, subagents_by_session.get(session_id, []), False)
             )
-            row_index += 1
 
     trend_html = render_trend_chart(chart_records, group_colors)
     project_totals_html = render_project_totals_chart(chart_records, project_first_seen, open_projects)
@@ -912,6 +910,8 @@ def render_html(records, subagents_by_session, chart_records, project_first_seen
       .group-icon { width: 10px; display: inline-block; }
       .detail-container { flex: 1; }
       .detail-panel { padding: 16px; font-family: monospace; }
+      .detail-close { float: right; background: none; border: none; font-size: 18px; cursor: pointer; color: var(--text-muted); line-height: 1; padding: 0; }
+      .detail-close:hover { color: var(--text-primary); }
       .subagent-row { display: grid; grid-template-columns: 1.6fr 0.9fr 0.6fr 0.7fr; padding: 4px 8px; border-bottom: 1px solid var(--border); }
       .subagent-title { font-size: 12px; margin: 12px 0 6px; color: var(--text-secondary); }
       .subagent-row.subagent-header { font-weight: bold; color: var(--text-muted); font-size: 10px; border-bottom: 2px solid var(--border); }
@@ -933,6 +933,12 @@ def render_html(records, subagents_by_session, chart_records, project_first_seen
       var panel = document.getElementById('detail-' + id);
       if (panel) { panel.style.display = 'block'; }
       if (row) { row.classList.add('active'); }
+    }
+    function closeDetail(id) {
+      var panel = document.getElementById('detail-' + id);
+      if (panel) { panel.style.display = 'none'; }
+      var row = document.getElementById('row-' + id);
+      if (row) { row.classList.remove('active'); }
     }
     function toggleGroup(id) {
       var header = document.getElementById('group-' + id);
