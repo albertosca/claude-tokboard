@@ -12,6 +12,9 @@ import argparse
 import importlib.util
 import os
 
+from textual.containers import VerticalScroll
+from textual.widgets import Static, Tree
+
 
 def import_metrics_report():
     spec = importlib.util.spec_from_file_location(
@@ -69,6 +72,74 @@ def load_data(args, mr=None):
         "project_last_seen": project_last_seen,
         "open_projects": open_projects,
     }
+
+
+def build_session_tree(records, mr):
+    group_colors = mr.assign_group_colors(records)
+    groups = mr.build_project_groups(records, group_colors)
+    tree = Tree("Sessões")
+    tree.show_root = False
+    for group in groups:
+        project_path = group["project"]
+        label = mr.project_display_label(project_path)
+        total_tokens = sum(
+            (r.get("input_tokens", 0) or 0) + (r.get("output_tokens", 0) or 0)
+            for r in group["records"]
+        )
+        group_node = tree.root.add(
+            f"{label} ({len(group['records'])} sessões · {mr.format_tokens(total_tokens)} tokens)",
+            expand=False,
+        )
+        for record in group["records"]:
+            session_id = record.get("session_id") or ""
+            date_str = mr.format_date(record.get("timestamp_start"))
+            task_label = record.get("task_label") or "-"
+            tokens = mr.format_tokens(
+                (record.get("input_tokens", 0) or 0) + (record.get("output_tokens", 0) or 0)
+            )
+            duration = record.get("duration_seconds")
+            duration_str = f"{duration:.0f}s" if duration is not None else "-"
+            group_node.add_leaf(
+                f"{session_id[:12]:<14}{date_str:<14}{task_label[:28]:<30}{tokens:>8}   {duration_str:>7}",
+                data={"session_id": session_id},
+            )
+    return tree
+
+
+class SessionDetailPanel(VerticalScroll):
+    def __init__(self, mr, **kwargs):
+        super().__init__(**kwargs)
+        self.mr = mr
+        self._body = Static("")
+
+    def compose(self):
+        yield self._body
+
+    def clear(self):
+        self._body.update("")
+
+    def show_session(self, session_id, subagents):
+        lines = [f"[bold]{session_id}[/bold]", ""]
+        if not subagents:
+            lines.append("[dim]Nenhum subagente nesta sessão.[/dim]")
+        else:
+            lines.append(f"[bold]Subagentes despachados ({len(subagents)})[/bold]")
+            lines.append(f"{'tarefa':<40}{'tokens':>12}{'tools':>8}{'duração':>10}")
+            for i, subagent in enumerate(subagents):
+                agent_type = subagent.get("agent_type") or "-"
+                agent_label = subagent.get("agent_label") or "-"
+                in_tok = self.mr.format_tokens(subagent.get("input_tokens", 0))
+                out_tok = self.mr.format_tokens(subagent.get("output_tokens", 0))
+                duration = subagent.get("duration_seconds")
+                duration_str = f"{duration:.0f}s" if duration is not None else "-"
+                task = f"{agent_type} — {agent_label}"[:38]
+                style = "on #202020" if i % 2 == 1 else ""
+                lines.append(
+                    f"[{style}]{task:<40}{in_tok}/{out_tok:<8}{subagent.get('tool_call_count', 0):>8}{duration_str:>10}[/{style}]"
+                    if style else
+                    f"{task:<40}{in_tok}/{out_tok:<8}{subagent.get('tool_call_count', 0):>8}{duration_str:>10}"
+                )
+        self._body.update("\n".join(lines))
 
 
 def build_arg_parser():
