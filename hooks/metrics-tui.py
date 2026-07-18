@@ -186,11 +186,15 @@ class CompositionLegend(Static):
 
 
 class TrendChart(PlotextPlot):
+    SERIES_KEYS = ["series-1", "series-2", "series-3", "series-4"]
+    SERIES_COLORS = ["green", "blue", "magenta", "orange"]
+
     def __init__(self, mr, chart_records, **kwargs):
         super().__init__(**kwargs)
         self.mr = mr
         self.chart_records = chart_records
         self.mode = "pane"
+        self.highlighted = None
 
     def on_mount(self):
         self.render_chart()
@@ -198,6 +202,11 @@ class TrendChart(PlotextPlot):
     def toggle_mode(self):
         self.mode = "tokens" if self.mode == "pane" else "pane"
         self.render_chart()
+
+    def set_highlight(self, series):
+        self.highlighted = series
+        if self.mode == "tokens":
+            self.render_chart()
 
     def render_chart(self):
         days = self.mr.aggregate_by_day(self.chart_records)
@@ -218,10 +227,18 @@ class TrendChart(PlotextPlot):
             output_totals = [sum(r.get("output_tokens", 0) or 0 for r in d["records"]) for d in days]
             cache_read_totals = [sum(r.get("cache_read_tokens", 0) or 0 for r in d["records"]) for d in days]
             cache_creation_totals = [sum(r.get("cache_creation_tokens", 0) or 0 for r in d["records"]) for d in days]
+            if self.highlighted:
+                color = [
+                    self.SERIES_COLORS[i] if key == self.highlighted else "gray"
+                    for i, key in enumerate(self.SERIES_KEYS)
+                ]
+            else:
+                color = self.SERIES_COLORS
             self.plt.stacked_bar(
                 labels,
                 [input_totals, output_totals, cache_read_totals, cache_creation_totals],
                 labels=["input", "output", "cache read", "cache creation"],
+                color=color,
             )
             self.plt.title("Tokens por dia (por tipo de token)")
         self.refresh()
@@ -329,6 +346,9 @@ class MetricsTUIApp(App):
 
     def action_toggle_more_projects(self):
         self.query_one(ProjectRankingList).toggle_more()
+
+    def on_composition_legend_highlight(self, event):
+        self.query_one(TrendChart).set_highlight(event.series)
 
 
 def main():
