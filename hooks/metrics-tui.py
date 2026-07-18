@@ -226,6 +226,63 @@ class TrendChart(PlotextPlot):
         self.refresh()
 
 
+class ProjectRankingList(Static):
+    expanded = reactive(False)
+
+    def __init__(self, mr, chart_records, project_first_seen, project_last_seen, open_projects, **kwargs):
+        super().__init__(**kwargs)
+        self.mr = mr
+        self.chart_records = chart_records
+        self.project_first_seen = project_first_seen
+        self.project_last_seen = project_last_seen
+        self.open_projects = open_projects
+
+    def toggle_more(self):
+        self.expanded = not self.expanded
+
+    def render(self):
+        totals = {}
+        for r in self.chart_records:
+            project = r.get("project_path")
+            totals[project] = totals.get(project, 0) + (r.get("input_tokens", 0) or 0) + (r.get("output_tokens", 0) or 0)
+        if not totals:
+            return "[dim]Sem dados.[/dim]"
+
+        ordered = sorted(totals.keys(), key=lambda p: self.project_last_seen.get(p, ""), reverse=True)
+        max_total = max(totals.values()) or 1
+        visible = ordered[:10]
+        hidden = ordered[10:]
+        shown = visible + (hidden if self.expanded else [])
+
+        lines = ["[bold]Total de tokens por projeto[/bold]", ""]
+        for project in shown:
+            total = totals[project]
+            label = self.mr.project_display_label(project)
+            bar_len = int((total / max_total) * 30)
+            is_open = project in self.open_projects
+            bar_char = "█" if is_open else "▓"
+            days_running = ""
+            first_seen = self.project_first_seen.get(project)
+            if first_seen:
+                try:
+                    from datetime import datetime
+                    first_dt = datetime.fromisoformat(first_seen.replace("Z", "+00:00")).astimezone()
+                    days = (datetime.now().astimezone() - first_dt).days
+                    days_running = f" · há {days} dias"
+                except (ValueError, AttributeError, TypeError):
+                    pass
+            lines.append(f"{label[:24]:<26}{bar_char * bar_len:<32}{self.mr.format_tokens(total)}{days_running}")
+
+        if hidden:
+            toggle_label = "▾ menos" if self.expanded else f"▸ + {len(hidden)} projetos históricos"
+            lines.append("")
+            lines.append(f"[dim]{toggle_label}[/dim]")
+
+        lines.append("")
+        lines.append("[dim]█ sessão aberta agora   ▓ histórico[/dim]")
+        return "\n".join(lines)
+
+
 def build_arg_parser():
     parser = argparse.ArgumentParser(description="Terminal (TUI) dashboard for Claude Code session metrics.")
     parser.add_argument("--tag", default=None, help="Filter by session tag")
