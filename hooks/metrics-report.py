@@ -189,6 +189,20 @@ def format_tokens(n):
     return str(n)
 
 
+def format_duration(seconds):
+    if seconds is None:
+        return "-"
+    seconds = int(seconds)
+    if seconds < 60:
+        return f"{seconds}s"
+    minutes = seconds / 60
+    if minutes < 60:
+        return f"{minutes:.0f}min"
+    hours = int(minutes // 60)
+    remaining_minutes = int(minutes % 60)
+    return f"{hours}h{remaining_minutes:02d}min"
+
+
 def format_date(timestamp_start):
     if not timestamp_start:
         return "-"
@@ -461,8 +475,7 @@ def render_session_row(record, is_active, group_colors, group_index):
     tmux_window = html.escape(record.get("tmux_window") or "-")
     task_label = html.escape(record.get("task_label") or "-")
     date_str = format_date(record.get("timestamp_start"))
-    duration = record.get("duration_seconds")
-    duration_str = f"{duration:.0f}s" if duration is not None else "-"
+    duration_str = format_duration(record.get("duration_seconds"))
     total_tokens = format_tokens((record.get("input_tokens", 0) or 0) + (record.get("output_tokens", 0) or 0))
     active_class = " active" if is_active else ""
     group_class = group_colors.get(record.get("project_path"), "group-color-none")
@@ -530,8 +543,7 @@ def render_detail_panel(session_id, subagents, is_active):
         )
         rows = [header]
         for i, subagent in enumerate(ordered):
-            duration = subagent.get("duration_seconds")
-            duration_str = f"{duration:.0f}s" if duration is not None else "-"
+            duration_str = format_duration(subagent.get("duration_seconds"))
             agent_type = html.escape(subagent.get("agent_type") or "-")
             agent_label = subagent.get("agent_label")
             if agent_label:
