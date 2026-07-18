@@ -1170,20 +1170,45 @@ def main():
     if args.html:
         subagent_records = load_records(SUBAGENTS_FILE)
         agent_label_cache = load_agent_label_cache()
+        # Real data has duplicate agent_id/session_id records (the metrics
+        # log has no dedup). Deduping to one representative per key before
+        # fanning out to the thread pool guarantees each key is processed
+        # by exactly one thread - without this, two threads racing on the
+        # same key could interleave a real label with a failed one, and
+        # negative-caching (get_agent_label/get_task_label above) would
+        # then permanently lock in whichever thread wrote last, even if it
+        # was the failure. Deduping also avoids redundant subprocess calls
+        # for the same underlying record.
+        unique_agents = {}
+        for subagent in subagent_records:
+            key = subagent.get("agent_id")
+            if key is not None and key not in unique_agents:
+                unique_agents[key] = subagent
+        agent_keys = list(unique_agents.keys())
         with ThreadPoolExecutor(max_workers=8) as executor:
             agent_labels = list(
-                executor.map(lambda s: get_agent_label(s, agent_label_cache), subagent_records)
+                executor.map(lambda k: get_agent_label(unique_agents[k], agent_label_cache), agent_keys)
             )
-        for subagent, label in zip(subagent_records, agent_labels):
-            subagent["agent_label"] = label
+        label_by_agent_id = dict(zip(agent_keys, agent_labels))
+        for subagent in subagent_records:
+            subagent["agent_label"] = label_by_agent_id.get(subagent.get("agent_id"))
         save_agent_label_cache(agent_label_cache)
         subagents_by_session = group_subagents_by_session(subagent_records)
 
         label_cache = load_label_cache()
+        unique_sessions = {}
+        for record in records:
+            key = record.get("session_id")
+            if key is not None and key not in unique_sessions:
+                unique_sessions[key] = record
+        session_keys = list(unique_sessions.keys())
         with ThreadPoolExecutor(max_workers=8) as executor:
-            task_labels = list(executor.map(lambda r: get_task_label(r, label_cache), records))
-        for record, label in zip(records, task_labels):
-            record["task_label"] = label
+            task_labels = list(
+                executor.map(lambda k: get_task_label(unique_sessions[k], label_cache), session_keys)
+            )
+        label_by_session_id = dict(zip(session_keys, task_labels))
+        for record in records:
+            record["task_label"] = label_by_session_id.get(record.get("session_id"))
         save_label_cache(label_cache)
         project_first_seen = compute_project_first_seen(all_time_records)
         project_last_seen = compute_project_last_seen(all_time_records)
