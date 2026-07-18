@@ -68,6 +68,32 @@ def compute_project_first_seen(records):
     return first_seen
 
 
+def compute_project_last_seen(records):
+    last_seen = {}
+    for r in records:
+        project = r.get("project_path")
+        timestamp_start = r.get("timestamp_start")
+        if not project or not timestamp_start:
+            continue
+        if project not in last_seen or timestamp_start > last_seen[project]:
+            last_seen[project] = timestamp_start
+    return last_seen
+
+
+def project_display_label(project_path):
+    if not project_path:
+        return "sem projeto"
+    normalized = project_path.rstrip("/")
+    marker = "/.claude/worktrees/"
+    if marker in normalized:
+        parent_path, _, remainder = normalized.partition(marker)
+        worktree_name = remainder.split("/")[0]
+        if worktree_name:
+            parent_label = os.path.basename(parent_path.rstrip("/")) or parent_path
+            return f"{parent_label} / {worktree_name}"
+    return os.path.basename(normalized) or normalized
+
+
 def get_open_projects(sessions_dir=None):
     if sessions_dir is None:
         sessions_dir = os.path.expanduser("~/.claude/sessions")
@@ -421,10 +447,7 @@ def render_session_row(record, is_active, group_colors, group_index):
 
 def render_group_header(group_index, group):
     project_path = group["project"]
-    if project_path:
-        label = os.path.basename(project_path.rstrip("/")) or project_path
-    else:
-        label = "sem projeto"
+    label = project_display_label(project_path)
     count = len(group["records"])
     total_tokens = format_tokens(
         sum((r.get("input_tokens", 0) or 0) + (r.get("output_tokens", 0) or 0) for r in group["records"])
@@ -633,7 +656,7 @@ def render_trend_chart(records, group_colors):
                 seg_height = (value / max_pane) * plot_height if max_pane else 0
                 y_cursor -= seg_height
                 group_class = group_colors.get(project, "group-color-none")
-                project_label = os.path.basename(project.rstrip("/")) if project else "sem projeto"
+                project_label = project_display_label(project)
                 bars.append(
                     f'<rect x="{x:.1f}" y="{y_cursor:.1f}" width="{bar_width:.1f}" height="{seg_height:.1f}" '
                     f'class="chart-bar {group_class}">'
@@ -689,7 +712,7 @@ def render_trend_chart(records, group_colors):
     )
 
 
-def render_project_totals_chart(records, project_first_seen, open_projects):
+def render_project_totals_chart(records, project_first_seen, project_last_seen, open_projects):
     totals = {}
     for r in records:
         project = r.get("project_path")
@@ -697,39 +720,64 @@ def render_project_totals_chart(records, project_first_seen, open_projects):
     if not totals:
         return ""
 
-    ordered_projects = sorted(totals.keys(), key=lambda p: totals[p], reverse=True)
+    # Sorted by most-recent-activity, not by token volume — answers "what
+    # have I touched lately" rather than "what costs the most," and pairs
+    # naturally with the top-10-then-collapse cutoff below (the most
+    # recently active projects are the ones most likely to matter right now).
+    ordered_projects = sorted(totals.keys(), key=lambda p: project_last_seen.get(p, ""), reverse=True)
     max_total = max(totals.values()) or 1
 
     row_height = 24
     bar_max_width = 300
     label_x = 4
     width = 460
-    height = len(ordered_projects) * row_height + 20
 
-    rows = []
-    y = 14
-    for project in ordered_projects:
-        total = totals[project]
-        label = os.path.basename(project.rstrip("/")) if project else "sem projeto"
-        title_attr = f' title="{html.escape(project)}"' if project else ""
-        bar_width = (total / max_total) * bar_max_width if max_total else 0
-        is_open = project in open_projects
-        bar_class = "project-color-open" if is_open else "project-color-historical"
-        days_running = ""
-        first_seen = project_first_seen.get(project)
-        if first_seen:
-            try:
-                first_dt = datetime.fromisoformat(first_seen.replace("Z", "+00:00")).astimezone()
-                days_running = f" · há {(datetime.now().astimezone() - first_dt).days} dias"
-            except (ValueError, AttributeError, TypeError):
-                days_running = ""
-        rows.append(
-            f'<text x="{label_x}" y="{y}" class="project-chart-label"{title_attr}>{html.escape(label)}</text>'
-            f'<rect x="{label_x}" y="{y + 6}" width="{bar_max_width}" height="14" class="project-chart-track" />'
-            f'<rect x="{label_x}" y="{y + 6}" width="{bar_width:.1f}" height="14" class="project-chart-bar {bar_class}" />'
-            f'<text x="{label_x + bar_max_width + 6}" y="{y + 17}" class="chart-axis-label">{format_tokens(total)}{days_running}</text>'
+    def render_rows(projects):
+        rows = []
+        y = 14
+        for project in projects:
+            total = totals[project]
+            label = project_display_label(project)
+            title_attr = f' title="{html.escape(project)}"' if project else ""
+            bar_width = (total / max_total) * bar_max_width if max_total else 0
+            is_open = project in open_projects
+            bar_class = "project-color-open" if is_open else "project-color-historical"
+            days_running = ""
+            first_seen = project_first_seen.get(project)
+            if first_seen:
+                try:
+                    first_dt = datetime.fromisoformat(first_seen.replace("Z", "+00:00")).astimezone()
+                    days_running = f" · há {(datetime.now().astimezone() - first_dt).days} dias"
+                except (ValueError, AttributeError, TypeError):
+                    days_running = ""
+            rows.append(
+                f'<text x="{label_x}" y="{y}" class="project-chart-label"{title_attr}>{html.escape(label)}</text>'
+                f'<rect x="{label_x}" y="{y + 6}" width="{bar_max_width}" height="14" class="project-chart-track" />'
+                f'<rect x="{label_x}" y="{y + 6}" width="{bar_width:.1f}" height="14" class="project-chart-bar {bar_class}" />'
+                f'<text x="{label_x + bar_max_width + 6}" y="{y + 17}" class="chart-axis-label">{format_tokens(total)}{days_running}</text>'
+            )
+            y += row_height
+        height = len(projects) * row_height + 20
+        return rows, height
+
+    visible_projects = ordered_projects[:10]
+    hidden_projects = ordered_projects[10:]
+
+    visible_rows, visible_height = render_rows(visible_projects)
+    visible_svg = f'<svg viewBox="0 0 {width} {visible_height}" class="project-chart-svg">{"".join(visible_rows)}</svg>'
+
+    more_html = ""
+    if hidden_projects:
+        hidden_rows, hidden_height = render_rows(hidden_projects)
+        hidden_svg = (
+            f'<svg viewBox="0 0 {width} {hidden_height}" class="project-chart-svg" '
+            f'id="project-chart-more" style="display:none">{"".join(hidden_rows)}</svg>'
         )
-        y += row_height
+        more_html = (
+            f'<div class="project-chart-toggle" id="project-chart-toggle" onclick="toggleProjectsMore()">'
+            f"+ {len(hidden_projects)} projetos históricos</div>"
+            f"{hidden_svg}"
+        )
 
     legend = (
         '<div class="project-chart-legend">'
@@ -740,13 +788,14 @@ def render_project_totals_chart(records, project_first_seen, open_projects):
     return (
         '<div class="project-chart-container">'
         '<h3 class="project-chart-title">Total de tokens por projeto</h3>'
-        f'<svg viewBox="0 0 {width} {height}" class="project-chart-svg">{"".join(rows)}</svg>'
+        f"{visible_svg}"
+        f"{more_html}"
         f"{legend}"
         "</div>"
     )
 
 
-def render_html(records, subagents_by_session, chart_records, project_first_seen, open_projects):
+def render_html(records, subagents_by_session, chart_records, project_first_seen, project_last_seen, open_projects):
     group_colors = assign_group_colors(chart_records)
     groups = build_project_groups(records, group_colors)
     rows_html = []
@@ -761,7 +810,7 @@ def render_html(records, subagents_by_session, chart_records, project_first_seen
             )
 
     trend_html = render_trend_chart(chart_records, group_colors)
-    project_totals_html = render_project_totals_chart(chart_records, project_first_seen, open_projects)
+    project_totals_html = render_project_totals_chart(chart_records, project_first_seen, project_last_seen, open_projects)
 
     style = """
     <style>
@@ -819,6 +868,8 @@ def render_html(records, subagents_by_session, chart_records, project_first_seen
       .project-chart-bar.project-color-historical { fill: var(--series-1); }
       .project-chart-bar.project-color-open { fill: var(--series-2); }
       .project-chart-legend { display: flex; gap: 14px; padding: 6px 0 0; font-size: 10px; color: var(--text-secondary); }
+      .project-chart-toggle { font-size: 11px; color: var(--series-1); cursor: pointer; padding: 4px 0; }
+      .project-chart-toggle:hover { text-decoration: underline; }
       .legend-swatch.project-color-historical { background: var(--series-1); }
       .legend-swatch.project-color-open { background: var(--series-2); }
       .chart-toggle { display: flex; gap: 6px; padding: 0 0 6px; font-size: 11px; }
@@ -953,6 +1004,14 @@ def render_html(records, subagents_by_session, chart_records, project_first_seen
       if (pane) { pane.classList.add('active'); }
       if (btn) { btn.classList.add('active'); }
     }
+    function toggleProjectsMore() {
+      var svg = document.getElementById('project-chart-more');
+      var toggle = document.getElementById('project-chart-toggle');
+      if (!svg) { return; }
+      var hidden = svg.style.display === 'none';
+      svg.style.display = hidden ? 'block' : 'none';
+      if (toggle) { toggle.classList.toggle('expanded', hidden); }
+    }
     function toggleGroup(id) {
       var header = document.getElementById('group-' + id);
       if (!header) { return; }
@@ -1075,8 +1134,9 @@ def main():
             record["task_label"] = get_task_label(record, label_cache)
         save_label_cache(label_cache)
         project_first_seen = compute_project_first_seen(all_time_records)
+        project_last_seen = compute_project_last_seen(all_time_records)
         open_projects = get_open_projects()
-        html_output = render_html(records, subagents_by_session, chart_records, project_first_seen, open_projects)
+        html_output = render_html(records, subagents_by_session, chart_records, project_first_seen, project_last_seen, open_projects)
         output_path = os.path.expanduser("~/.claude/metrics/dashboard.html")
         with open(output_path, "w") as f:
             f.write(html_output)
