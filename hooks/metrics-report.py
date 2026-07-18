@@ -405,19 +405,23 @@ def compute_token_type_totals(records):
     }
 
 
+SERIES_NAMES = {
+    "series-1": "input",
+    "series-2": "output",
+    "series-3": "cache read",
+    "series-4": "cache creation",
+}
+
+
 def render_composition_legend(totals):
-    return (
-        '<div class="comp-legend">'
-        f'<span class="legend-chip" onclick="highlightTokenType(\'series-1\')"><span class="legend-swatch series-1"></span>input · '
-        f'<span class="legend-total" data-series="series-1">{format_tokens(totals.get("series-1", 0))}</span></span>'
-        f'<span class="legend-chip" onclick="highlightTokenType(\'series-2\')"><span class="legend-swatch series-2"></span>output · '
-        f'<span class="legend-total" data-series="series-2">{format_tokens(totals.get("series-2", 0))}</span></span>'
-        f'<span class="legend-chip" onclick="highlightTokenType(\'series-3\')"><span class="legend-swatch series-3"></span>cache read · '
-        f'<span class="legend-total" data-series="series-3">{format_tokens(totals.get("series-3", 0))}</span></span>'
-        f'<span class="legend-chip" onclick="highlightTokenType(\'series-4\')"><span class="legend-swatch series-4"></span>cache creation · '
-        f'<span class="legend-total" data-series="series-4">{format_tokens(totals.get("series-4", 0))}</span></span>'
-        "</div>"
-    )
+    chips = []
+    for css_class, name in SERIES_NAMES.items():
+        chips.append(
+            f'<span class="legend-chip" data-series="{css_class}" onclick="highlightTokenType(\'{css_class}\')">'
+            f'<span class="legend-swatch {css_class}"></span>{name} · '
+            f'<span class="legend-total" data-series="{css_class}">{format_tokens(totals.get(css_class, 0))}</span></span>'
+        )
+    return '<div class="comp-legend">' + "".join(chips) + "</div>"
 
 
 def render_composition_bar(record):
@@ -435,8 +439,10 @@ def render_composition_bar(record):
         if value <= 0:
             continue
         pct = value / total * 100
+        name = SERIES_NAMES[css_class]
         parts.append(
             f'<span class="comp-seg {css_class}" style="width:{pct:.2f}%" '
+            f'title="{name} · {format_tokens(value)} ({pct:.0f}%)" '
             f'onclick="highlightTokenType(\'{css_class}\')"></span>'
         )
     return f'<div class="comp-bar">{"".join(parts)}</div>'
@@ -943,11 +949,16 @@ def render_html(records, subagents_by_session, chart_records, project_first_seen
       .legend-swatch.series-3 { background: var(--series-3); }
       .legend-swatch.series-4 { background: var(--series-4); }
       .legend-total { font-weight: 600; }
-      body[data-highlight] .legend-total { opacity: 0.4; font-weight: 400; }
-      body[data-highlight="series-1"] .legend-total[data-series="series-1"],
-      body[data-highlight="series-2"] .legend-total[data-series="series-2"],
-      body[data-highlight="series-3"] .legend-total[data-series="series-3"],
-      body[data-highlight="series-4"] .legend-total[data-series="series-4"] { opacity: 1; font-weight: 700; font-size: 13px; }
+      body[data-highlight] .legend-chip { opacity: 0.4; }
+      body[data-highlight] .legend-chip .legend-total { font-weight: 400; }
+      body[data-highlight="series-1"] .legend-chip[data-series="series-1"],
+      body[data-highlight="series-2"] .legend-chip[data-series="series-2"],
+      body[data-highlight="series-3"] .legend-chip[data-series="series-3"],
+      body[data-highlight="series-4"] .legend-chip[data-series="series-4"] { opacity: 1; font-weight: 700; }
+      body[data-highlight="series-1"] .legend-chip[data-series="series-1"] .legend-total,
+      body[data-highlight="series-2"] .legend-chip[data-series="series-2"] .legend-total,
+      body[data-highlight="series-3"] .legend-chip[data-series="series-3"] .legend-total,
+      body[data-highlight="series-4"] .legend-chip[data-series="series-4"] .legend-total { font-weight: 700; font-size: 13px; opacity: 1; }
       body[data-highlight="series-1"] .comp-seg:not(.series-1), body[data-highlight="series-1"] .chart-bar.series-2, body[data-highlight="series-1"] .chart-bar.series-3, body[data-highlight="series-1"] .chart-bar.series-4 { opacity: 0.25; }
       body[data-highlight="series-2"] .comp-seg:not(.series-2), body[data-highlight="series-2"] .chart-bar.series-1, body[data-highlight="series-2"] .chart-bar.series-3, body[data-highlight="series-2"] .chart-bar.series-4 { opacity: 0.25; }
       body[data-highlight="series-3"] .comp-seg:not(.series-3), body[data-highlight="series-3"] .chart-bar.series-1, body[data-highlight="series-3"] .chart-bar.series-2, body[data-highlight="series-3"] .chart-bar.series-4 { opacity: 0.25; }
