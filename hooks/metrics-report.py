@@ -841,8 +841,13 @@ def render_html(records, subagents_by_session, chart_records, project_first_seen
       .chart-bar.series-3 { fill: var(--series-3); }
       .chart-bar.series-4 { fill: var(--series-4); }
       body { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; margin: 0; background: var(--surface-1); color: var(--text-primary); }
+      .tab-bar { display: flex; gap: 4px; padding: 8px 16px 0; border-bottom: 1px solid var(--border); }
+      .tab-btn { padding: 6px 14px; font-size: 12px; cursor: pointer; color: var(--text-muted); border-bottom: 2px solid transparent; }
+      .tab-btn.active { color: var(--text-primary); border-bottom-color: var(--series-1); font-weight: bold; }
+      .tab-pane { display: none; }
+      .tab-pane.active { display: block; }
       .main-row { display: flex; }
-      .session-list { width: 62%; border-right: 1px solid var(--border); max-height: calc(100vh - 20px); overflow-y: auto; overflow-x: auto; font-family: monospace; }
+      .session-list { width: 62%; border-right: 1px solid var(--border); max-height: calc(100vh - 60px); overflow-y: auto; overflow-x: auto; font-family: monospace; }
       .session-row { display: flex; align-items: center; gap: 8px; padding: 6px 10px; cursor: pointer; border-bottom: 1px solid var(--border); font-size: 12px; }
       .session-row:hover { background: rgba(42, 120, 214, 0.08); }
       .session-row.active { background: rgba(42, 120, 214, 0.16); font-weight: bold; }
@@ -940,6 +945,14 @@ def render_html(records, subagents_by_session, chart_records, project_first_seen
       var row = document.getElementById('row-' + id);
       if (row) { row.classList.remove('active'); }
     }
+    function showTab(name) {
+      document.querySelectorAll('.tab-pane').forEach(function(el) { el.classList.remove('active'); });
+      document.querySelectorAll('.tab-btn').forEach(function(el) { el.classList.remove('active'); });
+      var pane = document.getElementById('tab-' + name);
+      var btn = document.getElementById('tab-btn-' + name);
+      if (pane) { pane.classList.add('active'); }
+      if (btn) { btn.classList.add('active'); }
+    }
     function toggleGroup(id) {
       var header = document.getElementById('group-' + id);
       if (!header) { return; }
@@ -971,16 +984,33 @@ def render_html(records, subagents_by_session, chart_records, project_first_seen
     }
     </script>
     """
-    return (
-        "<!DOCTYPE html><html><head><meta charset='utf-8'>"
-        f"<title>Claude Code Metrics Dashboard</title>{style}</head>"
-        "<body>"
-        f"{trend_html}"
-        f"{project_totals_html}"
+    tabs_html = (
+        '<div class="tab-bar">'
+        '<span class="tab-btn active" id="tab-btn-sessions" onclick="showTab(\'sessions\')">Sessões</span>'
+        '<span class="tab-btn" id="tab-btn-panorama" onclick="showTab(\'panorama\')">Panorama</span>'
+        "</div>"
+    )
+    sessions_tab_html = (
+        '<div class="tab-pane active" id="tab-sessions">'
         '<div class="main-row">'
         f'<div class="session-list">{render_composition_legend(compute_token_type_totals(records))}{render_session_header()}{"".join(rows_html)}</div>'
         f'<div class="detail-container">{"".join(panels_html)}</div>'
         "</div>"
+        "</div>"
+    )
+    panorama_tab_html = (
+        '<div class="tab-pane" id="tab-panorama">'
+        f"{trend_html}"
+        f"{project_totals_html}"
+        "</div>"
+    )
+    return (
+        "<!DOCTYPE html><html><head><meta charset='utf-8'>"
+        f"<title>Claude Code Metrics Dashboard</title>{style}</head>"
+        "<body>"
+        f"{tabs_html}"
+        f"{sessions_tab_html}"
+        f"{panorama_tab_html}"
         f"{script}"
         "</body></html>"
     )
