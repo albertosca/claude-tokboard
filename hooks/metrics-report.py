@@ -750,13 +750,13 @@ def render_trend_chart(records, group_colors):
         return "".join(bars)
 
     pane_svg = (
-        f'<svg viewBox="0 0 {width} {height}" class="trend-svg" id="chart-pane" preserveAspectRatio="xMidYMid meet" '
-        f'style="width:{width}px;min-width:{width}px">'
+        f'<svg viewBox="0 0 {width} {height}" class="trend-svg" id="chart-pane" preserveAspectRatio="none" '
+        f'style="width:100%;min-width:{width}px">'
         f"{highlight_html}{build_y_axis(max_pane)}{x_axis_html}{bars_for_pane()}</svg>"
     )
     tokens_svg = (
-        f'<svg viewBox="0 0 {width} {height}" class="trend-svg" id="chart-tokens" preserveAspectRatio="xMidYMid meet" '
-        f'style="width:{width}px;min-width:{width}px">'
+        f'<svg viewBox="0 0 {width} {height}" class="trend-svg" id="chart-tokens" preserveAspectRatio="none" '
+        f'style="width:100%;min-width:{width}px">'
         f"{highlight_html}{build_y_axis(max_tokens)}{x_axis_html}{bars_for_tokens()}</svg>"
     )
 
@@ -910,7 +910,7 @@ def render_html(records, subagents_by_session, chart_records, project_first_seen
           --group-none: #898781; --group-none-tint: transparent;
         }
       }
-      .trend-container { padding: 12px 16px; border-bottom: 1px solid var(--border); }
+      .trend-container { padding: 12px 16px; border-bottom: 1px solid var(--border); position: sticky; top: 0; z-index: 5; background: var(--surface-1); }
       .trend-scroll { overflow-x: auto; max-width: 100%; }
       .trend-svg { height: auto; display: block; margin: 0 auto; }
       .chart-highlight-band { fill: var(--series-1); opacity: 0.06; }
@@ -951,7 +951,7 @@ def render_html(records, subagents_by_session, chart_records, project_first_seen
       .tab-pane { display: none; }
       .tab-pane.active { display: block; }
       .main-row { display: flex; }
-      .session-list { width: 62%; border-right: 1px solid var(--border); max-height: calc(100vh - 60px); overflow-y: auto; overflow-x: auto; font-family: monospace; }
+      .session-list { width: 62%; border-right: 1px solid var(--border); overflow-x: auto; font-family: monospace; }
       .session-row { display: flex; align-items: center; gap: 8px; padding: 6px 10px; cursor: pointer; border-bottom: 1px solid var(--border); font-size: 12px; }
       .session-row:hover { background: rgba(42, 120, 214, 0.08); }
       .session-row.active { background: rgba(42, 120, 214, 0.16); font-weight: bold; }
@@ -1063,15 +1063,6 @@ def render_html(records, subagents_by_session, chart_records, project_first_seen
       var btn = document.getElementById('tab-btn-' + name);
       if (pane) { pane.classList.add('active'); }
       if (btn) { btn.classList.add('active'); }
-      // .trend-scroll lives inside the Panorama pane, which starts
-      // display:none (Sessões is always the default-active tab) -- an
-      // element in a display:none subtree reports scrollWidth 0, so
-      // scrolling it at page load (before any tab is ever switched) is a
-      // no-op. Re-run the scroll-to-end here, once the pane is actually
-      // visible, so it has real dimensions to scroll against.
-      if (pane) {
-        pane.querySelectorAll('.trend-scroll').forEach(function(el) { el.scrollLeft = el.scrollWidth; });
-      }
     }
     function toggleProjectsMore() {
       var svg = document.getElementById('project-chart-more');
@@ -1112,6 +1103,7 @@ def render_html(records, subagents_by_session, chart_records, project_first_seen
         body.setAttribute('data-highlight', currentSet.join(' '));
       }
     }
+    document.querySelectorAll('.trend-scroll').forEach(function(el) { el.scrollLeft = el.scrollWidth; });
     </script>
     """
     tabs_html = (
@@ -1130,7 +1122,6 @@ def render_html(records, subagents_by_session, chart_records, project_first_seen
     )
     panorama_tab_html = (
         '<div class="tab-pane" id="tab-panorama">'
-        f"{trend_html}"
         f"{project_totals_html}"
         "</div>"
     )
@@ -1139,6 +1130,7 @@ def render_html(records, subagents_by_session, chart_records, project_first_seen
         f"<title>Claude Code Metrics Dashboard</title>{style}</head>"
         "<body>"
         f"{tabs_html}"
+        f"{trend_html}"
         f"{sessions_tab_html}"
         f"{panorama_tab_html}"
         f"{script}"
