@@ -29,4 +29,6 @@ link() {
 
 link "$ROOT/hooks/metrics-log.py"    "$HOME/.claude/hooks/metrics-log.py"
 link "$ROOT/hooks/metrics-report.py" "$HOME/.claude/hooks/metrics-report.py"
+link "$ROOT/hooks/metrics-tui.py"    "$HOME/.claude/hooks/metrics-tui.py"
 link "$ROOT/commands/metrics.md"     "$HOME/.claude/commands/metrics.md"
+link "$ROOT/commands/metrics-tui.md" "$HOME/.claude/commands/metrics-tui.md"

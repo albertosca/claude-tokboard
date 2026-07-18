@@ -12,10 +12,11 @@ import argparse
 import importlib.util
 import os
 
-from textual.containers import VerticalScroll
+from textual.app import App, ComposeResult
+from textual.containers import Horizontal, VerticalScroll
 from textual.message import Message
 from textual.reactive import reactive
-from textual.widgets import Static, Tree
+from textual.widgets import Static, TabbedContent, TabPane, Tree
 from textual_plotext import PlotextPlot
 
 
@@ -280,10 +281,62 @@ def build_arg_parser():
     return parser
 
 
+class MetricsTUIApp(App):
+    CSS = """
+    Horizontal { height: 1fr; }
+    Tree { width: 62%; }
+    SessionDetailPanel { width: 1fr; border-left: solid $panel; padding: 1; }
+    """
+    BINDINGS = [
+        ("q", "quit", "Sair"),
+        ("t", "toggle_chart_mode", "Alterna modo do gráfico"),
+        ("m", "toggle_more_projects", "Mais/menos projetos"),
+    ]
+
+    def __init__(self, mr, data, **kwargs):
+        super().__init__(**kwargs)
+        self.mr = mr
+        self.data = data
+
+    def compose(self) -> ComposeResult:
+        with TabbedContent():
+            with TabPane("Sessões", id="tab-sessions"):
+                with Horizontal():
+                    yield build_session_tree(self.data["records"], self.mr)
+                    yield SessionDetailPanel(self.mr)
+            with TabPane("Panorama", id="tab-panorama"):
+                totals = self.mr.compute_token_type_totals(self.data["records"])
+                yield CompositionLegend(totals, self.mr)
+                yield TrendChart(self.mr, self.data["chart_records"])
+                yield ProjectRankingList(
+                    self.mr,
+                    self.data["chart_records"],
+                    self.data["project_first_seen"],
+                    self.data["project_last_seen"],
+                    self.data["open_projects"],
+                )
+
+    def on_tree_node_selected(self, event):
+        session_data = event.node.data
+        if not session_data:
+            return
+        session_id = session_data["session_id"]
+        subagents = self.data["subagents_by_session"].get(session_id, [])
+        self.query_one(SessionDetailPanel).show_session(session_id, subagents)
+
+    def action_toggle_chart_mode(self):
+        self.query_one(TrendChart).toggle_mode()
+
+    def action_toggle_more_projects(self):
+        self.query_one(ProjectRankingList).toggle_more()
+
+
 def main():
     args = build_arg_parser().parse_args()
-    data = load_data(args)
-    print(f"OK: loaded {len(data['records'])} sessions, {len(data['chart_records'])} chart_records")
+    mr = import_metrics_report()
+    data = load_data(args, mr=mr)
+    app = MetricsTUIApp(mr, data)
+    app.run()
 
 
 if __name__ == "__main__":
