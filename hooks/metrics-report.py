@@ -985,10 +985,11 @@ def render_html(records, subagents_by_session, chart_records, project_first_seen
       body[data-highlight~="series-2"] .legend-chip[data-series="series-2"] .legend-total,
       body[data-highlight~="series-3"] .legend-chip[data-series="series-3"] .legend-total,
       body[data-highlight~="series-4"] .legend-chip[data-series="series-4"] .legend-total { font-weight: 700; font-size: 13px; opacity: 1; }
-      body[data-highlight~="series-1"] .comp-seg:not(.series-1), body[data-highlight~="series-1"] .chart-bar.series-2, body[data-highlight~="series-1"] .chart-bar.series-3, body[data-highlight~="series-1"] .chart-bar.series-4 { opacity: 0.25; }
-      body[data-highlight~="series-2"] .comp-seg:not(.series-2), body[data-highlight~="series-2"] .chart-bar.series-1, body[data-highlight~="series-2"] .chart-bar.series-3, body[data-highlight~="series-2"] .chart-bar.series-4 { opacity: 0.25; }
-      body[data-highlight~="series-3"] .comp-seg:not(.series-3), body[data-highlight~="series-3"] .chart-bar.series-1, body[data-highlight~="series-3"] .chart-bar.series-2, body[data-highlight~="series-3"] .chart-bar.series-4 { opacity: 0.25; }
-      body[data-highlight~="series-4"] .comp-seg:not(.series-4), body[data-highlight~="series-4"] .chart-bar.series-1, body[data-highlight~="series-4"] .chart-bar.series-2, body[data-highlight~="series-4"] .chart-bar.series-3 { opacity: 0.25; }
+      body[data-highlight] .comp-seg, body[data-highlight] .chart-bar.series-1, body[data-highlight] .chart-bar.series-2, body[data-highlight] .chart-bar.series-3, body[data-highlight] .chart-bar.series-4 { opacity: 0.25; }
+      body[data-highlight~="series-1"] .comp-seg.series-1, body[data-highlight~="series-1"] .chart-bar.series-1 { opacity: 1; }
+      body[data-highlight~="series-2"] .comp-seg.series-2, body[data-highlight~="series-2"] .chart-bar.series-2 { opacity: 1; }
+      body[data-highlight~="series-3"] .comp-seg.series-3, body[data-highlight~="series-3"] .chart-bar.series-3 { opacity: 1; }
+      body[data-highlight~="series-4"] .comp-seg.series-4, body[data-highlight~="series-4"] .chart-bar.series-4 { opacity: 1; }
       body[data-highlight~="series-1"] .comp-seg.series-1 { outline: 1px solid var(--series-1); outline-offset: 1px; }
       body[data-highlight~="series-2"] .comp-seg.series-2 { outline: 1px solid var(--series-2); outline-offset: 1px; }
       body[data-highlight~="series-3"] .comp-seg.series-3 { outline: 1px solid var(--series-3); outline-offset: 1px; }
