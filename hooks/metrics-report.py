@@ -985,6 +985,12 @@ def render_html(records, subagents_by_session, chart_records, project_first_seen
       body[data-highlight~="series-2"] .legend-chip[data-series="series-2"] .legend-total,
       body[data-highlight~="series-3"] .legend-chip[data-series="series-3"] .legend-total,
       body[data-highlight~="series-4"] .legend-chip[data-series="series-4"] .legend-total { font-weight: 700; font-size: 13px; opacity: 1; }
+      /* Spotlight pattern: dim everything, then un-dim the highlighted
+         series. For .comp-seg the un-dim rule outranks this one on
+         specificity alone (extra .series-N class); for .chart-bar.series-N
+         the two tie on specificity and the un-dim rule wins only because
+         it's declared AFTER this one - keep this block before the un-dim
+         rules below, do not reorder. */
       body[data-highlight] .comp-seg, body[data-highlight] .chart-bar.series-1, body[data-highlight] .chart-bar.series-2, body[data-highlight] .chart-bar.series-3, body[data-highlight] .chart-bar.series-4 { opacity: 0.25; }
       body[data-highlight~="series-1"] .comp-seg.series-1, body[data-highlight~="series-1"] .chart-bar.series-1 { opacity: 1; }
       body[data-highlight~="series-2"] .comp-seg.series-2, body[data-highlight~="series-2"] .chart-bar.series-2 { opacity: 1; }
