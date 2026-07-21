@@ -132,6 +132,21 @@ def project_display_label(project_path):
     return os.path.basename(normalized) or normalized
 
 
+def color_group_key(project_path):
+    # A worktree's own color group is its PARENT project (2026-07-21) -
+    # they're the same underlying project as far as "what color am I"
+    # goes, so the trend chart's legend can show one merged entry for
+    # both instead of a separate near-duplicate one per worktree.
+    if not project_path:
+        return project_path
+    normalized = project_path.rstrip("/")
+    marker = "/.claude/worktrees/"
+    if marker in normalized:
+        parent_path, _, _ = normalized.partition(marker)
+        return parent_path
+    return project_path
+
+
 def compute_project_totals(records, project_last_seen):
     totals = {}
     for r in records:
@@ -178,7 +193,12 @@ def get_open_projects(sessions_dir=None):
 
 
 def assign_group_colors(records):
+    # Keyed by raw project_path (so every existing `group_colors.get(project)`
+    # call site keeps working unchanged) but the SLOT is decided by
+    # color_group_key, so a worktree gets the exact same color as its
+    # parent project instead of its own slot (2026-07-21).
     assignment = {}
+    key_to_color = {}
     next_slot = 0
     for record in records:
         project = record.get("project_path")
@@ -186,10 +206,13 @@ def assign_group_colors(records):
             continue
         if project is None:
             assignment[project] = "group-color-none"
-        else:
-            slot = (next_slot % 8) + 1
-            assignment[project] = f"group-color-{slot}"
+            continue
+        key = color_group_key(project)
+        if key not in key_to_color:
+            slot = (next_slot % 30) + 1
+            key_to_color[key] = f"group-color-{slot}"
             next_slot += 1
+        assignment[project] = key_to_color[key]
     return assignment
 
 
@@ -894,19 +917,25 @@ def render_trend_chart(records, group_colors):
     # Legend for "por projeto"'s bar colors (2026-07-21) - those colors
     # were only ever explained by the session-list rows' matching left
     # border, which isn't visible from up here. Built from the projects
-    # actually present in this chart's own data, in first-seen order.
+    # actually present in this chart's own data, in first-seen order,
+    # deduped by color_group_key so a worktree collapses into its
+    # parent's single entry instead of getting its own near-duplicate
+    # (they already share a color, per assign_group_colors above).
     pane_projects = []
-    seen_projects = set()
+    seen_keys = set()
     for day in days:
         for r in day["records"]:
             project = r.get("project_path")
-            if project not in seen_projects:
-                seen_projects.add(project)
+            key = color_group_key(project)
+            if key not in seen_keys:
+                seen_keys.add(key)
                 pane_projects.append(project)
     pane_legend_chips = []
     for project in pane_projects:
         group_class = group_colors.get(project, "group-color-none")
-        raw_name = html.escape(project or "sem projeto")
+        # Just the directory name (2026-07-21: "não precisa o diretório
+        # absoluto"), not the full path.
+        raw_name = html.escape(os.path.basename((project or "").rstrip("/")) or "sem projeto")
         label = html.escape(project_display_label(project))
         pane_legend_chips.append(
             f'<span class="legend-chip" '
@@ -1149,6 +1178,28 @@ def render_html(records, subagents_by_session, chart_records, project_first_seen
         --group-6: #e34948; --group-6-tint: rgba(227,73,72,0.08);
         --group-7: #e87ba4; --group-7-tint: rgba(232,123,164,0.08);
         --group-8: #eb6834; --group-8-tint: rgba(235,104,52,0.08);
+        --group-9: #6bc62f; --group-9-tint: rgba(107,198,47,0.08);
+        --group-10: #4dc62f; --group-10-tint: rgba(77,198,47,0.08);
+        --group-11: #2fc62f; --group-11-tint: rgba(47,198,47,0.08);
+        --group-12: #2fc64d; --group-12-tint: rgba(47,198,77,0.08);
+        --group-13: #2fc66b; --group-13-tint: rgba(47,198,107,0.08);
+        --group-14: #2fc68a; --group-14-tint: rgba(47,198,138,0.08);
+        --group-15: #2fc6a8; --group-15-tint: rgba(47,198,168,0.08);
+        --group-16: #2fc6c6; --group-16-tint: rgba(47,198,198,0.08);
+        --group-17: #2fa8c6; --group-17-tint: rgba(47,168,198,0.08);
+        --group-18: #2f8ac6; --group-18-tint: rgba(47,138,198,0.08);
+        --group-19: #2f6bc6; --group-19-tint: rgba(47,107,198,0.08);
+        --group-20: #2f4dc6; --group-20-tint: rgba(47,77,198,0.08);
+        --group-21: #2f2fc6; --group-21-tint: rgba(47,47,198,0.08);
+        --group-22: #4d2fc6; --group-22-tint: rgba(77,47,198,0.08);
+        --group-23: #6b2fc6; --group-23-tint: rgba(107,47,198,0.08);
+        --group-24: #8a2fc6; --group-24-tint: rgba(138,47,198,0.08);
+        --group-25: #a82fc6; --group-25-tint: rgba(168,47,198,0.08);
+        --group-26: #c62fc6; --group-26-tint: rgba(198,47,198,0.08);
+        --group-27: #c62fa8; --group-27-tint: rgba(198,47,168,0.08);
+        --group-28: #c62f8a; --group-28-tint: rgba(198,47,138,0.08);
+        --group-29: #c62f6b; --group-29-tint: rgba(198,47,107,0.08);
+        --group-30: #c62f4d; --group-30-tint: rgba(198,47,77,0.08);
         --group-none: #898781; --group-none-tint: transparent;
       }
       @media (prefers-color-scheme: dark) {
@@ -1170,6 +1221,28 @@ def render_html(records, subagents_by_session, chart_records, project_first_seen
           --group-6: #e66767; --group-6-tint: rgba(230,103,103,0.12);
           --group-7: #d55181; --group-7-tint: rgba(213,81,129,0.12);
           --group-8: #d95926; --group-8-tint: rgba(217,89,38,0.12);
+          --group-9: #8cdc56; --group-9-tint: rgba(140,220,86,0.12);
+          --group-10: #71dc56; --group-10-tint: rgba(113,220,86,0.12);
+          --group-11: #56dc56; --group-11-tint: rgba(86,220,86,0.12);
+          --group-12: #56dc71; --group-12-tint: rgba(86,220,113,0.12);
+          --group-13: #56dc8c; --group-13-tint: rgba(86,220,140,0.12);
+          --group-14: #56dca6; --group-14-tint: rgba(86,220,166,0.12);
+          --group-15: #56dcc1; --group-15-tint: rgba(86,220,193,0.12);
+          --group-16: #56dcdc; --group-16-tint: rgba(86,220,220,0.12);
+          --group-17: #56c1dc; --group-17-tint: rgba(86,193,220,0.12);
+          --group-18: #56a6dc; --group-18-tint: rgba(86,166,220,0.12);
+          --group-19: #568cdc; --group-19-tint: rgba(86,140,220,0.12);
+          --group-20: #5671dc; --group-20-tint: rgba(86,113,220,0.12);
+          --group-21: #5656dc; --group-21-tint: rgba(86,86,220,0.12);
+          --group-22: #7156dc; --group-22-tint: rgba(113,86,220,0.12);
+          --group-23: #8c56dc; --group-23-tint: rgba(140,86,220,0.12);
+          --group-24: #a656dc; --group-24-tint: rgba(166,86,220,0.12);
+          --group-25: #c156dc; --group-25-tint: rgba(193,86,220,0.12);
+          --group-26: #dc56dc; --group-26-tint: rgba(220,86,220,0.12);
+          --group-27: #dc56c1; --group-27-tint: rgba(220,86,193,0.12);
+          --group-28: #dc56a6; --group-28-tint: rgba(220,86,166,0.12);
+          --group-29: #dc568c; --group-29-tint: rgba(220,86,140,0.12);
+          --group-30: #dc5671; --group-30-tint: rgba(220,86,113,0.12);
           --group-none: #898781; --group-none-tint: transparent;
         }
       }
@@ -1200,6 +1273,28 @@ def render_html(records, subagents_by_session, chart_records, project_first_seen
       .chart-bar.group-color-6 { fill: var(--group-6); }
       .chart-bar.group-color-7 { fill: var(--group-7); }
       .chart-bar.group-color-8 { fill: var(--group-8); }
+      .chart-bar.group-color-9 { fill: var(--group-9); }
+      .chart-bar.group-color-10 { fill: var(--group-10); }
+      .chart-bar.group-color-11 { fill: var(--group-11); }
+      .chart-bar.group-color-12 { fill: var(--group-12); }
+      .chart-bar.group-color-13 { fill: var(--group-13); }
+      .chart-bar.group-color-14 { fill: var(--group-14); }
+      .chart-bar.group-color-15 { fill: var(--group-15); }
+      .chart-bar.group-color-16 { fill: var(--group-16); }
+      .chart-bar.group-color-17 { fill: var(--group-17); }
+      .chart-bar.group-color-18 { fill: var(--group-18); }
+      .chart-bar.group-color-19 { fill: var(--group-19); }
+      .chart-bar.group-color-20 { fill: var(--group-20); }
+      .chart-bar.group-color-21 { fill: var(--group-21); }
+      .chart-bar.group-color-22 { fill: var(--group-22); }
+      .chart-bar.group-color-23 { fill: var(--group-23); }
+      .chart-bar.group-color-24 { fill: var(--group-24); }
+      .chart-bar.group-color-25 { fill: var(--group-25); }
+      .chart-bar.group-color-26 { fill: var(--group-26); }
+      .chart-bar.group-color-27 { fill: var(--group-27); }
+      .chart-bar.group-color-28 { fill: var(--group-28); }
+      .chart-bar.group-color-29 { fill: var(--group-29); }
+      .chart-bar.group-color-30 { fill: var(--group-30); }
       .chart-bar.group-color-none { fill: var(--group-none); }
       .chart-bar.series-1 { fill: var(--series-1); }
       .chart-bar.series-2 { fill: var(--series-2); }
@@ -1250,6 +1345,28 @@ def render_html(records, subagents_by_session, chart_records, project_first_seen
       .legend-swatch.group-color-6 { background: var(--group-6); }
       .legend-swatch.group-color-7 { background: var(--group-7); }
       .legend-swatch.group-color-8 { background: var(--group-8); }
+      .legend-swatch.group-color-9 { background: var(--group-9); }
+      .legend-swatch.group-color-10 { background: var(--group-10); }
+      .legend-swatch.group-color-11 { background: var(--group-11); }
+      .legend-swatch.group-color-12 { background: var(--group-12); }
+      .legend-swatch.group-color-13 { background: var(--group-13); }
+      .legend-swatch.group-color-14 { background: var(--group-14); }
+      .legend-swatch.group-color-15 { background: var(--group-15); }
+      .legend-swatch.group-color-16 { background: var(--group-16); }
+      .legend-swatch.group-color-17 { background: var(--group-17); }
+      .legend-swatch.group-color-18 { background: var(--group-18); }
+      .legend-swatch.group-color-19 { background: var(--group-19); }
+      .legend-swatch.group-color-20 { background: var(--group-20); }
+      .legend-swatch.group-color-21 { background: var(--group-21); }
+      .legend-swatch.group-color-22 { background: var(--group-22); }
+      .legend-swatch.group-color-23 { background: var(--group-23); }
+      .legend-swatch.group-color-24 { background: var(--group-24); }
+      .legend-swatch.group-color-25 { background: var(--group-25); }
+      .legend-swatch.group-color-26 { background: var(--group-26); }
+      .legend-swatch.group-color-27 { background: var(--group-27); }
+      .legend-swatch.group-color-28 { background: var(--group-28); }
+      .legend-swatch.group-color-29 { background: var(--group-29); }
+      .legend-swatch.group-color-30 { background: var(--group-30); }
       .legend-swatch.group-color-none { background: var(--group-none); }
       .legend-swatch.series-1 { background: var(--series-1); }
       .legend-swatch.series-2 { background: var(--series-2); }
@@ -1289,7 +1406,7 @@ def render_html(records, subagents_by_session, chart_records, project_first_seen
          group-color-N bars/legend (2026-07-21) - the two share one
          data-highlight attribute since only one trend-mode pane is ever
          visible at once. */
-      body[data-highlight] .chart-bar.group-color-1, body[data-highlight] .chart-bar.group-color-2, body[data-highlight] .chart-bar.group-color-3, body[data-highlight] .chart-bar.group-color-4, body[data-highlight] .chart-bar.group-color-5, body[data-highlight] .chart-bar.group-color-6, body[data-highlight] .chart-bar.group-color-7, body[data-highlight] .chart-bar.group-color-8, body[data-highlight] .chart-bar.group-color-none { opacity: 0.25; }
+      body[data-highlight] .chart-bar.group-color-1, body[data-highlight] .chart-bar.group-color-2, body[data-highlight] .chart-bar.group-color-3, body[data-highlight] .chart-bar.group-color-4, body[data-highlight] .chart-bar.group-color-5, body[data-highlight] .chart-bar.group-color-6, body[data-highlight] .chart-bar.group-color-7, body[data-highlight] .chart-bar.group-color-8, body[data-highlight] .chart-bar.group-color-9, body[data-highlight] .chart-bar.group-color-10, body[data-highlight] .chart-bar.group-color-11, body[data-highlight] .chart-bar.group-color-12, body[data-highlight] .chart-bar.group-color-13, body[data-highlight] .chart-bar.group-color-14, body[data-highlight] .chart-bar.group-color-15, body[data-highlight] .chart-bar.group-color-16, body[data-highlight] .chart-bar.group-color-17, body[data-highlight] .chart-bar.group-color-18, body[data-highlight] .chart-bar.group-color-19, body[data-highlight] .chart-bar.group-color-20, body[data-highlight] .chart-bar.group-color-21, body[data-highlight] .chart-bar.group-color-22, body[data-highlight] .chart-bar.group-color-23, body[data-highlight] .chart-bar.group-color-24, body[data-highlight] .chart-bar.group-color-25, body[data-highlight] .chart-bar.group-color-26, body[data-highlight] .chart-bar.group-color-27, body[data-highlight] .chart-bar.group-color-28, body[data-highlight] .chart-bar.group-color-29, body[data-highlight] .chart-bar.group-color-30, body[data-highlight] .chart-bar.group-color-none { opacity: 0.25; }
       body[data-highlight~="group-color-1"] .chart-bar.group-color-1 { opacity: 1; stroke: var(--group-1); stroke-width: 1.5px; }
       body[data-highlight~="group-color-2"] .chart-bar.group-color-2 { opacity: 1; stroke: var(--group-2); stroke-width: 1.5px; }
       body[data-highlight~="group-color-3"] .chart-bar.group-color-3 { opacity: 1; stroke: var(--group-3); stroke-width: 1.5px; }
@@ -1298,6 +1415,28 @@ def render_html(records, subagents_by_session, chart_records, project_first_seen
       body[data-highlight~="group-color-6"] .chart-bar.group-color-6 { opacity: 1; stroke: var(--group-6); stroke-width: 1.5px; }
       body[data-highlight~="group-color-7"] .chart-bar.group-color-7 { opacity: 1; stroke: var(--group-7); stroke-width: 1.5px; }
       body[data-highlight~="group-color-8"] .chart-bar.group-color-8 { opacity: 1; stroke: var(--group-8); stroke-width: 1.5px; }
+      body[data-highlight~="group-color-9"] .chart-bar.group-color-9 { opacity: 1; stroke: var(--group-9); stroke-width: 1.5px; }
+      body[data-highlight~="group-color-10"] .chart-bar.group-color-10 { opacity: 1; stroke: var(--group-10); stroke-width: 1.5px; }
+      body[data-highlight~="group-color-11"] .chart-bar.group-color-11 { opacity: 1; stroke: var(--group-11); stroke-width: 1.5px; }
+      body[data-highlight~="group-color-12"] .chart-bar.group-color-12 { opacity: 1; stroke: var(--group-12); stroke-width: 1.5px; }
+      body[data-highlight~="group-color-13"] .chart-bar.group-color-13 { opacity: 1; stroke: var(--group-13); stroke-width: 1.5px; }
+      body[data-highlight~="group-color-14"] .chart-bar.group-color-14 { opacity: 1; stroke: var(--group-14); stroke-width: 1.5px; }
+      body[data-highlight~="group-color-15"] .chart-bar.group-color-15 { opacity: 1; stroke: var(--group-15); stroke-width: 1.5px; }
+      body[data-highlight~="group-color-16"] .chart-bar.group-color-16 { opacity: 1; stroke: var(--group-16); stroke-width: 1.5px; }
+      body[data-highlight~="group-color-17"] .chart-bar.group-color-17 { opacity: 1; stroke: var(--group-17); stroke-width: 1.5px; }
+      body[data-highlight~="group-color-18"] .chart-bar.group-color-18 { opacity: 1; stroke: var(--group-18); stroke-width: 1.5px; }
+      body[data-highlight~="group-color-19"] .chart-bar.group-color-19 { opacity: 1; stroke: var(--group-19); stroke-width: 1.5px; }
+      body[data-highlight~="group-color-20"] .chart-bar.group-color-20 { opacity: 1; stroke: var(--group-20); stroke-width: 1.5px; }
+      body[data-highlight~="group-color-21"] .chart-bar.group-color-21 { opacity: 1; stroke: var(--group-21); stroke-width: 1.5px; }
+      body[data-highlight~="group-color-22"] .chart-bar.group-color-22 { opacity: 1; stroke: var(--group-22); stroke-width: 1.5px; }
+      body[data-highlight~="group-color-23"] .chart-bar.group-color-23 { opacity: 1; stroke: var(--group-23); stroke-width: 1.5px; }
+      body[data-highlight~="group-color-24"] .chart-bar.group-color-24 { opacity: 1; stroke: var(--group-24); stroke-width: 1.5px; }
+      body[data-highlight~="group-color-25"] .chart-bar.group-color-25 { opacity: 1; stroke: var(--group-25); stroke-width: 1.5px; }
+      body[data-highlight~="group-color-26"] .chart-bar.group-color-26 { opacity: 1; stroke: var(--group-26); stroke-width: 1.5px; }
+      body[data-highlight~="group-color-27"] .chart-bar.group-color-27 { opacity: 1; stroke: var(--group-27); stroke-width: 1.5px; }
+      body[data-highlight~="group-color-28"] .chart-bar.group-color-28 { opacity: 1; stroke: var(--group-28); stroke-width: 1.5px; }
+      body[data-highlight~="group-color-29"] .chart-bar.group-color-29 { opacity: 1; stroke: var(--group-29); stroke-width: 1.5px; }
+      body[data-highlight~="group-color-30"] .chart-bar.group-color-30 { opacity: 1; stroke: var(--group-30); stroke-width: 1.5px; }
       body[data-highlight~="group-color-none"] .chart-bar.group-color-none { opacity: 1; stroke: var(--group-none); stroke-width: 1.5px; }
       body[data-highlight~="group-color-1"] .legend-chip:has(.legend-swatch.group-color-1),
       body[data-highlight~="group-color-2"] .legend-chip:has(.legend-swatch.group-color-2),
@@ -1306,7 +1445,28 @@ def render_html(records, subagents_by_session, chart_records, project_first_seen
       body[data-highlight~="group-color-5"] .legend-chip:has(.legend-swatch.group-color-5),
       body[data-highlight~="group-color-6"] .legend-chip:has(.legend-swatch.group-color-6),
       body[data-highlight~="group-color-7"] .legend-chip:has(.legend-swatch.group-color-7),
-      body[data-highlight~="group-color-8"] .legend-chip:has(.legend-swatch.group-color-8) { opacity: 1; font-weight: 700; }
+      body[data-highlight~="group-color-9"] .legend-chip:has(.legend-swatch.group-color-9),
+      body[data-highlight~="group-color-10"] .legend-chip:has(.legend-swatch.group-color-10),
+      body[data-highlight~="group-color-11"] .legend-chip:has(.legend-swatch.group-color-11),
+      body[data-highlight~="group-color-12"] .legend-chip:has(.legend-swatch.group-color-12),
+      body[data-highlight~="group-color-13"] .legend-chip:has(.legend-swatch.group-color-13),
+      body[data-highlight~="group-color-14"] .legend-chip:has(.legend-swatch.group-color-14),
+      body[data-highlight~="group-color-15"] .legend-chip:has(.legend-swatch.group-color-15),
+      body[data-highlight~="group-color-16"] .legend-chip:has(.legend-swatch.group-color-16),
+      body[data-highlight~="group-color-17"] .legend-chip:has(.legend-swatch.group-color-17),
+      body[data-highlight~="group-color-18"] .legend-chip:has(.legend-swatch.group-color-18),
+      body[data-highlight~="group-color-19"] .legend-chip:has(.legend-swatch.group-color-19),
+      body[data-highlight~="group-color-20"] .legend-chip:has(.legend-swatch.group-color-20),
+      body[data-highlight~="group-color-21"] .legend-chip:has(.legend-swatch.group-color-21),
+      body[data-highlight~="group-color-22"] .legend-chip:has(.legend-swatch.group-color-22),
+      body[data-highlight~="group-color-23"] .legend-chip:has(.legend-swatch.group-color-23),
+      body[data-highlight~="group-color-24"] .legend-chip:has(.legend-swatch.group-color-24),
+      body[data-highlight~="group-color-25"] .legend-chip:has(.legend-swatch.group-color-25),
+      body[data-highlight~="group-color-26"] .legend-chip:has(.legend-swatch.group-color-26),
+      body[data-highlight~="group-color-27"] .legend-chip:has(.legend-swatch.group-color-27),
+      body[data-highlight~="group-color-28"] .legend-chip:has(.legend-swatch.group-color-28),
+      body[data-highlight~="group-color-29"] .legend-chip:has(.legend-swatch.group-color-29),
+      body[data-highlight~="group-color-30"] .legend-chip:has(.legend-swatch.group-color-30) { opacity: 1; font-weight: 700; }
       .proj-total .total-only { display: none; }
       body[data-highlight~="series-1"] .proj-total .total-only.series-1 { display: inline; font-style: italic; fill: var(--series-1); }
       body[data-highlight~="series-2"] .proj-total .total-only.series-2 { display: inline; font-style: italic; fill: var(--series-2); }
@@ -1326,6 +1486,28 @@ def render_html(records, subagents_by_session, chart_records, project_first_seen
       .session-row.group-color-6 { background: var(--group-6-tint); border-left: 3px solid var(--group-6); }
       .session-row.group-color-7 { background: var(--group-7-tint); border-left: 3px solid var(--group-7); }
       .session-row.group-color-8 { background: var(--group-8-tint); border-left: 3px solid var(--group-8); }
+      .session-row.group-color-9 { background: var(--group-9-tint); border-left: 3px solid var(--group-9); }
+      .session-row.group-color-10 { background: var(--group-10-tint); border-left: 3px solid var(--group-10); }
+      .session-row.group-color-11 { background: var(--group-11-tint); border-left: 3px solid var(--group-11); }
+      .session-row.group-color-12 { background: var(--group-12-tint); border-left: 3px solid var(--group-12); }
+      .session-row.group-color-13 { background: var(--group-13-tint); border-left: 3px solid var(--group-13); }
+      .session-row.group-color-14 { background: var(--group-14-tint); border-left: 3px solid var(--group-14); }
+      .session-row.group-color-15 { background: var(--group-15-tint); border-left: 3px solid var(--group-15); }
+      .session-row.group-color-16 { background: var(--group-16-tint); border-left: 3px solid var(--group-16); }
+      .session-row.group-color-17 { background: var(--group-17-tint); border-left: 3px solid var(--group-17); }
+      .session-row.group-color-18 { background: var(--group-18-tint); border-left: 3px solid var(--group-18); }
+      .session-row.group-color-19 { background: var(--group-19-tint); border-left: 3px solid var(--group-19); }
+      .session-row.group-color-20 { background: var(--group-20-tint); border-left: 3px solid var(--group-20); }
+      .session-row.group-color-21 { background: var(--group-21-tint); border-left: 3px solid var(--group-21); }
+      .session-row.group-color-22 { background: var(--group-22-tint); border-left: 3px solid var(--group-22); }
+      .session-row.group-color-23 { background: var(--group-23-tint); border-left: 3px solid var(--group-23); }
+      .session-row.group-color-24 { background: var(--group-24-tint); border-left: 3px solid var(--group-24); }
+      .session-row.group-color-25 { background: var(--group-25-tint); border-left: 3px solid var(--group-25); }
+      .session-row.group-color-26 { background: var(--group-26-tint); border-left: 3px solid var(--group-26); }
+      .session-row.group-color-27 { background: var(--group-27-tint); border-left: 3px solid var(--group-27); }
+      .session-row.group-color-28 { background: var(--group-28-tint); border-left: 3px solid var(--group-28); }
+      .session-row.group-color-29 { background: var(--group-29-tint); border-left: 3px solid var(--group-29); }
+      .session-row.group-color-30 { background: var(--group-30-tint); border-left: 3px solid var(--group-30); }
       .session-row.group-color-none { border-left: 3px solid var(--group-none); }
       .group-header { display: flex; align-items: center; gap: 6px; padding: 6px 10px; font-size: 11px; font-weight: bold; cursor: pointer; border-bottom: 1px solid var(--border); background: var(--surface-1); width: fit-content; min-width: 100%; }
       .group-header.group-color-1 { border-left: 3px solid var(--group-1); }
@@ -1336,6 +1518,28 @@ def render_html(records, subagents_by_session, chart_records, project_first_seen
       .group-header.group-color-6 { border-left: 3px solid var(--group-6); }
       .group-header.group-color-7 { border-left: 3px solid var(--group-7); }
       .group-header.group-color-8 { border-left: 3px solid var(--group-8); }
+      .group-header.group-color-9 { border-left: 3px solid var(--group-9); }
+      .group-header.group-color-10 { border-left: 3px solid var(--group-10); }
+      .group-header.group-color-11 { border-left: 3px solid var(--group-11); }
+      .group-header.group-color-12 { border-left: 3px solid var(--group-12); }
+      .group-header.group-color-13 { border-left: 3px solid var(--group-13); }
+      .group-header.group-color-14 { border-left: 3px solid var(--group-14); }
+      .group-header.group-color-15 { border-left: 3px solid var(--group-15); }
+      .group-header.group-color-16 { border-left: 3px solid var(--group-16); }
+      .group-header.group-color-17 { border-left: 3px solid var(--group-17); }
+      .group-header.group-color-18 { border-left: 3px solid var(--group-18); }
+      .group-header.group-color-19 { border-left: 3px solid var(--group-19); }
+      .group-header.group-color-20 { border-left: 3px solid var(--group-20); }
+      .group-header.group-color-21 { border-left: 3px solid var(--group-21); }
+      .group-header.group-color-22 { border-left: 3px solid var(--group-22); }
+      .group-header.group-color-23 { border-left: 3px solid var(--group-23); }
+      .group-header.group-color-24 { border-left: 3px solid var(--group-24); }
+      .group-header.group-color-25 { border-left: 3px solid var(--group-25); }
+      .group-header.group-color-26 { border-left: 3px solid var(--group-26); }
+      .group-header.group-color-27 { border-left: 3px solid var(--group-27); }
+      .group-header.group-color-28 { border-left: 3px solid var(--group-28); }
+      .group-header.group-color-29 { border-left: 3px solid var(--group-29); }
+      .group-header.group-color-30 { border-left: 3px solid var(--group-30); }
       .group-header.group-color-none { border-left: 3px solid var(--group-none); }
       .group-icon { width: 10px; display: inline-block; }
       .detail-container { flex: 1; }
