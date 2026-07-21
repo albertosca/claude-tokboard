@@ -934,14 +934,17 @@ def render_trend_chart(records, group_colors):
     for project in pane_projects:
         group_class = group_colors.get(project, "group-color-none")
         # Just the directory name (2026-07-21: "não precisa o diretório
-        # absoluto"), not the full path.
+        # absoluto"), not the full path. Shown once, not "name:name" -
+        # only worth the colon when the worktree-aware label actually
+        # differs from the bare directory name.
         raw_name = html.escape(os.path.basename((project or "").rstrip("/")) or "sem projeto")
         label = html.escape(project_display_label(project))
+        chip_text = raw_name if raw_name == label else f"{raw_name}:{label}"
         pane_legend_chips.append(
             f'<span class="legend-chip" '
             f'onmouseenter="previewHighlight(\'{group_class}\')" onmouseleave="endPreviewHighlight()" '
             f'onclick="highlightProject(\'{group_class}\', event)">'
-            f'<span class="legend-swatch {group_class}"></span>{raw_name}:{label}</span>'
+            f'<span class="legend-swatch {group_class}"></span>{chip_text}</span>'
         )
     pane_legend = "".join(pane_legend_chips)
     pane_legend_html = f'<div class="project-chart-legend">{pane_legend}</div>'
@@ -1694,14 +1697,21 @@ def render_html(records, subagents_by_session, chart_records, project_first_seen
         f"{project_totals_html}"
         "</div>"
     )
+    # Opens with every token type AND every project color already
+    # selected (2026-07-21: "tanto lá quanto na legenda... precisa
+    # começar com todos selecionados") - the dashboard shows everything
+    # unfiltered by default, so both legends should reflect that instead
+    # of opening in an unhighlighted state that reads as "nothing
+    # selected." Both are safe to combine in one data-highlight value:
+    # series-N and group-color-N never touch the same elements, and only
+    # one trend-mode pane is visible at a time anyway.
+    default_highlight = " ".join(
+        ["series-1", "series-2", "series-3", "series-4"] + sorted(set(group_colors.values()))
+    )
     return (
         "<!DOCTYPE html><html><head><meta charset='utf-8'>"
         f"<title>Claude Code Metrics Dashboard</title>{style}</head>"
-        # Opens with every token type already selected (2026-07-21) - the
-        # dashboard shows everything unfiltered by default, so the legend
-        # should reflect that instead of opening in an unhighlighted state
-        # that reads as "nothing selected."
-        '<body data-highlight="series-1 series-2 series-3 series-4">'
+        f'<body data-highlight="{default_highlight}">'
         f"{trend_html}"
         f"{tabs_html}"
         f"{sessions_tab_html}"
