@@ -877,6 +877,25 @@ def render_trend_chart(records, group_colors):
     # explicitly labeled tabs ("por projeto" / "por tipo de token"),
     # which fixes the discoverability complaint without giving up the
     # single-chart-at-a-time layout.
+    # Legend for "por projeto"'s bar colors (2026-07-21) - those colors
+    # were only ever explained by the session-list rows' matching left
+    # border, which isn't visible from up here. Built from the projects
+    # actually present in this chart's own data, in first-seen order.
+    pane_projects = []
+    seen_projects = set()
+    for day in days:
+        for r in day["records"]:
+            project = r.get("project_path")
+            if project not in seen_projects:
+                seen_projects.add(project)
+                pane_projects.append(project)
+    pane_legend = "".join(
+        f'<span class="legend-chip"><span class="legend-swatch {group_colors.get(project, "group-color-none")}"></span>'
+        f"{html.escape(project_display_label(project))}</span>"
+        for project in pane_projects
+    )
+    pane_legend_html = f'<div class="project-chart-legend">{pane_legend}</div>'
+
     return (
         '<div class="trend-container">'
         '<div class="trend-mode-tabs">'
@@ -885,6 +904,7 @@ def render_trend_chart(records, group_colors):
         "</div>"
         '<div class="trend-pane active" id="trend-pane-pane">'
         f'<div class="trend-scroll" data-floor-hit="{str(scrollable).lower()}">{pane_svg}</div>'
+        f"{pane_legend_html}"
         "</div>"
         '<div class="trend-pane" id="trend-pane-tokens">'
         f'<div class="trend-scroll" data-floor-hit="{str(scrollable).lower()}">{tokens_svg}</div>'
@@ -928,7 +948,11 @@ def render_project_totals_chart(records, project_first_seen, project_last_seen, 
     row_height = 34
     bar_max_width = 300
     label_x = 4
-    width = 460
+    # 620, not 460 (2026-07-21) - the total text ("<total> · há N dias ·
+    # <filtered value>") got clipped at the SVG's right edge once the
+    # "grand total + filtered value together" feedback made that string
+    # longer; 460-310=150 user units wasn't enough room for it.
+    width = 620
 
     def render_rows(projects):
         rows = []
@@ -1129,7 +1153,7 @@ def render_html(records, subagents_by_session, chart_records, project_first_seen
       .chart-highlight-band { fill: var(--series-1); opacity: 0.06; }
       .project-chart-container { padding: 12px 16px; border-bottom: 1px solid var(--border); }
       .project-chart-title { font-size: 13px; margin: 0 0 8px; color: var(--text-secondary); }
-      .project-chart-svg { width: 100%; max-width: 600px; display: block; }
+      .project-chart-svg { width: 100%; max-width: 760px; display: block; }
       .project-chart-label { font-size: 10px; fill: var(--text-primary); font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
       .project-chart-track { fill: var(--border); }
       .project-chart-legend { display: flex; gap: 14px; padding: 6px 0 0; font-size: 10px; color: var(--text-secondary); }
@@ -1178,6 +1202,15 @@ def render_html(records, subagents_by_session, chart_records, project_first_seen
       .legend-chip { display: inline-flex; align-items: center; }
       .comp-legend .legend-chip { cursor: pointer; }
       .legend-swatch { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 4px; }
+      .legend-swatch.group-color-1 { background: var(--group-1); }
+      .legend-swatch.group-color-2 { background: var(--group-2); }
+      .legend-swatch.group-color-3 { background: var(--group-3); }
+      .legend-swatch.group-color-4 { background: var(--group-4); }
+      .legend-swatch.group-color-5 { background: var(--group-5); }
+      .legend-swatch.group-color-6 { background: var(--group-6); }
+      .legend-swatch.group-color-7 { background: var(--group-7); }
+      .legend-swatch.group-color-8 { background: var(--group-8); }
+      .legend-swatch.group-color-none { background: var(--group-none); }
       .legend-swatch.series-1 { background: var(--series-1); }
       .legend-swatch.series-2 { background: var(--series-2); }
       .legend-swatch.series-3 { background: var(--series-3); }
@@ -1362,9 +1395,13 @@ def render_html(records, subagents_by_session, chart_records, project_first_seen
     return (
         "<!DOCTYPE html><html><head><meta charset='utf-8'>"
         f"<title>Claude Code Metrics Dashboard</title>{style}</head>"
-        "<body>"
-        f"{tabs_html}"
+        # Opens with every token type already selected (2026-07-21) - the
+        # dashboard shows everything unfiltered by default, so the legend
+        # should reflect that instead of opening in an unhighlighted state
+        # that reads as "nothing selected."
+        '<body data-highlight="series-1 series-2 series-3 series-4">'
         f"{trend_html}"
+        f"{tabs_html}"
         f"{sessions_tab_html}"
         f"{panorama_tab_html}"
         f"{script}"
@@ -1400,10 +1437,13 @@ def main():
         effective_days = None
     else:
         # No explicit --days and no --all, --html requested: default to a
-        # 30-day active-project window rather than the entire history, so
-        # the everyday dashboard view stays focused on what's actually
-        # being worked on.
-        effective_days = 30
+        # 60-day active-project window (2026-07-21: widened from 30 so the
+        # chart's per-day width - already 3x'd per earlier feedback -
+        # extends further into the past instead of mostly sitting on an
+        # unused floor width) rather than the entire history, so the
+        # everyday dashboard view stays focused on what's actually being
+        # worked on.
+        effective_days = 60
 
     records = filter_by_days(records, effective_days)
     if effective_days is None:
