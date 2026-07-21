@@ -603,7 +603,6 @@ def render_composition_legend(totals):
     for css_class, name in SERIES_NAMES.items():
         chips.append(
             f'<span class="legend-chip" data-series="{css_class}" '
-            f'onmouseenter="previewHighlight(\'{css_class}\')" onmouseleave="endPreviewHighlight()" '
             f'onclick="highlightTokenType(\'{css_class}\', event)">'
             f'<span class="legend-swatch {css_class}"></span>{name} · '
             f'<span class="legend-total" data-series="{css_class}">{format_tokens(totals.get(css_class, 0))}</span></span>'
@@ -630,7 +629,6 @@ def render_composition_bar(record):
         parts.append(
             f'<span class="comp-seg {css_class}" style="width:{pct:.2f}%" '
             f'title="{name} · {format_tokens(value)} ({pct:.0f}%)" '
-            f'onmouseenter="previewHighlight(\'{css_class}\')" onmouseleave="endPreviewHighlight()" '
             f'onclick="highlightTokenType(\'{css_class}\', event)"></span>'
         )
     return f'<div class="comp-bar">{"".join(parts)}</div>'
@@ -952,7 +950,6 @@ def render_trend_chart(records, group_colors):
                 bars.append(
                     f'<rect x="{x:.1f}" y="{y_cursor:.1f}" width="{bar_width:.1f}" height="{seg_height:.1f}" '
                     f'class="chart-bar {group_class}" '
-                    f'onmouseenter="previewHighlight(\'{group_class}\')" onmouseleave="endPreviewHighlight()" '
                     f'onclick="highlightProject(\'{group_class}\', event)">'
                     f"<title>{html.escape(project_label)} · {day['day']} - {format_tokens(value)} tokens</title></rect>"
                 )
@@ -978,7 +975,6 @@ def render_trend_chart(records, group_colors):
                 bars.append(
                     f'<rect x="{x:.1f}" y="{y_cursor:.1f}" width="{bar_width:.1f}" height="{seg_height:.1f}" '
                     f'class="chart-bar {css_class}" '
-                    f'onmouseenter="previewHighlight(\'{css_class}\')" onmouseleave="endPreviewHighlight()" '
                     f'onclick="highlightTokenType(\'{css_class}\', event)">'
                     f"<title>{type_name} · {day['day']} - {format_tokens(value)} tokens</title></rect>"
                 )
@@ -1051,7 +1047,6 @@ def render_trend_chart(records, group_colors):
         chip_text = raw_name if raw_name == label else f"{raw_name}:{label}"
         pane_legend_chips.append(
             f'<span class="legend-chip" '
-            f'onmouseenter="previewHighlight(\'{group_class}\')" onmouseleave="endPreviewHighlight()" '
             f'onclick="highlightProject(\'{group_class}\', event)">'
             f'<span class="legend-swatch {group_class}"></span>{chip_text}</span>'
         )
@@ -1146,7 +1141,6 @@ def render_project_totals_chart(records, project_first_seen, project_last_seen, 
                 seg_rects.append(
                     f'<rect x="{x_cursor:.1f}" y="{y + 9}" width="{seg_width:.1f}" height="14" '
                     f'class="chart-bar {css_class}" '
-                    f'onmouseenter="previewHighlight(\'{css_class}\')" onmouseleave="endPreviewHighlight()" '
                     f'onclick="highlightTokenType(\'{css_class}\', event)">'
                     f"<title>{html.escape(label)} · {name} · {format_tokens(value)}</title></rect>"
                 )
@@ -1739,16 +1733,13 @@ def render_html(records, subagents_by_session, chart_records, project_first_seen
     // never show on screen at once (only one trend-mode-tab is visible),
     // so they can safely share the one data-highlight attribute/CSS
     // instead of needing two independent highlight systems.
+    // Hover only changes the cursor (CSS cursor:pointer) - it does NOT
+    // touch the highlight (2026-07-21: a hover-preview version of this
+    // was tried and reverted - "eu quero que reaja só a clique normal,
+    // com ctrl e shift"). Only a real click changes data-highlight.
     function toggleHighlight(cls, event, allClasses) {
       var body = document.body;
-      // If a hover preview is active, its baseline (_highlightBeforeHover)
-      // is the REAL prior selection - body's own attribute currently
-      // holds just the single previewed class, not what was actually
-      // selected before the mouse arrived. Using the live attribute here
-      // would make a first click on a never-selected item look like
-      // "toggle it off" instead of "select it", since the preview alone
-      // already matched `cls`.
-      var current = _highlightBeforeHover !== null ? _highlightBeforeHover : body.getAttribute('data-highlight');
+      var current = body.getAttribute('data-highlight');
       var currentSet = current ? current.split(' ') : [];
       // shift = select every option at once; ctrl/cmd = remove just this
       // one from whatever's selected; plain click = single-select toggle.
@@ -1760,21 +1751,10 @@ def render_html(records, subagents_by_session, chart_records, project_first_seen
       } else {
         currentSet = (currentSet.length === 1 && currentSet[0] === cls) ? [] : [cls];
       }
-      var newValue = currentSet.length === 0 ? '' : currentSet.join(' ');
-      if (newValue) {
-        body.setAttribute('data-highlight', newValue);
-      } else {
+      if (currentSet.length === 0) {
         body.removeAttribute('data-highlight');
-      }
-      // A click can happen mid-hover (mouseenter already ran). Without
-      // this, the click's own new state got silently reverted the
-      // instant the mouse left the element - endPreviewHighlight would
-      // restore whatever was selected BEFORE the hover, undoing what the
-      // click just committed (2026-07-21 bug: clicking looked like it
-      // "only worked while hovering"). Updating the saved pre-hover value
-      // to the click's result makes the eventual mouseleave a no-op.
-      if (_highlightBeforeHover !== null) {
-        _highlightBeforeHover = newValue;
+      } else {
+        body.setAttribute('data-highlight', currentSet.join(' '));
       }
     }
     function highlightTokenType(type, event) {
@@ -1789,27 +1769,6 @@ def render_html(records, subagents_by_session, chart_records, project_first_seen
         return Array.from(el.classList).filter(function(c) { return c.indexOf('group-color') === 0; })[0];
       }).filter(Boolean);
       toggleHighlight(groupClass, event, allClasses);
-    }
-    // Hover previews the same highlight a click would commit (2026-07-21)
-    // - mouseenter shows it, mouseleave restores whatever was selected
-    // before the hover started. A real click still goes through
-    // highlightTokenType/highlightProject above and persists normally.
-    var _highlightBeforeHover = null;
-    function previewHighlight(cls) {
-      if (_highlightBeforeHover === null) {
-        _highlightBeforeHover = document.body.getAttribute('data-highlight') || '';
-      }
-      document.body.setAttribute('data-highlight', cls);
-    }
-    function endPreviewHighlight() {
-      if (_highlightBeforeHover !== null) {
-        if (_highlightBeforeHover) {
-          document.body.setAttribute('data-highlight', _highlightBeforeHover);
-        } else {
-          document.body.removeAttribute('data-highlight');
-        }
-        _highlightBeforeHover = null;
-      }
     }
     document.querySelectorAll('.trend-scroll').forEach(function(el) { el.scrollLeft = el.scrollWidth; });
     </script>
@@ -1901,7 +1860,11 @@ def main():
     # whatever the table's window/limit end up being below.
     chart_records = all_time_records
     records = filter_by_days(records, effective_days)
-    records = records[-args.limit:]
+    # The --html session-list table is unbounded by -n (2026-07-21:
+    # "sem limite (mostra as 2401)") - only the terminal-table mode still
+    # defaults to the last 20, unchanged.
+    if not args.html:
+        records = records[-args.limit:]
 
     if args.html:
         subagent_records = dedupe_subagents(load_records(SUBAGENTS_FILE))
