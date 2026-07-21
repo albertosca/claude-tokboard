@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import collections
 import glob
 import html
 import json
@@ -66,31 +67,60 @@ def normalize_project_paths(records):
     # .../claude-metrics-dashboard/hooks instead of
     # .../claude-metrics-dashboard, 1356 sessions strong) creates a
     # spurious extra "project" for a folder that isn't one. Roll a path
-    # up to the closest ANCESTOR directory that is ALSO a project_path
-    # actually present in this dataset - if no such ancestor exists, the
-    # path is left alone (most projects/paths are real, standalone
-    # roots). Worktree paths are excluded: they're intentionally kept as
-    # their own path here and merged later, by color_group_key, which
+    # up to its IMMEDIATE parent when that parent is ALSO a project_path
+    # present in the dataset - if not, the path is left alone (most
+    # projects/paths are real, standalone roots).
+    #
+    # "Parent is also a known path" alone is NOT enough of a signal, and
+    # two broken attempts at this found out why the hard way:
+    #   1. Walking up to the nearest matching ancestor at ANY depth: found
+    #      /Users/username (33 sessions) and /Users/username/Programming
+    #      (205 sessions) are THEMSELVES real project_paths (one-off
+    #      sessions that never cd'ed anywhere specific) - every project
+    #      merely NESTED under either got swallowed into that one bucket.
+    #   2. Limiting to one level up didn't fix it either: EVERY project
+    #      directly under ~/Programming shares that same immediate
+    #      parent, and "Programming" being a known path made ALL of them
+    #      collapse into it (2114 of ~2500 sessions ended up there,
+    #      wiping out almost every real project in the dashboard).
+    # The actual distinguishing signal is fan-out: a real subdirectory
+    # mistake (.../claude-metrics-dashboard/hooks) is the ONLY child its
+    # parent has ever had recorded. A generic container directory
+    # (~/Programming, home) has DOZENS of different children - that's
+    # what makes it a container, not a project. Only collapse a child
+    # into its immediate parent when that parent has a small number of
+    # distinct children total (<=2) - i.e. it looks like "one project
+    # occasionally logged from a subdirectory," not "many unrelated
+    # projects that happen to share a folder."
+    #
+    # Worktree paths are excluded: they're intentionally kept as their
+    # own path here and merged later, by color_group_key, which
     # preserves the "parent / worktree-name" label instead of collapsing
     # to a bare parent name.
     known_paths = {r.get("project_path") for r in records if r.get("project_path")}
     marker = "/.claude/worktrees/"
+    max_children_to_collapse = 2
+
+    parent_of = {}
+    for path in known_paths:
+        if marker in path:
+            continue
+        parent = os.path.dirname(path.rstrip("/"))
+        if parent and parent in known_paths:
+            parent_of[path] = parent
+
+    children_count = collections.Counter(parent_of.values())
+
     canonical = {}
     for path in known_paths:
         if marker in path:
             canonical[path] = path
             continue
-        current = path.rstrip("/")
-        found = None
-        while True:
-            parent = os.path.dirname(current)
-            if not parent or parent == current:
-                break
-            if parent in known_paths:
-                found = parent
-                break
-            current = parent
-        canonical[path] = found or path
+        parent = parent_of.get(path)
+        if parent and children_count[parent] <= max_children_to_collapse:
+            canonical[path] = parent
+        else:
+            canonical[path] = path
     for r in records:
         p = r.get("project_path")
         if p in canonical and canonical[p] != p:
@@ -1694,7 +1724,14 @@ def render_html(records, subagents_by_session, chart_records, project_first_seen
     // instead of needing two independent highlight systems.
     function toggleHighlight(cls, event, allClasses) {
       var body = document.body;
-      var current = body.getAttribute('data-highlight');
+      // If a hover preview is active, its baseline (_highlightBeforeHover)
+      // is the REAL prior selection - body's own attribute currently
+      // holds just the single previewed class, not what was actually
+      // selected before the mouse arrived. Using the live attribute here
+      // would make a first click on a never-selected item look like
+      // "toggle it off" instead of "select it", since the preview alone
+      // already matched `cls`.
+      var current = _highlightBeforeHover !== null ? _highlightBeforeHover : body.getAttribute('data-highlight');
       var currentSet = current ? current.split(' ') : [];
       // shift = select every option at once; ctrl/cmd = remove just this
       // one from whatever's selected; plain click = single-select toggle.
@@ -1706,10 +1743,21 @@ def render_html(records, subagents_by_session, chart_records, project_first_seen
       } else {
         currentSet = (currentSet.length === 1 && currentSet[0] === cls) ? [] : [cls];
       }
-      if (currentSet.length === 0) {
-        body.removeAttribute('data-highlight');
+      var newValue = currentSet.length === 0 ? '' : currentSet.join(' ');
+      if (newValue) {
+        body.setAttribute('data-highlight', newValue);
       } else {
-        body.setAttribute('data-highlight', currentSet.join(' '));
+        body.removeAttribute('data-highlight');
+      }
+      // A click can happen mid-hover (mouseenter already ran). Without
+      // this, the click's own new state got silently reverted the
+      // instant the mouse left the element - endPreviewHighlight would
+      // restore whatever was selected BEFORE the hover, undoing what the
+      // click just committed (2026-07-21 bug: clicking looked like it
+      // "only worked while hovering"). Updating the saved pre-hover value
+      // to the click's result makes the eventual mouseleave a no-op.
+      if (_highlightBeforeHover !== null) {
+        _highlightBeforeHover = newValue;
       }
     }
     function highlightTokenType(type, event) {
