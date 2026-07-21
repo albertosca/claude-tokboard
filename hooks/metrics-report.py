@@ -534,6 +534,10 @@ def render_session_header():
 def render_detail_panel(session_id, subagents, is_active):
     display = "block" if is_active else "none"
     title = ""
+    subagents = [
+        s for s in subagents
+        if (s.get("input_tokens", 0) or 0) + (s.get("output_tokens", 0) or 0) > 0
+    ]
     if not subagents:
         body = '<p class="empty">Nenhum subagente nesta sessão.</p>'
     else:
@@ -752,14 +756,21 @@ def render_trend_chart(records, group_colors):
                 )
         return "".join(bars)
 
+    # width is fixed in CSS pixels (not 100%/responsive): with
+    # preserveAspectRatio="none" a stretchy width forces the browser to
+    # scale the viewBox's x-axis to fill the container, which distorts
+    # every bar and label horizontally (they render at their real size
+    # only when 1 viewBox unit == 1 CSS pixel). .trend-scroll's
+    # overflow-x:auto gives the "long axis" instead, by scrolling past
+    # this fixed width rather than squishing/stretching it.
     pane_svg = (
         f'<svg viewBox="0 0 {width} {height}" class="trend-svg" id="chart-pane" preserveAspectRatio="none" '
-        f'style="width:100%;min-width:{width}px">'
+        f'style="width:{width}px">'
         f"{highlight_html}{build_y_axis(max_pane)}{x_axis_html}{bars_for_pane()}</svg>"
     )
     tokens_svg = (
         f'<svg viewBox="0 0 {width} {height}" class="trend-svg" id="chart-tokens" preserveAspectRatio="none" '
-        f'style="width:100%;min-width:{width}px">'
+        f'style="width:{width}px">'
         f"{highlight_html}{build_y_axis(max_tokens)}{x_axis_html}{bars_for_tokens()}</svg>"
     )
 
@@ -772,26 +783,63 @@ def render_trend_chart(records, group_colors):
     # oldest. data-floor-hit is kept purely as a debugging/testing signal
     # for whether the 8px floor engaged.
     #
-    # Both modes render unconditionally now (round 5) - no more
-    # click-to-swap toggle, since a hidden chart's meaning wasn't
-    # discoverable without clicking first.
+    # Round 5 removed the toggle because a hidden chart's meaning wasn't
+    # discoverable without clicking first - but with both rendered at
+    # full width unconditionally, each one only gets the fixed-width
+    # treatment from item 1 at the cost of showing both, all the time,
+    # taking up sticky-header space. Reintroduced here (2026-07-20) as
+    # explicitly labeled tabs ("por projeto" / "por tipo de token"),
+    # which fixes the discoverability complaint without giving up the
+    # single-chart-at-a-time layout.
     return (
         '<div class="trend-container">'
-        '<h4 class="trend-section-title">por projeto</h4>'
+        '<div class="trend-mode-tabs">'
+        '<span class="tab-btn active" id="trend-btn-pane" onclick="showTrendMode(\'pane\')">por projeto</span>'
+        '<span class="tab-btn" id="trend-btn-tokens" onclick="showTrendMode(\'tokens\')">por tipo de token</span>'
+        "</div>"
+        '<div class="trend-pane active" id="trend-pane-pane">'
         f'<div class="trend-scroll" data-floor-hit="{str(scrollable).lower()}">{pane_svg}</div>'
-        '<h4 class="trend-section-title">por tipo de token</h4>'
+        "</div>"
+        '<div class="trend-pane" id="trend-pane-tokens">'
         f'<div class="trend-scroll" data-floor-hit="{str(scrollable).lower()}">{tokens_svg}</div>'
+        "</div>"
         "</div>"
     )
 
 
-def render_project_totals_chart(records, project_first_seen, project_last_seen, open_projects):
-    ordered_projects, totals, max_total = compute_project_totals(records, project_last_seen)
-    if not totals:
-        return ""
-    max_total = max_total or 1
+def compute_project_series_totals(records):
+    per_project = {}
+    for r in records:
+        project = r.get("project_path")
+        bucket = per_project.setdefault(project, {"series-1": 0, "series-2": 0, "series-3": 0, "series-4": 0})
+        bucket["series-1"] += r.get("input_tokens", 0) or 0
+        bucket["series-2"] += r.get("output_tokens", 0) or 0
+        bucket["series-3"] += r.get("cache_read_tokens", 0) or 0
+        bucket["series-4"] += r.get("cache_creation_tokens", 0) or 0
+    grand_totals = {project: sum(series.values()) for project, series in per_project.items()}
+    return per_project, grand_totals
 
-    row_height = 24
+
+def render_project_totals_chart(records, project_first_seen, project_last_seen, open_projects):
+    ordered_projects, _totals, _max_total = compute_project_totals(records, project_last_seen)
+    # Segmented by token type (2026-07-20) instead of one flat bar, so the
+    # composition legend can highlight/filter these bars the same way it
+    # already does the trend chart's "por tipo de token" mode - same
+    # series-N classes, same highlightTokenType handler, same CSS.
+    series_by_project, totals = compute_project_series_totals(records)
+    # Omit zero-token projects (2026-07-20) - a project section with
+    # nothing to show is just dead weight in this list.
+    ordered_projects = [p for p in ordered_projects if totals.get(p, 0) > 0]
+    if not ordered_projects:
+        return ""
+    max_total = max(totals.values()) or 1
+
+    # row_height must clear label_baseline(=row start) + bar(9..23) + the
+    # NEXT row's label ascent, or that next label overlaps up into this
+    # row's bar - 24 left only 1px between a bar's bottom (y+23) and the
+    # next label's baseline (y+24), and a ~10px font's ascent (~7-8px)
+    # ate straight into the bar above it. 34 leaves real clearance.
+    row_height = 34
     bar_max_width = 300
     label_x = 4
     width = 460
@@ -803,15 +851,46 @@ def render_project_totals_chart(records, project_first_seen, project_last_seen, 
             total = totals[project]
             label = project_display_label(project)
             title_attr = f' title="{html.escape(project)}"' if project else ""
-            bar_width = (total / max_total) * bar_max_width if max_total else 0
             is_open = project in open_projects
-            bar_class = "project-color-open" if is_open else "project-color-historical"
+            # Bar color now carries token-type (to match the legend), so
+            # "open now" moved from bar color to a small text marker next
+            # to the label instead of being lost.
+            open_marker = " ●" if is_open else ""
             days_running = project_days_running(project_first_seen, project)
+            seg_rects = []
+            x_cursor = label_x
+            for css_class, value in series_by_project.get(project, {}).items():
+                if value <= 0:
+                    continue
+                seg_width = (value / max_total) * bar_max_width if max_total else 0
+                name = SERIES_NAMES[css_class]
+                seg_rects.append(
+                    f'<rect x="{x_cursor:.1f}" y="{y + 9}" width="{seg_width:.1f}" height="14" '
+                    f'class="chart-bar {css_class}" onclick="highlightTokenType(\'{css_class}\', event)">'
+                    f"<title>{html.escape(label)} · {name} · {format_tokens(value)}</title></rect>"
+                )
+                x_cursor += seg_width
+            # Total label carries BOTH the grand total and one tspan per
+            # series, all but one hidden by CSS depending on
+            # body[data-highlight] - clicking a legend chip swaps which
+            # one shows (2026-07-20). The per-series tspans are italic and
+            # tinted that series' color so it reads as "not the real
+            # total" at a glance, not just a smaller number.
+            series_tspans = "".join(
+                f'<tspan class="total-only {css_class}"> {format_tokens(series_by_project.get(project, {}).get(css_class, 0))}</tspan>'
+                for css_class in ("series-1", "series-2", "series-3", "series-4")
+            )
+            total_text = (
+                f'<text x="{label_x + bar_max_width + 6}" y="{y + 20}" class="chart-axis-label proj-total">'
+                f'<tspan class="total-grand">{format_tokens(total)}{days_running}</tspan>'
+                f"{series_tspans}"
+                "</text>"
+            )
             rows.append(
-                f'<text x="{label_x}" y="{y}" class="project-chart-label"{title_attr}>{html.escape(label)}</text>'
+                f'<text x="{label_x}" y="{y}" class="project-chart-label"{title_attr}>{html.escape(label)}{open_marker}</text>'
                 f'<rect x="{label_x}" y="{y + 9}" width="{bar_max_width}" height="14" class="project-chart-track" />'
-                f'<rect x="{label_x}" y="{y + 9}" width="{bar_width:.1f}" height="14" class="project-chart-bar {bar_class}" />'
-                f'<text x="{label_x + bar_max_width + 6}" y="{y + 20}" class="chart-axis-label">{format_tokens(total)}{days_running}</text>'
+                f"{''.join(seg_rects)}"
+                f"{total_text}"
             )
             y += row_height
         height = len(projects) * row_height + 20
@@ -836,18 +915,23 @@ def render_project_totals_chart(records, project_first_seen, project_last_seen, 
             f"{hidden_svg}"
         )
 
-    legend = (
-        '<div class="project-chart-legend">'
-        '<span class="legend-chip"><span class="legend-swatch project-color-historical"></span>histórico</span>'
-        '<span class="legend-chip"><span class="legend-swatch project-color-open"></span>sessão aberta agora</span>'
-        "</div>"
+    # Bar color now maps to token type (see render_rows above), sharing
+    # the exact same legend markup/classes/click handler as the Sessões
+    # tab - clicking a chip highlights that type's segments here too via
+    # the same body[data-highlight~=...] CSS, no separate wiring needed.
+    overall_totals = {
+        css_class: sum(series.get(css_class, 0) for series in series_by_project.values())
+        for css_class in ("series-1", "series-2", "series-3", "series-4")
+    }
+    legend = render_composition_legend(overall_totals) + (
+        '<div class="project-chart-legend"><span class="legend-chip">● sessão aberta agora</span></div>'
     )
     return (
         '<div class="project-chart-container">'
         '<h3 class="project-chart-title">Total de tokens por projeto</h3>'
+        f"{legend}"
         f"{visible_svg}"
         f"{more_html}"
-        f"{legend}"
         "</div>"
     )
 
@@ -858,8 +942,20 @@ def render_html(records, subagents_by_session, chart_records, project_first_seen
     rows_html = []
     panels_html = []
     for group_index, group in enumerate(groups):
-        rows_html.append(render_group_header(group_index, group))
-        for record in group["records"]:
+        # Alberto: omit zero-token sections entirely (2026-07-20) - a
+        # session that never recorded any input/output tokens (aborted
+        # before the first turn, etc.) adds a row with nothing useful in
+        # it. Filter before deciding whether to render the group header
+        # at all, so a group whose every session was zero-token doesn't
+        # leave a header with no rows under it.
+        visible_records = [
+            r for r in group["records"]
+            if (r.get("input_tokens", 0) or 0) + (r.get("output_tokens", 0) or 0) > 0
+        ]
+        if not visible_records:
+            continue
+        rows_html.append(render_group_header(group_index, {**group, "records": visible_records}))
+        for record in visible_records:
             session_id = record.get("session_id") or ""
             rows_html.append(render_session_row(record, False, group_colors, group_index))
             panels_html.append(
@@ -914,6 +1010,9 @@ def render_html(records, subagents_by_session, chart_records, project_first_seen
         }
       }
       .trend-container { padding: 12px 16px; border-bottom: 1px solid var(--border); position: sticky; top: 0; z-index: 5; background: var(--surface-1); }
+      .trend-mode-tabs { display: flex; gap: 4px; margin-bottom: 8px; }
+      .trend-pane { display: none; }
+      .trend-pane.active { display: block; }
       .trend-scroll { overflow-x: auto; max-width: 100%; }
       .trend-svg { height: 150px; display: block; margin: 0 auto; }
       .chart-highlight-band { fill: var(--series-1); opacity: 0.06; }
@@ -922,15 +1021,9 @@ def render_html(records, subagents_by_session, chart_records, project_first_seen
       .project-chart-svg { width: 100%; max-width: 600px; display: block; }
       .project-chart-label { font-size: 10px; fill: var(--text-primary); font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
       .project-chart-track { fill: var(--border); }
-      .project-chart-bar.project-color-historical { fill: var(--series-1); }
-      .project-chart-bar.project-color-open { fill: var(--series-2); }
       .project-chart-legend { display: flex; gap: 14px; padding: 6px 0 0; font-size: 10px; color: var(--text-secondary); }
       .project-chart-toggle { font-size: 11px; color: var(--series-1); cursor: pointer; padding: 4px 0; }
       .project-chart-toggle:hover { text-decoration: underline; }
-      .legend-swatch.project-color-historical { background: var(--series-1); }
-      .legend-swatch.project-color-open { background: var(--series-2); }
-      .trend-section-title { font-size: 13px; margin: 12px 0 8px; color: var(--text-secondary); }
-      .trend-section-title:first-child { margin-top: 0; }
       .chart-gridline { stroke: var(--border); stroke-width: 1; }
       .chart-axis-label { fill: var(--text-muted); font-size: 8px; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
       .chart-bar { cursor: pointer; }
@@ -956,6 +1049,7 @@ def render_html(records, subagents_by_session, chart_records, project_first_seen
       .main-row { display: flex; }
       .session-list { width: 62%; border-right: 1px solid var(--border); overflow-x: auto; font-family: monospace; }
       .session-row { display: flex; align-items: center; gap: 8px; padding: 6px 10px; cursor: pointer; border-bottom: 1px solid var(--border); font-size: 12px; }
+      .session-row > span:not(:last-child) { border-right: 1px solid var(--border); padding-right: 8px; }
       .session-row:hover { background: rgba(42, 120, 214, 0.08); }
       .session-row.active { background: rgba(42, 120, 214, 0.16); font-weight: bold; }
       .session-row .sid { color: var(--text-muted); width: 90px; flex-shrink: 0; }
@@ -1007,6 +1101,12 @@ def render_html(records, subagents_by_session, chart_records, project_first_seen
       body[data-highlight~="series-2"] .chart-bar.series-2 { stroke: var(--series-2); stroke-width: 1.5px; }
       body[data-highlight~="series-3"] .chart-bar.series-3 { stroke: var(--series-3); stroke-width: 1.5px; }
       body[data-highlight~="series-4"] .chart-bar.series-4 { stroke: var(--series-4); stroke-width: 1.5px; }
+      .proj-total .total-only { display: none; }
+      body[data-highlight] .proj-total .total-grand { display: none; }
+      body[data-highlight~="series-1"] .proj-total .total-only.series-1 { display: inline; font-style: italic; fill: var(--series-1); }
+      body[data-highlight~="series-2"] .proj-total .total-only.series-2 { display: inline; font-style: italic; fill: var(--series-2); }
+      body[data-highlight~="series-3"] .proj-total .total-only.series-3 { display: inline; font-style: italic; fill: var(--series-3); }
+      body[data-highlight~="series-4"] .proj-total .total-only.series-4 { display: inline; font-style: italic; fill: var(--series-4); }
       .comp-bar { display: flex; gap: 2px; width: 90px; height: 10px; flex-shrink: 0; background: var(--border); }
       .comp-bar-empty { background: var(--border); }
       .comp-seg.series-1 { background: var(--series-1); }
@@ -1038,6 +1138,7 @@ def render_html(records, subagents_by_session, chart_records, project_first_seen
       .detail-close { float: right; background: none; border: none; font-size: 18px; cursor: pointer; color: var(--text-muted); line-height: 1; padding: 0; }
       .detail-close:hover { color: var(--text-primary); }
       .subagent-row { display: grid; grid-template-columns: 0.6fr minmax(200px, 1.6fr) 0.9fr 0.6fr 0.7fr; padding: 4px 8px; border-bottom: 1px solid var(--border); }
+      .subagent-row > span:not(:last-child) { border-right: 1px solid var(--border); padding-right: 8px; }
       .subagent-row > span:nth-child(2) { white-space: normal; word-break: break-word; }
       .subagent-title { font-size: 12px; margin: 12px 0 6px; color: var(--text-secondary); }
       .subagent-row.subagent-header { font-weight: bold; color: var(--text-muted); font-size: 10px; border-bottom: 2px solid var(--border); }
@@ -1068,9 +1169,20 @@ def render_html(records, subagents_by_session, chart_records, project_first_seen
     }
     function showTab(name) {
       document.querySelectorAll('.tab-pane').forEach(function(el) { el.classList.remove('active'); });
-      document.querySelectorAll('.tab-btn').forEach(function(el) { el.classList.remove('active'); });
+      // Scoped to .tab-bar's own buttons - .trend-mode-tabs reuses the
+      // same .tab-btn class for its visual style and has its own
+      // independent active state (showTrendMode below).
+      document.querySelectorAll('.tab-bar .tab-btn').forEach(function(el) { el.classList.remove('active'); });
       var pane = document.getElementById('tab-' + name);
       var btn = document.getElementById('tab-btn-' + name);
+      if (pane) { pane.classList.add('active'); }
+      if (btn) { btn.classList.add('active'); }
+    }
+    function showTrendMode(name) {
+      document.querySelectorAll('.trend-pane').forEach(function(el) { el.classList.remove('active'); });
+      document.querySelectorAll('.trend-mode-tabs .tab-btn').forEach(function(el) { el.classList.remove('active'); });
+      var pane = document.getElementById('trend-pane-' + name);
+      var btn = document.getElementById('trend-btn-' + name);
       if (pane) { pane.classList.add('active'); }
       if (btn) { btn.classList.add('active'); }
     }
