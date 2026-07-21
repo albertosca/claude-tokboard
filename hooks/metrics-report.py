@@ -59,6 +59,45 @@ def dedupe_by_key(records, key_field):
     return [best_by_id[key] for key in order] + no_id_records
 
 
+def normalize_project_paths(records):
+    # A session's project_path is whatever directory Claude Code's cwd
+    # happened to be, not necessarily the project's real root - working
+    # from a subdirectory (2026-07-21: found 45 sessions logged from
+    # .../claude-metrics-dashboard/hooks instead of
+    # .../claude-metrics-dashboard, 1356 sessions strong) creates a
+    # spurious extra "project" for a folder that isn't one. Roll a path
+    # up to the closest ANCESTOR directory that is ALSO a project_path
+    # actually present in this dataset - if no such ancestor exists, the
+    # path is left alone (most projects/paths are real, standalone
+    # roots). Worktree paths are excluded: they're intentionally kept as
+    # their own path here and merged later, by color_group_key, which
+    # preserves the "parent / worktree-name" label instead of collapsing
+    # to a bare parent name.
+    known_paths = {r.get("project_path") for r in records if r.get("project_path")}
+    marker = "/.claude/worktrees/"
+    canonical = {}
+    for path in known_paths:
+        if marker in path:
+            canonical[path] = path
+            continue
+        current = path.rstrip("/")
+        found = None
+        while True:
+            parent = os.path.dirname(current)
+            if not parent or parent == current:
+                break
+            if parent in known_paths:
+                found = parent
+                break
+            current = parent
+        canonical[path] = found or path
+    for r in records:
+        p = r.get("project_path")
+        if p in canonical and canonical[p] != p:
+            r["project_path"] = canonical[p]
+    return records
+
+
 def dedupe_sessions(records):
     return dedupe_by_key(records, "session_id")
 
@@ -356,6 +395,18 @@ def compress_to_label(source_text):
     if result.returncode != 0:
         return None
     label = result.stdout.strip().strip('"').strip("'")
+    if not label:
+        return None
+    # The model doesn't always follow "responda só com o rótulo" -
+    # sometimes it echoes back a whole clarifying question or a
+    # multi-paragraph answer instead of a 3-5 word label (found
+    # 2026-07-21: one label was several sentences long, breaking the
+    # session table's layout). Truncate defensively rather than trusting
+    # the model's output length - this is a display safeguard, not an
+    # attempt to fix the model's behavior.
+    max_label_chars = 60
+    if len(label) > max_label_chars:
+        label = label[:max_label_chars].rsplit(" ", 1)[0].rstrip(".,;:") + "…"
     return label or None
 
 
@@ -543,7 +594,14 @@ def render_session_row(record, is_active, group_colors, group_index, subagent_co
     tag = html.escape(record.get("tag") or "-")
     branch = html.escape(record.get("git_branch") or "-")
     tmux_window = html.escape(record.get("tmux_window") or "-")
-    task_label = html.escape(record.get("task_label") or "-")
+    # Display-layer safeguard on top of compress_to_label's own truncation
+    # (2026-07-21) - covers any already-cached label from before that fix
+    # existed, so a stale huge cached label can't break this row's layout
+    # either, without needing to hunt down and purge every bad cache entry.
+    raw_task_label = record.get("task_label") or "-"
+    if len(raw_task_label) > 80:
+        raw_task_label = raw_task_label[:80].rsplit(" ", 1)[0].rstrip(".,;:") + "…"
+    task_label = html.escape(raw_task_label)
     date_str = format_date(record.get("timestamp_start"))
     duration_str = format_duration(record.get("duration_seconds"))
     total_tokens = format_tokens((record.get("input_tokens", 0) or 0) + (record.get("output_tokens", 0) or 0))
@@ -933,12 +991,16 @@ def render_trend_chart(records, group_colors):
     pane_legend_chips = []
     for project in pane_projects:
         group_class = group_colors.get(project, "group-color-none")
-        # Just the directory name (2026-07-21: "não precisa o diretório
-        # absoluto"), not the full path. Shown once, not "name:name" -
-        # only worth the colon when the worktree-aware label actually
-        # differs from the bare directory name.
-        raw_name = html.escape(os.path.basename((project or "").rstrip("/")) or "sem projeto")
-        label = html.escape(project_display_label(project))
+        # Labeled by the PARENT project (color_group_key), not the
+        # specific worktree first seen (2026-07-21 fix: a merged entry
+        # could pick up a random worktree's own name as if it were the
+        # whole group's name - "some-feature:
+        # job-hunter / some-feature" -
+        # wrong name AND redundant). Parent path -> plain basename, so
+        # raw_name and label naturally match and the ":" is dropped.
+        parent = color_group_key(project)
+        raw_name = html.escape(os.path.basename((parent or "").rstrip("/")) or "sem projeto")
+        label = html.escape(project_display_label(parent))
         chip_text = raw_name if raw_name == label else f"{raw_name}:{label}"
         pane_legend_chips.append(
             f'<span class="legend-chip" '
@@ -957,10 +1019,17 @@ def render_trend_chart(records, group_colors):
         "</div>"
         '<div class="trend-pane active" id="trend-pane-pane">'
         f'<div class="trend-scroll" data-floor-hit="{str(scrollable).lower()}">{pane_svg}</div>'
-        f"{pane_legend_html}"
+        # Fixed-height, internally-scrollable slot (2026-07-21) - "por
+        # projeto" can have many legend chips wrapping to several lines
+        # while "por tipo de token" only ever has 4; without a fixed
+        # height here the sticky trend-container's total height changed
+        # between the two modes, pushing the session table up/down
+        # ("pulando") every time you switched.
+        f'<div class="trend-legend-slot">{pane_legend_html}</div>'
         "</div>"
         '<div class="trend-pane" id="trend-pane-tokens">'
         f'<div class="trend-scroll" data-floor-hit="{str(scrollable).lower()}">{tokens_svg}</div>'
+        '<div class="trend-legend-slot"></div>'
         "</div>"
         "</div>"
     )
@@ -1262,7 +1331,9 @@ def render_html(records, subagents_by_session, chart_records, project_first_seen
       .project-chart-svg { width: 100%; max-width: 760px; display: block; }
       .project-chart-label { font-size: 10px; fill: var(--text-primary); font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
       .project-chart-track { fill: var(--border); }
+      .trend-legend-slot { height: 52px; overflow-y: auto; }
       .project-chart-legend { display: flex; flex-wrap: wrap; row-gap: 4px; gap: 14px; padding: 6px 0 0; font-size: 10px; color: var(--text-secondary); }
+      .project-chart-legend .legend-chip, .trend-legend-slot .legend-chip { cursor: pointer; }
       .project-chart-toggle { font-size: 11px; color: var(--series-1); cursor: pointer; padding: 4px 0; }
       .project-chart-toggle:hover { text-decoration: underline; }
       .chart-gridline { stroke: var(--border); stroke-width: 1; }
@@ -1736,6 +1807,7 @@ def main():
 
     records = load_records(METRICS_FILE)
     records = dedupe_sessions(records)
+    records = normalize_project_paths(records)
     records = filter_records(records, tag=args.tag, project=args.project)
     all_time_records = records
 
