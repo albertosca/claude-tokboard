@@ -5,7 +5,7 @@ import html
 import json
 import os
 import subprocess
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
 
 METRICS_FILE = os.path.expanduser("~/.claude/metrics/sessions.jsonl")
@@ -278,8 +278,11 @@ def compress_to_label(source_text):
         + source_text[:2000]
     )
     try:
+        # `nice` so the labeling subprocess never competes for CPU with
+        # interactive work (Vim/tmux/LSPs/the calling session itself) - each
+        # call is a full Claude CLI (Node process) boot, not a cheap thread.
         result = subprocess.run(
-            ["claude", "-p", prompt, "--model", "haiku"],
+            ["nice", "-n", "15", "claude", "-p", prompt, "--model", "haiku"],
             capture_output=True,
             text=True,
             timeout=30,
@@ -1223,12 +1226,31 @@ def main():
                 unique_agents[key] = subagent
             elif not existing.get("agent_transcript_path") and subagent.get("agent_transcript_path"):
                 unique_agents[key] = subagent
+        # max_workers=1 (fully serial): each worker spawns a full
+        # `claude -p ... --model haiku` CLI subprocess (a whole Node
+        # process), not a lightweight thread task. Even 3 concurrent
+        # subprocesses was still enough to spike load average past 25 and
+        # keep growing swap on an 8GB machine during a cold-cache backfill
+        # (see PROJECT-LOG 2026-07-20) - serial + `nice` in
+        # compress_to_label trades throughput for never fighting the
+        # machine, which is the explicit tradeoff wanted for a
+        # once-per-history backfill. The cache is also saved every
+        # SAVE_EVERY completions, not just at the end - a killed/interrupted
+        # run keeps whatever it already labeled instead of repeating the
+        # whole cold-cache scan next time.
+        SAVE_EVERY = 10
         agent_keys = list(unique_agents.keys())
-        with ThreadPoolExecutor(max_workers=8) as executor:
-            agent_labels = list(
-                executor.map(lambda k: get_agent_label(unique_agents[k], agent_label_cache), agent_keys)
-            )
-        label_by_agent_id = dict(zip(agent_keys, agent_labels))
+        label_by_agent_id = {}
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            futures = {
+                executor.submit(get_agent_label, unique_agents[k], agent_label_cache): k
+                for k in agent_keys
+            }
+            for i, future in enumerate(as_completed(futures), 1):
+                k = futures[future]
+                label_by_agent_id[k] = future.result()
+                if i % SAVE_EVERY == 0:
+                    save_agent_label_cache(agent_label_cache)
         for subagent in subagent_records:
             subagent["agent_label"] = label_by_agent_id.get(subagent.get("agent_id"))
         save_agent_label_cache(agent_label_cache)
@@ -1248,11 +1270,17 @@ def main():
             ):
                 unique_sessions[key] = record
         session_keys = list(unique_sessions.keys())
-        with ThreadPoolExecutor(max_workers=8) as executor:
-            task_labels = list(
-                executor.map(lambda k: get_task_label(unique_sessions[k], label_cache), session_keys)
-            )
-        label_by_session_id = dict(zip(session_keys, task_labels))
+        label_by_session_id = {}
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            futures = {
+                executor.submit(get_task_label, unique_sessions[k], label_cache): k
+                for k in session_keys
+            }
+            for i, future in enumerate(as_completed(futures), 1):
+                k = futures[future]
+                label_by_session_id[k] = future.result()
+                if i % SAVE_EVERY == 0:
+                    save_label_cache(label_cache)
         for record in records:
             record["task_label"] = label_by_session_id.get(record.get("session_id"))
         save_label_cache(label_cache)
