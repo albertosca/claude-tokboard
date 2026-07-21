@@ -125,7 +125,24 @@ def normalize_project_paths(records):
         p = r.get("project_path")
         if p in canonical and canonical[p] != p:
             r["project_path"] = canonical[p]
+    # A session cwd'd into a scratchpad/tmp dir isn't a "project" (2026-07-21:
+    # "tem um scratchpad que não faço ideia do que seja") - fold these into
+    # the same "sem projeto" bucket None already means, rather than giving
+    # every random ephemeral path its own legend entry.
+    for r in records:
+        p = r.get("project_path")
+        if p and is_ephemeral_path(p):
+            r["project_path"] = None
     return records
+
+
+def is_ephemeral_path(path):
+    normalized = path.rstrip("/")
+    return (
+        normalized.startswith("/tmp/")
+        or normalized.startswith("/private/tmp/")
+        or "/scratchpad" in normalized
+    )
 
 
 def dedupe_sessions(records):
