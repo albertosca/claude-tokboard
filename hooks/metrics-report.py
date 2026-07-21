@@ -624,26 +624,65 @@ def render_detail_panel(session_id, subagents, is_active):
     )
 
 
+# Trend chart granularity, chosen by the data's own span (2026-07-21) -
+# a single day of activity read as a wall of near-empty day-bars; a
+# multi-year history would read as an unreadable wall of day-bars the
+# other way. key_fmt buckets timestamps into that granularity; parse_fmt
+# reads a bucket key back into a datetime (must round-trip key_fmt
+# exactly); tick_fmt is what's shown on the x-axis.
+GRANULARITY_CONFIG = {
+    "hour": {"key_fmt": "%Y-%m-%dT%H", "parse_fmt": "%Y-%m-%dT%H", "tick_fmt": "%d/%m %Hh"},
+    "day": {"key_fmt": "%Y-%m-%d", "parse_fmt": "%Y-%m-%d", "tick_fmt": "%d/%m"},
+    "month": {"key_fmt": "%Y-%m", "parse_fmt": "%Y-%m", "tick_fmt": "%m/%Y"},
+    "year": {"key_fmt": "%Y", "parse_fmt": "%Y", "tick_fmt": "%Y"},
+}
+
+
+def choose_granularity(timestamps):
+    if len(timestamps) < 2:
+        return "day"
+    span = max(timestamps) - min(timestamps)
+    if span <= timedelta(hours=48):
+        return "hour"
+    if span <= timedelta(days=180):
+        return "day"
+    if span <= timedelta(days=365 * 3):
+        return "month"
+    return "year"
+
+
 def aggregate_by_day(records):
-    dated = [r for r in records if r.get("timestamp_start")]
-    days = {}
-    day_order = []
-    for r in dated:
+    dated = []
+    timestamps = []
+    for r in records:
         timestamp_start = r.get("timestamp_start")
+        if not timestamp_start:
+            continue
         try:
-            day_key = datetime.fromisoformat(timestamp_start.replace("Z", "+00:00")).astimezone().strftime("%Y-%m-%d")
+            dt = datetime.fromisoformat(timestamp_start.replace("Z", "+00:00")).astimezone()
         except (ValueError, AttributeError, TypeError):
             continue
-        if day_key not in days:
-            days[day_key] = []
-            day_order.append(day_key)
-        days[day_key].append(r)
-    day_order.sort()
-    return [{"day": day, "records": days[day]} for day in day_order]
+        dated.append((dt, r))
+        timestamps.append(dt)
+
+    granularity = choose_granularity(timestamps)
+    key_fmt = GRANULARITY_CONFIG[granularity]["key_fmt"]
+    buckets = {}
+    bucket_order = []
+    for dt, r in dated:
+        key = dt.strftime(key_fmt)
+        if key not in buckets:
+            buckets[key] = []
+            bucket_order.append(key)
+        buckets[key].append(r)
+    bucket_order.sort()
+    return granularity, [{"day": key, "records": buckets[key]} for key in bucket_order]
 
 
 def render_trend_chart(records, group_colors):
-    days = aggregate_by_day(records)
+    granularity, days = aggregate_by_day(records)
+    parse_fmt = GRANULARITY_CONFIG[granularity]["parse_fmt"]
+    tick_fmt = GRANULARITY_CONFIG[granularity]["tick_fmt"]
     n = len(days)
     if n < 2:
         return ""
@@ -731,25 +770,22 @@ def render_trend_chart(records, group_colors):
     for t in range(tick_count):
         idx = round(t * (n - 1) / (tick_count - 1)) if tick_count > 1 else 0
         x = padding_left + idx * step + bar_width / 2
-        day_dt = datetime.strptime(days[idx]["day"], "%Y-%m-%d")
-        tick_date = day_dt.strftime("%d/%m")
+        bucket_dt = datetime.strptime(days[idx]["day"], parse_fmt)
+        tick_date = bucket_dt.strftime(tick_fmt)
         x_axis.append(
             f'<text x="{x:.1f}" y="{height - 4}" class="chart-axis-label" text-anchor="middle">{tick_date}</text>'
         )
     x_axis_html = "".join(x_axis)
 
-    # Highlight band for the last 7 calendar days present in the data.
+    # Highlight band for the last 7 buckets (2026-07-21: was "last 7
+    # calendar days" specifically, but with hour/month/year granularity
+    # now possible too, "last 7 of whatever unit is on screen" is the
+    # only version of this that still makes sense across all of them).
     highlight_html = ""
-    last_day_dt = datetime.strptime(days[-1]["day"], "%Y-%m-%d")
-    highlight_start_idx = None
-    for i, day in enumerate(days):
-        day_dt = datetime.strptime(day["day"], "%Y-%m-%d")
-        if (last_day_dt - day_dt).days < 7:
-            highlight_start_idx = i
-            break
-    if highlight_start_idx is not None and highlight_start_idx > 0:
+    if n > 7:
+        highlight_start_idx = n - 7
         hx = padding_left + highlight_start_idx * step
-        hwidth = (n - highlight_start_idx) * step
+        hwidth = 7 * step
         highlight_html = (
             f'<rect x="{hx:.1f}" y="{padding_top}" width="{hwidth:.1f}" height="{plot_height}" '
             'class="chart-highlight-band" />'
