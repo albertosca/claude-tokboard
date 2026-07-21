@@ -481,7 +481,9 @@ def render_composition_legend(totals):
     chips = []
     for css_class, name in SERIES_NAMES.items():
         chips.append(
-            f'<span class="legend-chip" data-series="{css_class}" onclick="highlightTokenType(\'{css_class}\', event)">'
+            f'<span class="legend-chip" data-series="{css_class}" '
+            f'onmouseenter="previewHighlight(\'{css_class}\')" onmouseleave="endPreviewHighlight()" '
+            f'onclick="highlightTokenType(\'{css_class}\', event)">'
             f'<span class="legend-swatch {css_class}"></span>{name} · '
             f'<span class="legend-total" data-series="{css_class}">{format_tokens(totals.get(css_class, 0))}</span></span>'
         )
@@ -507,12 +509,13 @@ def render_composition_bar(record):
         parts.append(
             f'<span class="comp-seg {css_class}" style="width:{pct:.2f}%" '
             f'title="{name} · {format_tokens(value)} ({pct:.0f}%)" '
+            f'onmouseenter="previewHighlight(\'{css_class}\')" onmouseleave="endPreviewHighlight()" '
             f'onclick="highlightTokenType(\'{css_class}\', event)"></span>'
         )
     return f'<div class="comp-bar">{"".join(parts)}</div>'
 
 
-def render_session_row(record, is_active, group_colors, group_index):
+def render_session_row(record, is_active, group_colors, group_index, subagent_count=0):
     session_id = record.get("session_id") or ""
     tag = html.escape(record.get("tag") or "-")
     branch = html.escape(record.get("git_branch") or "-")
@@ -523,11 +526,16 @@ def render_session_row(record, is_active, group_colors, group_index):
     total_tokens = format_tokens((record.get("input_tokens", 0) or 0) + (record.get("output_tokens", 0) or 0))
     active_class = " active" if is_active else ""
     group_class = group_colors.get(record.get("project_path"), "group-color-none")
+    # Compact "has subagents" indicator (2026-07-21) - a count badge here
+    # answers "does this session have subagents worth checking" without
+    # opening every single row's detail panel to find out.
+    subagent_badge = f"🤖{subagent_count}" if subagent_count else ""
     return (
         f'<div class="session-row {group_class}{active_class}" id="row-{session_id}" '
         f'data-group="{group_index}" style="display:none" '
         f"onclick=\"showSession('{session_id}')\">"
         f'<span class="sid">{session_id[:12]}</span>'
+        f'<span class="subagent-col">{subagent_badge}</span>'
         f'<span class="date-col">{date_str}</span>'
         f'<span class="tmux-window">{tmux_window}</span>'
         f'<span class="label-col">{task_label}</span>'
@@ -560,6 +568,7 @@ def render_session_header():
     return (
         '<div class="session-row session-header">'
         '<span class="sid">id</span>'
+        '<span class="subagent-col">🤖</span>'
         '<span class="date-col">data</span>'
         '<span class="tmux-window">aba</span>'
         '<span class="label-col">tarefa</span>'
@@ -814,7 +823,9 @@ def render_trend_chart(records, group_colors):
                 project_label = project_display_label(project)
                 bars.append(
                     f'<rect x="{x:.1f}" y="{y_cursor:.1f}" width="{bar_width:.1f}" height="{seg_height:.1f}" '
-                    f'class="chart-bar {group_class}">'
+                    f'class="chart-bar {group_class}" '
+                    f'onmouseenter="previewHighlight(\'{group_class}\')" onmouseleave="endPreviewHighlight()" '
+                    f'onclick="highlightProject(\'{group_class}\', event)">'
                     f"<title>{html.escape(project_label)} · {day['day']} - {format_tokens(value)} tokens</title></rect>"
                 )
         return "".join(bars)
@@ -835,10 +846,13 @@ def render_trend_chart(records, group_colors):
                     continue
                 seg_height = (value / max_tokens) * plot_height if max_tokens else 0
                 y_cursor -= seg_height
+                type_name = SERIES_NAMES[css_class]
                 bars.append(
                     f'<rect x="{x:.1f}" y="{y_cursor:.1f}" width="{bar_width:.1f}" height="{seg_height:.1f}" '
-                    f'class="chart-bar {css_class}" onclick="highlightTokenType(\'{css_class}\', event)">'
-                    f"<title>{day['day']} - {format_tokens(value)} tokens</title></rect>"
+                    f'class="chart-bar {css_class}" '
+                    f'onmouseenter="previewHighlight(\'{css_class}\')" onmouseleave="endPreviewHighlight()" '
+                    f'onclick="highlightTokenType(\'{css_class}\', event)">'
+                    f"<title>{type_name} · {day['day']} - {format_tokens(value)} tokens</title></rect>"
                 )
         return "".join(bars)
 
@@ -889,18 +903,25 @@ def render_trend_chart(records, group_colors):
             if project not in seen_projects:
                 seen_projects.add(project)
                 pane_projects.append(project)
-    pane_legend = "".join(
-        f'<span class="legend-chip"><span class="legend-swatch {group_colors.get(project, "group-color-none")}"></span>'
-        f"{html.escape(project_display_label(project))}</span>"
-        for project in pane_projects
-    )
+    pane_legend_chips = []
+    for project in pane_projects:
+        group_class = group_colors.get(project, "group-color-none")
+        raw_name = html.escape(project or "sem projeto")
+        label = html.escape(project_display_label(project))
+        pane_legend_chips.append(
+            f'<span class="legend-chip" '
+            f'onmouseenter="previewHighlight(\'{group_class}\')" onmouseleave="endPreviewHighlight()" '
+            f'onclick="highlightProject(\'{group_class}\', event)">'
+            f'<span class="legend-swatch {group_class}"></span>{raw_name}:{label}</span>'
+        )
+    pane_legend = "".join(pane_legend_chips)
     pane_legend_html = f'<div class="project-chart-legend">{pane_legend}</div>'
 
     return (
         '<div class="trend-container">'
         '<div class="trend-mode-tabs">'
-        '<span class="tab-btn active" id="trend-btn-pane" onclick="showTrendMode(\'pane\')">por projeto</span>'
-        '<span class="tab-btn" id="trend-btn-tokens" onclick="showTrendMode(\'tokens\')">por tipo de token</span>'
+        '<span class="tab-btn active" id="trend-btn-pane" onclick="showTrendMode(\'pane\')">Por projeto</span>'
+        '<span class="tab-btn" id="trend-btn-tokens" onclick="showTrendMode(\'tokens\')">Por tipo de token</span>'
         "</div>"
         '<div class="trend-pane active" id="trend-pane-pane">'
         f'<div class="trend-scroll" data-floor-hit="{str(scrollable).lower()}">{pane_svg}</div>'
@@ -976,7 +997,9 @@ def render_project_totals_chart(records, project_first_seen, project_last_seen, 
                 name = SERIES_NAMES[css_class]
                 seg_rects.append(
                     f'<rect x="{x_cursor:.1f}" y="{y + 9}" width="{seg_width:.1f}" height="14" '
-                    f'class="chart-bar {css_class}" onclick="highlightTokenType(\'{css_class}\', event)">'
+                    f'class="chart-bar {css_class}" '
+                    f'onmouseenter="previewHighlight(\'{css_class}\')" onmouseleave="endPreviewHighlight()" '
+                    f'onclick="highlightTokenType(\'{css_class}\', event)">'
                     f"<title>{html.escape(label)} · {name} · {format_tokens(value)}</title></rect>"
                 )
                 x_cursor += seg_width
@@ -1042,6 +1065,7 @@ def render_project_totals_chart(records, project_first_seen, project_last_seen, 
     return (
         '<div class="project-chart-container">'
         '<h3 class="project-chart-title">Total de tokens por projeto</h3>'
+        '<p class="project-chart-sort-note">ordenado por atividade mais recente primeiro</p>'
         f"{legend}"
         f"{visible_svg}"
         f"{more_html}"
@@ -1092,10 +1116,15 @@ def render_html(records, subagents_by_session, chart_records, project_first_seen
             if label and label_counts.get(label, 0) > 1:
                 label_seen[label] = label_seen.get(label, 0) + 1
                 record = {**record, "task_label": f"{label} ({label_seen[label]})"}
-            rows_html.append(render_session_row(record, False, group_colors, group_index))
-            panels_html.append(
-                render_detail_panel(session_id, subagents_by_session.get(session_id, []), False)
+            session_subagents = subagents_by_session.get(session_id, [])
+            visible_subagent_count = sum(
+                1 for s in session_subagents
+                if (s.get("input_tokens", 0) or 0) + (s.get("output_tokens", 0) or 0) > 0
             )
+            rows_html.append(
+                render_session_row(record, False, group_colors, group_index, visible_subagent_count)
+            )
+            panels_html.append(render_detail_panel(session_id, session_subagents, False))
 
     trend_html = render_trend_chart(chart_records, group_colors)
     project_totals_html = render_project_totals_chart(chart_records, project_first_seen, project_last_seen, open_projects)
@@ -1153,10 +1182,11 @@ def render_html(records, subagents_by_session, chart_records, project_first_seen
       .chart-highlight-band { fill: var(--series-1); opacity: 0.06; }
       .project-chart-container { padding: 12px 16px; border-bottom: 1px solid var(--border); }
       .project-chart-title { font-size: 13px; margin: 0 0 8px; color: var(--text-secondary); }
+      .project-chart-sort-note { font-size: 10px; margin: -4px 0 8px; color: var(--text-muted); }
       .project-chart-svg { width: 100%; max-width: 760px; display: block; }
       .project-chart-label { font-size: 10px; fill: var(--text-primary); font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
       .project-chart-track { fill: var(--border); }
-      .project-chart-legend { display: flex; gap: 14px; padding: 6px 0 0; font-size: 10px; color: var(--text-secondary); }
+      .project-chart-legend { display: flex; flex-wrap: wrap; row-gap: 4px; gap: 14px; padding: 6px 0 0; font-size: 10px; color: var(--text-secondary); }
       .project-chart-toggle { font-size: 11px; color: var(--series-1); cursor: pointer; padding: 4px 0; }
       .project-chart-toggle:hover { text-decoration: underline; }
       .chart-gridline { stroke: var(--border); stroke-width: 1; }
@@ -1183,11 +1213,21 @@ def render_html(records, subagents_by_session, chart_records, project_first_seen
       .tab-pane.active { display: block; }
       .main-row { display: flex; }
       .session-list { width: 62%; border-right: 1px solid var(--border); overflow-x: auto; font-family: monospace; }
-      .session-row { display: flex; align-items: center; gap: 8px; padding: 6px 10px; cursor: pointer; border-bottom: 1px solid var(--border); font-size: 12px; }
+      /* width: fit-content + min-width: 100% (2026-07-21) - a flex row
+         with no explicit width stretches to fill .session-list's box
+         (62% of the page) but does NOT grow past that to fit overflowing
+         children; the row's own background then only covers that
+         original width while content (and .session-list's
+         overflow-x:auto scrollbar) extends further right, so the
+         group-color tint stopped partway across a horizontally-scrolled
+         row instead of following the content. fit-content lets the row
+         grow to match its actual (wider) content when needed. */
+      .session-row { display: flex; align-items: center; gap: 8px; padding: 6px 10px; cursor: pointer; border-bottom: 1px solid var(--border); font-size: 12px; width: fit-content; min-width: 100%; }
       .session-row > span:not(:last-child) { border-right: 1px solid var(--border); padding-right: 8px; }
       .session-row:hover { background: rgba(42, 120, 214, 0.08); }
       .session-row.active { background: rgba(42, 120, 214, 0.16); font-weight: bold; }
       .session-row .sid { color: var(--text-muted); width: 90px; flex-shrink: 0; }
+      .session-row .subagent-col { width: 28px; flex-shrink: 0; text-align: center; }
       .session-row .tokens-total { color: var(--text-secondary); width: 55px; flex-shrink: 0; text-align: right; }
       .session-row .tmux-window { width: 90px; flex-shrink: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
       .session-header { position: sticky; top: 0; z-index: 1; background: var(--surface-1); font-weight: bold; color: var(--text-muted); font-size: 10px; cursor: default; border-bottom: 2px solid var(--border); }
@@ -1245,6 +1285,28 @@ def render_html(records, subagents_by_session, chart_records, project_first_seen
       body[data-highlight~="series-2"] .chart-bar.series-2 { stroke: var(--series-2); stroke-width: 1.5px; }
       body[data-highlight~="series-3"] .chart-bar.series-3 { stroke: var(--series-3); stroke-width: 1.5px; }
       body[data-highlight~="series-4"] .chart-bar.series-4 { stroke: var(--series-4); stroke-width: 1.5px; }
+      /* Same spotlight pattern as series-N above, for "por projeto"'s
+         group-color-N bars/legend (2026-07-21) - the two share one
+         data-highlight attribute since only one trend-mode pane is ever
+         visible at once. */
+      body[data-highlight] .chart-bar.group-color-1, body[data-highlight] .chart-bar.group-color-2, body[data-highlight] .chart-bar.group-color-3, body[data-highlight] .chart-bar.group-color-4, body[data-highlight] .chart-bar.group-color-5, body[data-highlight] .chart-bar.group-color-6, body[data-highlight] .chart-bar.group-color-7, body[data-highlight] .chart-bar.group-color-8, body[data-highlight] .chart-bar.group-color-none { opacity: 0.25; }
+      body[data-highlight~="group-color-1"] .chart-bar.group-color-1 { opacity: 1; stroke: var(--group-1); stroke-width: 1.5px; }
+      body[data-highlight~="group-color-2"] .chart-bar.group-color-2 { opacity: 1; stroke: var(--group-2); stroke-width: 1.5px; }
+      body[data-highlight~="group-color-3"] .chart-bar.group-color-3 { opacity: 1; stroke: var(--group-3); stroke-width: 1.5px; }
+      body[data-highlight~="group-color-4"] .chart-bar.group-color-4 { opacity: 1; stroke: var(--group-4); stroke-width: 1.5px; }
+      body[data-highlight~="group-color-5"] .chart-bar.group-color-5 { opacity: 1; stroke: var(--group-5); stroke-width: 1.5px; }
+      body[data-highlight~="group-color-6"] .chart-bar.group-color-6 { opacity: 1; stroke: var(--group-6); stroke-width: 1.5px; }
+      body[data-highlight~="group-color-7"] .chart-bar.group-color-7 { opacity: 1; stroke: var(--group-7); stroke-width: 1.5px; }
+      body[data-highlight~="group-color-8"] .chart-bar.group-color-8 { opacity: 1; stroke: var(--group-8); stroke-width: 1.5px; }
+      body[data-highlight~="group-color-none"] .chart-bar.group-color-none { opacity: 1; stroke: var(--group-none); stroke-width: 1.5px; }
+      body[data-highlight~="group-color-1"] .legend-chip:has(.legend-swatch.group-color-1),
+      body[data-highlight~="group-color-2"] .legend-chip:has(.legend-swatch.group-color-2),
+      body[data-highlight~="group-color-3"] .legend-chip:has(.legend-swatch.group-color-3),
+      body[data-highlight~="group-color-4"] .legend-chip:has(.legend-swatch.group-color-4),
+      body[data-highlight~="group-color-5"] .legend-chip:has(.legend-swatch.group-color-5),
+      body[data-highlight~="group-color-6"] .legend-chip:has(.legend-swatch.group-color-6),
+      body[data-highlight~="group-color-7"] .legend-chip:has(.legend-swatch.group-color-7),
+      body[data-highlight~="group-color-8"] .legend-chip:has(.legend-swatch.group-color-8) { opacity: 1; font-weight: 700; }
       .proj-total .total-only { display: none; }
       body[data-highlight~="series-1"] .proj-total .total-only.series-1 { display: inline; font-style: italic; fill: var(--series-1); }
       body[data-highlight~="series-2"] .proj-total .total-only.series-2 { display: inline; font-style: italic; fill: var(--series-2); }
@@ -1265,7 +1327,7 @@ def render_html(records, subagents_by_session, chart_records, project_first_seen
       .session-row.group-color-7 { background: var(--group-7-tint); border-left: 3px solid var(--group-7); }
       .session-row.group-color-8 { background: var(--group-8-tint); border-left: 3px solid var(--group-8); }
       .session-row.group-color-none { border-left: 3px solid var(--group-none); }
-      .group-header { display: flex; align-items: center; gap: 6px; padding: 6px 10px; font-size: 11px; font-weight: bold; cursor: pointer; border-bottom: 1px solid var(--border); background: var(--surface-1); }
+      .group-header { display: flex; align-items: center; gap: 6px; padding: 6px 10px; font-size: 11px; font-weight: bold; cursor: pointer; border-bottom: 1px solid var(--border); background: var(--surface-1); width: fit-content; min-width: 100%; }
       .group-header.group-color-1 { border-left: 3px solid var(--group-1); }
       .group-header.group-color-2 { border-left: 3px solid var(--group-2); }
       .group-header.group-color-3 { border-left: 3px solid var(--group-3); }
@@ -1347,27 +1409,63 @@ def render_html(records, subagents_by_session, chart_records, project_first_seen
       var icon = header.querySelector('.group-icon');
       if (icon) { icon.textContent = collapsed ? '▾' : '▸'; }
     }
-    function highlightTokenType(type, event) {
+    // Shared by highlightTokenType (token-type legend/bars) and
+    // highlightProject (por-projeto legend/bars, 2026-07-21) - the two
+    // never show on screen at once (only one trend-mode-tab is visible),
+    // so they can safely share the one data-highlight attribute/CSS
+    // instead of needing two independent highlight systems.
+    function toggleHighlight(cls, event, allClasses) {
       var body = document.body;
       var current = body.getAttribute('data-highlight');
       var currentSet = current ? current.split(' ') : [];
-      var ALL_TYPES = ['series-1', 'series-2', 'series-3', 'series-4'];
-      // shift = select every type at once; ctrl/cmd = remove just this
-      // one from whatever's selected; plain click = the old single-select
-      // toggle (2026-07-21, replaces the old shift-to-add/remove-one
-      // behavior - ctrl/cmd now owns "remove one").
+      // shift = select every option at once; ctrl/cmd = remove just this
+      // one from whatever's selected; plain click = single-select toggle.
       if (event && event.shiftKey) {
-        currentSet = ALL_TYPES.slice();
+        currentSet = allClasses.slice();
       } else if (event && (event.ctrlKey || event.metaKey)) {
-        var index = currentSet.indexOf(type);
+        var index = currentSet.indexOf(cls);
         if (index !== -1) { currentSet.splice(index, 1); }
       } else {
-        currentSet = (currentSet.length === 1 && currentSet[0] === type) ? [] : [type];
+        currentSet = (currentSet.length === 1 && currentSet[0] === cls) ? [] : [cls];
       }
       if (currentSet.length === 0) {
         body.removeAttribute('data-highlight');
       } else {
         body.setAttribute('data-highlight', currentSet.join(' '));
+      }
+    }
+    function highlightTokenType(type, event) {
+      toggleHighlight(type, event, ['series-1', 'series-2', 'series-3', 'series-4']);
+    }
+    function highlightProject(groupClass, event) {
+      // The set of group-color-N classes actually in play varies by
+      // project count, so it's read from the currently-rendered
+      // "por projeto" legend rather than hardcoded like token types are.
+      var swatches = document.querySelectorAll('#trend-pane-pane .legend-swatch');
+      var allClasses = Array.from(swatches).map(function(el) {
+        return Array.from(el.classList).filter(function(c) { return c.indexOf('group-color') === 0; })[0];
+      }).filter(Boolean);
+      toggleHighlight(groupClass, event, allClasses);
+    }
+    // Hover previews the same highlight a click would commit (2026-07-21)
+    // - mouseenter shows it, mouseleave restores whatever was selected
+    // before the hover started. A real click still goes through
+    // highlightTokenType/highlightProject above and persists normally.
+    var _highlightBeforeHover = null;
+    function previewHighlight(cls) {
+      if (_highlightBeforeHover === null) {
+        _highlightBeforeHover = document.body.getAttribute('data-highlight') || '';
+      }
+      document.body.setAttribute('data-highlight', cls);
+    }
+    function endPreviewHighlight() {
+      if (_highlightBeforeHover !== null) {
+        if (_highlightBeforeHover) {
+          document.body.setAttribute('data-highlight', _highlightBeforeHover);
+        } else {
+          document.body.removeAttribute('data-highlight');
+        }
+        _highlightBeforeHover = null;
       }
     }
     document.querySelectorAll('.trend-scroll').forEach(function(el) { el.scrollLeft = el.scrollWidth; });
@@ -1445,20 +1543,14 @@ def main():
         # worked on.
         effective_days = 60
 
+    # The chart always covers the full history (2026-07-21: "por que não
+    # cobrir mais datas?") - only the session-list table is bounded by
+    # --days/-n. chart_records is all_time_records (already has
+    # --tag/--project applied, just not the days window), independent of
+    # whatever the table's window/limit end up being below.
+    chart_records = all_time_records
     records = filter_by_days(records, effective_days)
-    if effective_days is None:
-        # No period in effect (either --all, or an explicit --days that
-        # somehow resolved to None — can't currently happen, but the
-        # bound-to--n fallback is the safe default either way): the chart
-        # shouldn't render the entire unbounded history — fall back to the
-        # same -n-limited set the table shows.
-        records = records[-args.limit:]
-        chart_records = records
-    else:
-        # A period IS in effect (the new 30-day default, or an explicit
-        # --days): the chart reflects the whole period, uncapped by -n.
-        chart_records = records
-        records = records[-args.limit:]
+    records = records[-args.limit:]
 
     if args.html:
         subagent_records = dedupe_subagents(load_records(SUBAGENTS_FILE))
