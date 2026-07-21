@@ -915,7 +915,7 @@ def render_html(records, subagents_by_session, chart_records, project_first_seen
       }
       .trend-container { padding: 12px 16px; border-bottom: 1px solid var(--border); position: sticky; top: 0; z-index: 5; background: var(--surface-1); }
       .trend-scroll { overflow-x: auto; max-width: 100%; }
-      .trend-svg { height: auto; display: block; margin: 0 auto; }
+      .trend-svg { height: 150px; display: block; margin: 0 auto; }
       .chart-highlight-band { fill: var(--series-1); opacity: 0.06; }
       .project-chart-container { padding: 12px 16px; border-bottom: 1px solid var(--border); }
       .project-chart-title { font-size: 13px; margin: 0 0 8px; color: var(--text-secondary); }
