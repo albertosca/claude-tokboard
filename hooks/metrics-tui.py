@@ -34,7 +34,18 @@ def import_metrics_report():
 def load_data(args, mr=None):
     mr = mr or import_metrics_report()
 
+    # Dedupe + normalize the same way metrics-report.py's main() does
+    # before ANYTHING else touches records (2026-07-21) - the Stop hook
+    # appends a fresh cumulative snapshot every turn, so one session_id can
+    # have dozens of duplicate rows with growing token counts (found up to
+    # ~50x inflation upstream). normalize_project_paths then rolls a
+    # subdirectory cwd up to its real project root and folds scratchpad/tmp
+    # cwds into "sem projeto" - see that function's docstring in
+    # metrics-report.py for the fan-out safeguard that keeps it from
+    # collapsing unrelated projects into a shared container directory.
     records = mr.load_records(mr.METRICS_FILE)
+    records = mr.dedupe_sessions(records)
+    records = mr.normalize_project_paths(records)
     records = mr.filter_records(records, tag=args.tag, project=args.project)
     all_time_records = records
 
@@ -46,24 +57,24 @@ def load_data(args, mr=None):
         effective_days = 30
 
     records = mr.filter_by_days(records, effective_days)
-    if effective_days is None:
-        records = records[-args.limit:]
-        chart_records = records
-    else:
-        chart_records = records
+    chart_records = records
+    # No -n cap on the session list (2026-07-21, mirrors metrics-report.py's
+    # --html branch): a Textual Tree already scrolls natively, so there's no
+    # "table overflows the terminal" problem an artificial cap would be
+    # solving here - only the plain terminal-table mode in metrics-report.py
+    # still defaults to -n=20. --limit/-n is kept as a CLI flag for anyone
+    # who wants to bound it explicitly, but it's no longer applied by default.
+    if args.limit is not None:
         records = records[-args.limit:]
 
-    # Parallelized + deduped the same way as metrics-report.py's --html
-    # branch (see that file's main() and docs/superpowers/plans/
-    # 2026-07-18-dashboard-round5.md): each uncached label can spawn a
-    # claude -p subprocess (up to 30s), and real data has duplicate
-    # session_id/agent_id records with no dedup anywhere upstream. Deduping
-    # to one representative per key before the thread pool avoids both a
-    # cross-thread race on the same cache key and redundant subprocess
-    # calls; preferring a source-bearing duplicate as representative avoids
-    # silently losing a real label to a source-less duplicate of the same
-    # key.
-    subagent_records = mr.load_records(mr.SUBAGENTS_FILE)
+    # Parallelized labeling, same pattern as metrics-report.py's --html
+    # branch. subagent_records is already deduped by agent_id above the
+    # growing-snapshot problem dedupe_subagents fixes - preferring a
+    # source-bearing duplicate as representative here is a separate, smaller
+    # concern: two THREADS racing the same cache key could otherwise
+    # interleave a real label with a failed one, and negative-caching would
+    # then permanently lock in whichever thread wrote last.
+    subagent_records = mr.dedupe_subagents(mr.load_records(mr.SUBAGENTS_FILE))
     agent_label_cache = mr.load_agent_label_cache()
     unique_agents = {}
     for subagent in subagent_records:
@@ -123,23 +134,34 @@ def load_data(args, mr=None):
     }
 
 
-def build_session_tree(records, mr):
+def build_session_tree(records, subagents_by_session, mr):
     group_colors = mr.assign_group_colors(records)
     groups = mr.build_project_groups(records, group_colors)
     tree = Tree("Sessões")
     tree.show_root = False
     for group in groups:
         project_path = group["project"]
+        # Omit zero-token sessions (2026-07-21, ported from
+        # metrics-report.py's render_html) - a session that never recorded
+        # any input/output tokens (aborted before the first turn, etc.) is
+        # dead weight in the tree. A group whose every session is zero-token
+        # is skipped entirely rather than left as an empty, expandable node.
+        visible_records = [
+            r for r in group["records"]
+            if (r.get("input_tokens", 0) or 0) + (r.get("output_tokens", 0) or 0) > 0
+        ]
+        if not visible_records:
+            continue
         label = mr.project_display_label(project_path)
         total_tokens = sum(
             (r.get("input_tokens", 0) or 0) + (r.get("output_tokens", 0) or 0)
-            for r in group["records"]
+            for r in visible_records
         )
         group_node = tree.root.add(
-            f"{label} ({len(group['records'])} sessões · {mr.format_tokens(total_tokens)} tokens)",
+            f"{label} ({len(visible_records)} sessões · {mr.format_tokens(total_tokens)} tokens)",
             expand=False,
         )
-        for record in group["records"]:
+        for record in visible_records:
             session_id = record.get("session_id") or ""
             date_str = mr.format_date(record.get("timestamp_start"))
             task_label = record.get("task_label") or "-"
@@ -148,8 +170,20 @@ def build_session_tree(records, mr):
             )
             duration = record.get("duration_seconds")
             duration_str = f"{duration:.0f}s" if duration is not None else "-"
+            # Subagent count badge (2026-07-21, ported from
+            # metrics-report.py's render_session_row/subagent_badge) - lets
+            # you tell which sessions dispatched subagents right in the
+            # tree, without expanding every single one's detail panel.
+            # Counts only subagents that actually recorded tokens, same
+            # filter render_html applies to its own badge.
+            session_subagents = subagents_by_session.get(session_id, [])
+            visible_subagent_count = sum(
+                1 for s in session_subagents
+                if (s.get("input_tokens", 0) or 0) + (s.get("output_tokens", 0) or 0) > 0
+            )
+            subagent_badge = f" 🤖{visible_subagent_count}" if visible_subagent_count else ""
             group_node.add_leaf(
-                f"{session_id[:12]:<14}{date_str:<14}{task_label[:28]:<30}{tokens:>8}   {duration_str:>7}",
+                f"{session_id[:12]:<14}{date_str:<14}{task_label[:28]:<30}{tokens:>8}   {duration_str:>7}{subagent_badge}",
                 data={"session_id": session_id},
             )
     return tree
@@ -305,7 +339,11 @@ class ProjectRankingList(Static):
 
     def render(self):
         ordered, totals, max_total = self.mr.compute_project_totals(self.chart_records, self.project_last_seen)
-        if not totals:
+        # Omit zero-token projects (2026-07-21, ported from
+        # metrics-report.py's render_project_totals_chart) - a project with
+        # nothing to show is just dead weight in this ranking.
+        ordered = [p for p in ordered if totals.get(p, 0) > 0]
+        if not ordered:
             return "[dim]Sem dados.[/dim]"
 
         max_total = max_total or 1
@@ -337,7 +375,11 @@ def build_arg_parser():
     parser = argparse.ArgumentParser(description="Terminal (TUI) dashboard for Claude Code session metrics.")
     parser.add_argument("--tag", default=None, help="Filter by session tag")
     parser.add_argument("--project", default=None, help="Filter by project path")
-    parser.add_argument("-n", "--limit", type=int, default=20, help="Number of most recent sessions to show")
+    # No default cap (2026-07-21): the Tree widget scrolls natively, so unlike
+    # metrics-report.py's plain terminal-table mode there's no overflow
+    # problem a default -n=20 would be solving here. Pass -n explicitly to
+    # bound it anyway.
+    parser.add_argument("-n", "--limit", type=int, default=None, help="Number of most recent sessions to show (unbounded by default)")
     parser.add_argument("--days", type=int, default=None, help="Only include sessions from the last N days")
     parser.add_argument("--all", action="store_true", help="Show the full history, bypassing the default 30-day active-project window")
     return parser
@@ -364,7 +406,7 @@ class MetricsTUIApp(App):
         with TabbedContent():
             with TabPane("Sessões", id="tab-sessions"):
                 with Horizontal():
-                    yield build_session_tree(self.data["records"], self.mr)
+                    yield build_session_tree(self.data["records"], self.data["subagents_by_session"], self.mr)
                     yield SessionDetailPanel(self.mr)
             with TabPane("Panorama", id="tab-panorama"):
                 totals = self.mr.compute_token_type_totals(self.data["records"])
