@@ -30,6 +30,43 @@ def load_records(path):
     return records
 
 
+def dedupe_by_key(records, key_field):
+    # metrics-log.py / subagent-metrics-log.py append a fresh cumulative
+    # snapshot on every Stop/SubagentStop event during a session or
+    # subagent's life, not just once at the end - a long/busy one can log
+    # many rows sharing one id, each with growing
+    # duration_seconds/tokens/turn_count. Every downstream consumer here
+    # (trend chart day totals, Panorama project totals, the composition
+    # legend, the subagent detail table) just sums/lists records, so
+    # without this dedup real usage gets counted once per snapshot logged
+    # - inflating every total by however many times that id got logged
+    # (found 2026-07-21: one session had 33 duplicate rows; 17 subagent
+    # ids had up to 4). Keep the snapshot with the largest
+    # duration_seconds per id, first-seen order otherwise.
+    best_by_id = {}
+    order = []
+    no_id_records = []
+    for r in records:
+        key = r.get(key_field)
+        if key is None:
+            no_id_records.append(r)
+            continue
+        if key not in best_by_id:
+            order.append(key)
+            best_by_id[key] = r
+        elif (r.get("duration_seconds") or 0) >= (best_by_id[key].get("duration_seconds") or 0):
+            best_by_id[key] = r
+    return [best_by_id[key] for key in order] + no_id_records
+
+
+def dedupe_sessions(records):
+    return dedupe_by_key(records, "session_id")
+
+
+def dedupe_subagents(records):
+    return dedupe_by_key(records, "agent_id")
+
+
 def filter_records(records, tag=None, project=None):
     filtered = records
     if tag is not None:
@@ -182,6 +219,10 @@ def format_tokens(n):
     if n is None:
         return "-"
     n = int(n)
+    if abs(n) >= 1_000_000_000_000:
+        return f"{n / 1_000_000_000_000:.1f}T"
+    if abs(n) >= 1_000_000_000:
+        return f"{n / 1_000_000_000:.1f}B"
     if abs(n) >= 1_000_000:
         return f"{n / 1_000_000:.1f}M"
     if abs(n) >= 1_000:
@@ -558,14 +599,19 @@ def render_detail_panel(session_id, subagents, is_active):
             else:
                 task_text = f"{agent_type} (sem transcript salvo)"
             date_str = format_date(subagent.get("timestamp_start"))
-            in_tok = format_tokens(subagent.get("input_tokens", 0))
-            out_tok = format_tokens(subagent.get("output_tokens", 0))
+            # A composition bar instead of the old "{in}/{out} tok" text
+            # (2026-07-21) - the slash format was ambiguous about which
+            # number was which, and this also gives subagent rows the
+            # same click-to-filter behavior session rows already had via
+            # highlightTokenType, sharing the exact legend/highlight
+            # wiring instead of needing its own.
+            comp_bar = render_composition_bar(subagent)
             zebra_class = " subagent-row-odd" if i % 2 == 1 else ""
             rows.append(
                 f'<div class="subagent-row{zebra_class}">'
                 f"<span>{date_str}</span>"
                 f"<span>{task_text}</span>"
-                f'<span>{in_tok}/{out_tok} tok</span>'
+                f"<span>{comp_bar}</span>"
                 f'<span>{subagent.get("tool_call_count", 0)} tools</span>'
                 f"<span>{duration_str}</span>"
                 "</div>"
@@ -646,7 +692,11 @@ def render_trend_chart(records, group_colors):
     # drops the old 1000px ceiling entirely, matching "sem teto fixo." The
     # 8px floor / scrollable-fallback logic below this point is UNCHANGED —
     # this only changes how generously wide the non-floor-hit case renders.
-    candidate_width = max(400, 40 + n * 16)
+    # 3x wider by default (2026-07-21 feedback, after item 1 made width a
+    # fixed pixel value instead of stretchy) - per-day step 16px -> 48px,
+    # floor 400 -> 1200, so days read as more spread out; .trend-scroll
+    # handles anything past the visible container via horizontal scroll.
+    candidate_width = max(1200, 40 + n * 48)
     plot_width = candidate_width - padding_left - padding_right
     step = plot_width / n
     bar_width = step * 0.6
@@ -870,14 +920,17 @@ def render_project_totals_chart(records, project_first_seen, project_last_seen, 
                     f"<title>{html.escape(label)} · {name} · {format_tokens(value)}</title></rect>"
                 )
                 x_cursor += seg_width
-            # Total label carries BOTH the grand total and one tspan per
-            # series, all but one hidden by CSS depending on
-            # body[data-highlight] - clicking a legend chip swaps which
-            # one shows (2026-07-20). The per-series tspans are italic and
-            # tinted that series' color so it reads as "not the real
-            # total" at a glance, not just a smaller number.
+            # Total label carries the grand total (always visible, 2026-07-21
+            # feedback: the colored per-type number alone wasn't enough,
+            # the total needs to stay visible alongside it) plus one
+            # separator+tspan per series, hidden by CSS unless
+            # body[data-highlight] selects that series - clicking a
+            # legend chip appends " · <that type>" next to the still-visible
+            # grand total instead of replacing it. The per-series tspans
+            # are italic and tinted that series' color so it reads as
+            # "the filtered slice," not a second real total.
             series_tspans = "".join(
-                f'<tspan class="total-only {css_class}"> {format_tokens(series_by_project.get(project, {}).get(css_class, 0))}</tspan>'
+                f'<tspan class="total-only {css_class}"> · {format_tokens(series_by_project.get(project, {}).get(css_class, 0))}</tspan>'
                 for css_class in ("series-1", "series-2", "series-3", "series-4")
             )
             total_text = (
@@ -939,24 +992,46 @@ def render_project_totals_chart(records, project_first_seen, project_last_seen, 
 def render_html(records, subagents_by_session, chart_records, project_first_seen, project_last_seen, open_projects):
     group_colors = assign_group_colors(chart_records)
     groups = build_project_groups(records, group_colors)
-    rows_html = []
-    panels_html = []
+
+    # Alberto: omit zero-token sections entirely (2026-07-20) - a
+    # session that never recorded any input/output tokens (aborted
+    # before the first turn, etc.) adds a row with nothing useful in
+    # it. Filter before deciding whether to render a group header at
+    # all, so a group whose every session was zero-token doesn't leave
+    # a header with no rows under it.
+    visible_groups = []
     for group_index, group in enumerate(groups):
-        # Alberto: omit zero-token sections entirely (2026-07-20) - a
-        # session that never recorded any input/output tokens (aborted
-        # before the first turn, etc.) adds a row with nothing useful in
-        # it. Filter before deciding whether to render the group header
-        # at all, so a group whose every session was zero-token doesn't
-        # leave a header with no rows under it.
         visible_records = [
             r for r in group["records"]
             if (r.get("input_tokens", 0) or 0) + (r.get("output_tokens", 0) or 0) > 0
         ]
-        if not visible_records:
-            continue
-        rows_html.append(render_group_header(group_index, {**group, "records": visible_records}))
-        for record in visible_records:
+        if visible_records:
+            visible_groups.append((group_index, {**group, "records": visible_records}))
+
+    # Distinguish sessions that got the SAME AI-generated task_label
+    # (2026-07-21) - the labeler can independently produce an identical
+    # short summary for two genuinely different sessions, and with
+    # nothing else visible in that column they read as duplicates.
+    # Numbering only kicks in for a label actually shared by 2+ distinct
+    # session_ids, in first-seen order across the whole table.
+    label_counts = {}
+    for _, group in visible_groups:
+        for r in group["records"]:
+            label = r.get("task_label")
+            if label:
+                label_counts[label] = label_counts.get(label, 0) + 1
+    label_seen = {}
+
+    rows_html = []
+    panels_html = []
+    for group_index, group in visible_groups:
+        rows_html.append(render_group_header(group_index, group))
+        for record in group["records"]:
             session_id = record.get("session_id") or ""
+            label = record.get("task_label")
+            if label and label_counts.get(label, 0) > 1:
+                label_seen[label] = label_seen.get(label, 0) + 1
+                record = {**record, "task_label": f"{label} ({label_seen[label]})"}
             rows_html.append(render_session_row(record, False, group_colors, group_index))
             panels_html.append(
                 render_detail_panel(session_id, subagents_by_session.get(session_id, []), False)
@@ -1025,7 +1100,7 @@ def render_html(records, subagents_by_session, chart_records, project_first_seen
       .project-chart-toggle { font-size: 11px; color: var(--series-1); cursor: pointer; padding: 4px 0; }
       .project-chart-toggle:hover { text-decoration: underline; }
       .chart-gridline { stroke: var(--border); stroke-width: 1; }
-      .chart-axis-label { fill: var(--text-muted); font-size: 8px; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
+      .chart-axis-label { fill: var(--text-muted); font-size: 10px; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
       .chart-bar { cursor: pointer; }
       .chart-bar.group-color-1 { fill: var(--group-1); }
       .chart-bar.group-color-2 { fill: var(--group-2); }
@@ -1102,7 +1177,6 @@ def render_html(records, subagents_by_session, chart_records, project_first_seen
       body[data-highlight~="series-3"] .chart-bar.series-3 { stroke: var(--series-3); stroke-width: 1.5px; }
       body[data-highlight~="series-4"] .chart-bar.series-4 { stroke: var(--series-4); stroke-width: 1.5px; }
       .proj-total .total-only { display: none; }
-      body[data-highlight] .proj-total .total-grand { display: none; }
       body[data-highlight~="series-1"] .proj-total .total-only.series-1 { display: inline; font-style: italic; fill: var(--series-1); }
       body[data-highlight~="series-2"] .proj-total .total-only.series-2 { display: inline; font-style: italic; fill: var(--series-2); }
       body[data-highlight~="series-3"] .proj-total .total-only.series-3 { display: inline; font-style: italic; fill: var(--series-3); }
@@ -1208,14 +1282,16 @@ def render_html(records, subagents_by_session, chart_records, project_first_seen
       var body = document.body;
       var current = body.getAttribute('data-highlight');
       var currentSet = current ? current.split(' ') : [];
-      var shiftHeld = event && event.shiftKey;
-      if (shiftHeld) {
+      var ALL_TYPES = ['series-1', 'series-2', 'series-3', 'series-4'];
+      // shift = select every type at once; ctrl/cmd = remove just this
+      // one from whatever's selected; plain click = the old single-select
+      // toggle (2026-07-21, replaces the old shift-to-add/remove-one
+      // behavior - ctrl/cmd now owns "remove one").
+      if (event && event.shiftKey) {
+        currentSet = ALL_TYPES.slice();
+      } else if (event && (event.ctrlKey || event.metaKey)) {
         var index = currentSet.indexOf(type);
-        if (index === -1) {
-          currentSet.push(type);
-        } else {
-          currentSet.splice(index, 1);
-        }
+        if (index !== -1) { currentSet.splice(index, 1); }
       } else {
         currentSet = (currentSet.length === 1 && currentSet[0] === type) ? [] : [type];
       }
@@ -1274,6 +1350,7 @@ def main():
     args = parser.parse_args()
 
     records = load_records(METRICS_FILE)
+    records = dedupe_sessions(records)
     records = filter_records(records, tag=args.tag, project=args.project)
     all_time_records = records
 
@@ -1308,7 +1385,7 @@ def main():
         records = records[-args.limit:]
 
     if args.html:
-        subagent_records = load_records(SUBAGENTS_FILE)
+        subagent_records = dedupe_subagents(load_records(SUBAGENTS_FILE))
         agent_label_cache = load_agent_label_cache()
         # Real data has duplicate agent_id/session_id records (the metrics
         # log has no dedup). Deduping to one representative per key before
