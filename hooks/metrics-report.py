@@ -6,6 +6,7 @@ import html
 import json
 import os
 import subprocess
+import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
 
@@ -476,7 +477,30 @@ def save_label_cache(cache):
 _NO_LABEL = "__no_label__"
 
 
-def get_task_label(record, cache):
+class LabelBudget:
+    # Caps how many NEW labels (each one a real `claude -p --model haiku`
+    # subprocess call, i.e. real API usage) a single run generates -
+    # 2026-07-22 feedback: the backfill was burning real quota, and
+    # unlimited runs kept getting killed mid-flight anyway (session-limit
+    # boundaries), never actually finishing. A bounded run completes for
+    # real within one invocation instead of always being cut off, and
+    # whatever's left over just waits for the next run - the cache means
+    # nothing already-labeled gets redone. None = no cap (old behavior).
+    def __init__(self, limit):
+        self.remaining = limit
+        self._lock = threading.Lock()
+
+    def try_consume(self):
+        if self.remaining is None:
+            return True
+        with self._lock:
+            if self.remaining > 0:
+                self.remaining -= 1
+                return True
+            return False
+
+
+def get_task_label(record, cache, budget):
     session_id = record.get("session_id")
     if not session_id:
         return None
@@ -494,6 +518,12 @@ def get_task_label(record, cache):
         source = cold_summary_source(record.get("transcript_path"))
     if not source:
         cache[session_id] = _NO_LABEL
+        return None
+
+    # Budget exhausted: leave this session UNCACHED (don't write
+    # _NO_LABEL) so the next run picks it up instead of skipping it
+    # forever.
+    if not budget.try_consume():
         return None
 
     label = compress_to_label(source)
@@ -517,7 +547,7 @@ def save_agent_label_cache(cache):
         json.dump(cache, f, indent=2)
 
 
-def get_agent_label(subagent_record, cache):
+def get_agent_label(subagent_record, cache, budget):
     agent_id = subagent_record.get("agent_id")
     if not agent_id:
         return None
@@ -528,6 +558,9 @@ def get_agent_label(subagent_record, cache):
     source = cold_summary_source(subagent_record.get("agent_transcript_path"))
     if not source:
         cache[agent_id] = _NO_LABEL
+        return None
+
+    if not budget.try_consume():
         return None
 
     label = compress_to_label(source)
@@ -1821,6 +1854,10 @@ def main():
     parser.add_argument("--tag", default=None, help="Filter by session tag")
     parser.add_argument("--project", default=None, help="Filter by project path")
     parser.add_argument("-n", "--limit", type=int, default=20, help="Number of most recent sessions to show")
+    parser.add_argument(
+        "--label-budget", type=int, default=100,
+        help="Max NEW labels (real claude -p calls) to generate in this run; already-cached labels are free and unlimited. Use 0 for none, a negative number for unlimited.",
+    )
     parser.add_argument("--html", action="store_true", help="Generate an HTML dashboard instead of printing a table")
     parser.add_argument("--days", type=int, default=None, help="Only include sessions from the last N days")
     parser.add_argument(
@@ -1910,11 +1947,17 @@ def main():
         # run keeps whatever it already labeled instead of repeating the
         # whole cold-cache scan next time.
         SAVE_EVERY = 10
+        # One budget shared across BOTH the agent-label and session-label
+        # passes below (2026-07-22: "restringir a algo como 100
+        # rotulagens por seção") - a single run now generates at most
+        # this many brand-new labels total, then stops calling the model
+        # (already-cached labels are free/instant and don't count).
+        label_budget = LabelBudget(None if args.label_budget < 0 else args.label_budget)
         agent_keys = list(unique_agents.keys())
         label_by_agent_id = {}
         with ThreadPoolExecutor(max_workers=1) as executor:
             futures = {
-                executor.submit(get_agent_label, unique_agents[k], agent_label_cache): k
+                executor.submit(get_agent_label, unique_agents[k], agent_label_cache, label_budget): k
                 for k in agent_keys
             }
             for i, future in enumerate(as_completed(futures), 1):
@@ -1944,7 +1987,7 @@ def main():
         label_by_session_id = {}
         with ThreadPoolExecutor(max_workers=1) as executor:
             futures = {
-                executor.submit(get_task_label, unique_sessions[k], label_cache): k
+                executor.submit(get_task_label, unique_sessions[k], label_cache, label_budget): k
                 for k in session_keys
             }
             for i, future in enumerate(as_completed(futures), 1):
