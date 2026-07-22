@@ -304,22 +304,37 @@ def assign_group_colors(records):
 
 
 def build_project_groups(records, group_colors):
+    # Grouped by color_group_key, not the raw project_path (2026-07-22
+    # fix: "grupos duplicados/fragmentados pro mesmo projeto real") - a
+    # worktree's sessions were showing up as their own separate group
+    # next to their parent project's, even though they already share a
+    # color (assign_group_colors keys the actual color slot by this same
+    # function). Individual records keep their own real project_path
+    # (still used for e.g. the session row's own detail panel/title) -
+    # only the grouping key changes.
     ordered_desc = list(reversed(records))
     groups = {}
-    project_order = []
+    group_order = []
     for record in ordered_desc:
         project = record.get("project_path")
-        if project not in groups:
-            groups[project] = []
-            project_order.append(project)
-        groups[project].append(record)
+        key = color_group_key(project)
+        if key not in groups:
+            groups[key] = {"records": [], "sample_project": project}
+            group_order.append(key)
+        groups[key]["records"].append(record)
     result = []
-    for project in project_order:
+    for key in group_order:
+        # Look up the color via any member's own raw path (guaranteed to
+        # be a key in group_colors) rather than the canonical key itself,
+        # which is only a real dict key when some session was ever
+        # logged directly at that parent path (not always true - a
+        # project sometimes only ever gets worked on inside worktrees).
+        sample_project = groups[key]["sample_project"]
         result.append(
             {
-                "project": project,
-                "class": group_colors.get(project, "group-color-none"),
-                "records": groups[project],
+                "project": key,
+                "class": group_colors.get(sample_project, "group-color-none"),
+                "records": groups[key]["records"],
             }
         )
     return result
@@ -774,12 +789,19 @@ def render_detail_panel(session_id, subagents, is_active):
             # highlightTokenType, sharing the exact legend/highlight
             # wiring instead of needing its own.
             comp_bar = render_composition_bar(subagent)
+            # Numeric total alongside the bar (2026-07-22: "coloca o
+            # número de tokens gastos") - the bar alone showed the
+            # composition/proportions but never the actual amount,
+            # unlike the session table's tokens column which has both.
+            subagent_total_tokens = format_tokens(
+                (subagent.get("input_tokens", 0) or 0) + (subagent.get("output_tokens", 0) or 0)
+            )
             zebra_class = " subagent-row-odd" if i % 2 == 1 else ""
             rows.append(
                 f'<div class="subagent-row{zebra_class}">'
                 f"<span>{date_str}</span>"
                 f"<span>{task_text}</span>"
-                f"<span>{comp_bar}</span>"
+                f'<span class="subagent-tokens-cell">{subagent_total_tokens} {comp_bar}</span>'
                 f'<span>{subagent.get("tool_call_count", 0)} tools</span>'
                 f"<span>{duration_str}</span>"
                 "</div>"
@@ -1695,6 +1717,7 @@ def render_html(records, subagents_by_session, chart_records, project_first_seen
       .detail-close { float: right; background: none; border: none; font-size: 18px; cursor: pointer; color: var(--text-muted); line-height: 1; padding: 0; }
       .detail-close:hover { color: var(--text-primary); }
       .subagent-row { display: grid; grid-template-columns: 0.6fr minmax(200px, 1.6fr) 0.9fr 0.6fr 0.7fr; padding: 4px 8px; border-bottom: 1px solid var(--border); }
+      .subagent-tokens-cell { display: flex; align-items: center; gap: 6px; }
       .subagent-row > span:not(:last-child) { border-right: 1px solid var(--border); padding-right: 8px; }
       .subagent-row > span:nth-child(2) { white-space: normal; word-break: break-word; }
       .subagent-title { font-size: 12px; margin: 12px 0 6px; color: var(--text-secondary); }
@@ -1770,14 +1793,18 @@ def render_html(records, subagents_by_session, chart_records, project_first_seen
     // touch the highlight (2026-07-21: a hover-preview version of this
     // was tried and reverted - "eu quero que reaja só a clique normal,
     // com ctrl e shift"). Only a real click changes data-highlight.
-    function toggleHighlight(cls, event, allClasses) {
+    function toggleHighlight(cls, event) {
       var body = document.body;
       var current = body.getAttribute('data-highlight');
       var currentSet = current ? current.split(' ') : [];
-      // shift = select every option at once; ctrl/cmd = remove just this
-      // one from whatever's selected; plain click = single-select toggle.
+      // shift = ADD this one to whatever's already selected (classic
+      // multi-select semantics, 2026-07-22 - replaces an earlier
+      // "select everything" behavior that always produced the same
+      // result regardless of what was clicked, indistinguishable from a
+      // second shift+click); ctrl/cmd = remove just this one; plain
+      // click = single-select toggle.
       if (event && event.shiftKey) {
-        currentSet = allClasses.slice();
+        if (currentSet.indexOf(cls) === -1) { currentSet.push(cls); }
       } else if (event && (event.ctrlKey || event.metaKey)) {
         var index = currentSet.indexOf(cls);
         if (index !== -1) { currentSet.splice(index, 1); }
@@ -1791,19 +1818,26 @@ def render_html(records, subagents_by_session, chart_records, project_first_seen
       }
     }
     function highlightTokenType(type, event) {
-      toggleHighlight(type, event, ['series-1', 'series-2', 'series-3', 'series-4']);
+      toggleHighlight(type, event);
     }
     function highlightProject(groupClass, event) {
-      // The set of group-color-N classes actually in play varies by
-      // project count, so it's read from the currently-rendered
-      // "por projeto" legend rather than hardcoded like token types are.
-      var swatches = document.querySelectorAll('#trend-pane-pane .legend-swatch');
-      var allClasses = Array.from(swatches).map(function(el) {
-        return Array.from(el.classList).filter(function(c) { return c.indexOf('group-color') === 0; })[0];
-      }).filter(Boolean);
-      toggleHighlight(groupClass, event, allClasses);
+      toggleHighlight(groupClass, event);
     }
     document.querySelectorAll('.trend-scroll').forEach(function(el) { el.scrollLeft = el.scrollWidth; });
+    // Clicking outside any legend chip / chart bar clears the selection
+    // back to the page's original default (everything highlighted,
+    // 2026-07-22 - "clicar fora dele deve tirar a seleção e voltar pro
+    // padrão"). Captured once, before any user interaction, since the
+    // set of group colors in play is only known at page-render time.
+    var DEFAULT_HIGHLIGHT = document.body.getAttribute('data-highlight');
+    document.addEventListener('click', function(event) {
+      if (event.target.closest('.legend-chip, .chart-bar')) { return; }
+      if (DEFAULT_HIGHLIGHT) {
+        document.body.setAttribute('data-highlight', DEFAULT_HIGHLIGHT);
+      } else {
+        document.body.removeAttribute('data-highlight');
+      }
+    });
     </script>
     """
     tabs_html = (
