@@ -447,8 +447,26 @@ def compress_to_label(source_text):
         # `nice` so the labeling subprocess never competes for CPU with
         # interactive work (Vim/tmux/LSPs/the calling session itself) - each
         # call is a full Claude CLI (Node process) boot, not a cheap thread.
+        #
+        # --setting-sources "" --tools "" --system-prompt <minimal>
+        # (2026-07-23, "você revisou uso de tokens nesse rotulamento?"):
+        # without these, every call auto-discovers Alberto's global
+        # CLAUDE.md + the full default Claude Code system prompt as
+        # cache-creation input - measured 13,037 cache_creation +
+        # 15,907 cache_read tokens and $0.030 for a single "summarize in
+        # 3-5 words" call. This task needs zero project context and zero
+        # tools, so replacing the system prompt entirely and disabling
+        # setting-source/tool loading drops that to 0 cache tokens and
+        # $0.0032 - a ~9x cost cut per label, multiplied across every
+        # session in the backfill.
         result = subprocess.run(
-            ["nice", "-n", "15", "claude", "-p", prompt, "--model", "haiku"],
+            [
+                "nice", "-n", "15", "claude", "-p", prompt,
+                "--model", "haiku",
+                "--setting-sources", "",
+                "--tools", "",
+                "--system-prompt", "You are a concise text summarizer.",
+            ],
             capture_output=True,
             text=True,
             timeout=30,
