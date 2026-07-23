@@ -433,16 +433,34 @@ def cold_summary_source(transcript_path, max_turns=6):
     return joined or None
 
 
-def compress_to_label(source_text):
-    if not source_text:
-        return None
-    if not isinstance(source_text, str):
-        return None
-    prompt = (
-        "Resuma o texto abaixo em um rotulo curto de 3 a 5 palavras, "
-        "em portugues, sem pontuacao final, responda so com o rotulo:\n\n"
-        + source_text[:2000]
-    )
+# Substrings (checked lowercased) that mean the model refused/couldn't
+# summarize instead of producing a real label ("Não há texto para
+# resumir", "I cannot complete this request...") - found 2026-07-23 in
+# 3 of 10 real backfill calls. Caching these verbatim as a "label" is
+# worse than having no label at all - they read as a real (if odd) label
+# to anyone looking at the table, not as an error.
+_REFUSAL_MARKERS = (
+    "não há texto", "nao ha texto", "no text", "nenhum texto",
+    "sem texto", "não foi fornecido", "nao foi fornecido",
+    "not provided", "no content", "cannot complete",
+    "i cannot", "i'm sorry", "im sorry", "desculpe", "please provide",
+    "forneça o texto", "forneca o texto", "not enough information",
+    "não tenho informações suficientes", "as an ai", "i don't have",
+    "não consigo", "nao consigo", "i need more", "preciso de mais",
+)
+
+
+def _looks_like_bad_label(label):
+    lowered = label.lower()
+    if any(marker in lowered for marker in _REFUSAL_MARKERS):
+        return True
+    # A real label is 3-5 words; anything this long is the model
+    # rambling/explaining instead of labeling, even if it isn't an
+    # outright refusal.
+    return len(label) > 120
+
+
+def _run_label_prompt(prompt):
     try:
         # `nice` so the labeling subprocess never competes for CPU with
         # interactive work (Vim/tmux/LSPs/the calling session itself) - each
@@ -476,6 +494,47 @@ def compress_to_label(source_text):
     if result.returncode != 0:
         return None
     label = result.stdout.strip().strip('"').strip("'")
+    return label or None
+
+
+def compress_to_label(source_text):
+    if not source_text:
+        return None
+    if not isinstance(source_text, str):
+        return None
+    prompt = (
+        "Resuma o texto abaixo em um rotulo curto de 3 a 5 palavras, "
+        "em portugues, sem pontuacao final, responda so com o rotulo:\n\n"
+        + source_text[:2000]
+    )
+    label = _run_label_prompt(prompt)
+
+    # One retry, with a firmer prompt, when the first attempt refused or
+    # rambled (2026-07-23) - "tentando endereçar a resposta pra conseguir
+    # um bom rótulo". Real second-order source text (a truncated log/code
+    # excerpt, not a natural-language summary already) is exactly the
+    # case that confuses the model into refusing or over-explaining; a
+    # blunter instruction that pre-empts "I can't find text to
+    # summarize" tends to recover a usable label instead of wasting the
+    # attempt.
+    if label is None or _looks_like_bad_label(label):
+        retry_prompt = (
+            "O texto abaixo pode ser um trecho de codigo, log, ou erro - "
+            "mesmo assim, gere um rotulo curto de 3 a 5 palavras em "
+            "portugues descrevendo do que se trata. NUNCA recuse, NUNCA "
+            "peca mais contexto, NUNCA explique - responda apenas com o "
+            "rotulo, mesmo que o texto pareca incompleto:\n\n"
+            + source_text[:2000]
+        )
+        retry_label = _run_label_prompt(retry_prompt)
+        if retry_label and not _looks_like_bad_label(retry_label):
+            label = retry_label
+        elif label is not None and _looks_like_bad_label(label):
+            # Both attempts were bad - "se for difícil, tratando ele pra
+            # não aparecer também": no label is better than a refusal
+            # text masquerading as one.
+            label = None
+
     if not label:
         return None
     # The model doesn't always follow "responda só com o rótulo" -
