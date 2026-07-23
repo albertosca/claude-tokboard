@@ -12,6 +12,7 @@ import argparse
 import importlib.util
 import os
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
 
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, VerticalScroll
@@ -86,10 +87,19 @@ def load_data(args, mr=None):
             unique_agents[key] = subagent
         elif not existing.get("agent_transcript_path") and subagent.get("agent_transcript_path"):
             unique_agents[key] = subagent
+    # max_workers=1 (serial), matching metrics-report.py's own fix
+    # (2026-07-20/23): each worker spawns a full `claude -p` CLI
+    # subprocess, not a lightweight thread task - 8 concurrent ones
+    # spiked load average past 50 and froze the machine during a
+    # cold-cache backfill. label_budget caps how many brand-new labels
+    # (real API calls) this run generates before it stops (2026-07-23,
+    # same reasoning as metrics-report.py's --label-budget: unbounded
+    # backfills burn real quota and kept getting killed mid-run anyway).
+    label_budget = mr.LabelBudget(None if args.label_budget < 0 else args.label_budget)
     agent_keys = list(unique_agents.keys())
-    with ThreadPoolExecutor(max_workers=8) as executor:
+    with ThreadPoolExecutor(max_workers=1) as executor:
         agent_labels = list(
-            executor.map(lambda k: mr.get_agent_label(unique_agents[k], agent_label_cache), agent_keys)
+            executor.map(lambda k: mr.get_agent_label(unique_agents[k], agent_label_cache, label_budget), agent_keys)
         )
     label_by_agent_id = dict(zip(agent_keys, agent_labels))
     for subagent in subagent_records:
@@ -111,9 +121,9 @@ def load_data(args, mr=None):
         ):
             unique_sessions[key] = record
     session_keys = list(unique_sessions.keys())
-    with ThreadPoolExecutor(max_workers=8) as executor:
+    with ThreadPoolExecutor(max_workers=1) as executor:
         task_labels = list(
-            executor.map(lambda k: mr.get_task_label(unique_sessions[k], label_cache), session_keys)
+            executor.map(lambda k: mr.get_task_label(unique_sessions[k], label_cache, label_budget), session_keys)
         )
     label_by_session_id = dict(zip(session_keys, task_labels))
     for record in records:
@@ -288,12 +298,22 @@ class TrendChart(PlotextPlot):
             self.render_chart()
 
     def render_chart(self):
-        days = self.mr.aggregate_by_day(self.chart_records)
+        # aggregate_by_day returns (granularity, days) since
+        # metrics-report.py's adaptive-granularity feature (2026-07-21) -
+        # this file wasn't updated when that landed, so it was treating
+        # the whole tuple as the days list. Bucket keys are also
+        # granularity-specific now ("YYYY-MM-DDTHH" for hour, "YYYY-MM"
+        # for month, "YYYY" for year, not always "YYYY-MM-DD"), so the
+        # tick label must use that granularity's own parse/tick format
+        # instead of a hardcoded [5:] MM-DD slice.
+        granularity, days = self.mr.aggregate_by_day(self.chart_records)
         self.plt.clear_data()
         if len(days) < 2:
             self.refresh()
             return
-        labels = [d["day"][5:] for d in days]  # MM-DD
+        parse_fmt = self.mr.GRANULARITY_CONFIG[granularity]["parse_fmt"]
+        tick_fmt = self.mr.GRANULARITY_CONFIG[granularity]["tick_fmt"]
+        labels = [datetime.strptime(d["day"], parse_fmt).strftime(tick_fmt) for d in days]
         if self.mode == "pane":
             totals = [
                 sum((r.get("input_tokens", 0) or 0) + (r.get("output_tokens", 0) or 0) for r in d["records"])
@@ -382,6 +402,10 @@ def build_arg_parser():
     parser.add_argument("-n", "--limit", type=int, default=None, help="Number of most recent sessions to show (unbounded by default)")
     parser.add_argument("--days", type=int, default=None, help="Only include sessions from the last N days")
     parser.add_argument("--all", action="store_true", help="Show the full history, bypassing the default 30-day active-project window")
+    parser.add_argument(
+        "--label-budget", type=int, default=100,
+        help="Max NEW labels (real claude -p calls) to generate this run; already-cached labels are free and unlimited. Use 0 for none, a negative number for unlimited.",
+    )
     return parser
 
 
