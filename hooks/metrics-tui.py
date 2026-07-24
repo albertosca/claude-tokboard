@@ -260,7 +260,8 @@ class CompositionLegend(Static):
         for series, name in self.SERIES:
             total = self.totals.get(series, 0)
             formatted = self.mr.format_tokens(total)
-            style = "bold reverse" if self.highlighted == series else ""
+            is_highlighted = self.highlighted is not None and series in self.highlighted
+            style = "bold reverse" if is_highlighted else ""
             chip = f"[{style}]{name} · {formatted}[/{style}]" if style else f"{name} · {formatted}"
             chips.append(chip)
         return "   ".join(chips)
@@ -270,7 +271,14 @@ class CompositionLegend(Static):
         chip_width = self.size.width // 4 if self.size.width else 0
         index = min(x // max(chip_width, 1), 3) if chip_width else 0
         series = self.SERIES[index][0]
-        self.highlighted = None if self.highlighted == series else series
+        current = self.highlighted or set()
+        if event.shift:
+            self.highlighted = current | {series}
+        elif event.ctrl:
+            remaining = current - {series}
+            self.highlighted = remaining or None
+        else:
+            self.highlighted = None if current == {series} else {series}
         self.post_message(self.Highlight(self.highlighted))
 
 
@@ -328,7 +336,7 @@ class TrendChart(PlotextPlot):
             cache_creation_totals = [sum(r.get("cache_creation_tokens", 0) or 0 for r in d["records"]) for d in days]
             if self.highlighted:
                 color = [
-                    self.SERIES_COLORS[i] if key == self.highlighted else "gray"
+                    self.SERIES_COLORS[i] if key in self.highlighted else "gray"
                     for i, key in enumerate(self.SERIES_KEYS)
                 ]
             else:
