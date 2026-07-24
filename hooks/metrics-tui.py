@@ -310,6 +310,20 @@ def pane_series_label(mr, key):
     return "outros" if key == PANE_OTHER_KEY else mr.project_display_label(key)
 
 
+def floor_stacked_bottom_series(bottom_series, day_totals):
+    """Work around a plotext stacked_bar rendering bug: when the FIRST
+    (bottom) series in the stack is exactly 0 for a bar that otherwise has
+    data, the visible segment above it renders one row too high, making the
+    bar look like it floats above the zero line instead of touching it.
+    Confirmed by isolating plotext's stacked_bar with a minimal repro during
+    this fix - a nonzero floor on the bottom series alone (here, 1 token,
+    negligible next to real per-day totals in the thousands-to-millions)
+    eliminates the artifact. Only applied on days with real data (day_total
+    > 0) - a genuinely empty day must stay at 0, not get a phantom bar.
+    """
+    return [1 if v == 0 and day_totals[i] > 0 else v for i, v in enumerate(bottom_series)]
+
+
 class TrendChart(PlotextPlot):
     SERIES_KEYS = ["series-1", "series-2", "series-3", "series-4"]
     SERIES_COLORS = ["green", "blue", "magenta", "orange"]
@@ -370,6 +384,9 @@ class TrendChart(PlotextPlot):
                 for k in series_keys:
                     series_data[k].append(day_totals[k])
             series_lists = [series_data[k] for k in series_keys]
+            day_totals_list = [sum(series_data[k][i] for k in series_keys) for i in range(len(days))]
+            if series_lists:
+                series_lists[0] = floor_stacked_bottom_series(series_lists[0], day_totals_list)
             series_labels = [pane_series_label(self.mr, k) for k in series_keys]
             palette = [
                 PANE_COLORS[i] if i < len(PANE_COLORS) else PANE_OTHER_COLOR
@@ -390,6 +407,11 @@ class TrendChart(PlotextPlot):
             output_totals = [sum(r.get("output_tokens", 0) or 0 for r in d["records"]) for d in days]
             cache_read_totals = [sum(r.get("cache_read_tokens", 0) or 0 for r in d["records"]) for d in days]
             cache_creation_totals = [sum(r.get("cache_creation_tokens", 0) or 0 for r in d["records"]) for d in days]
+            day_totals_list = [
+                input_totals[i] + output_totals[i] + cache_read_totals[i] + cache_creation_totals[i]
+                for i in range(len(days))
+            ]
+            input_totals = floor_stacked_bottom_series(input_totals, day_totals_list)
             if self.highlighted:
                 color = [
                     self.SERIES_COLORS[i] if key in self.highlighted else "gray"
