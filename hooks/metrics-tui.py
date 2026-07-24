@@ -419,6 +419,7 @@ class MetricsTUIApp(App):
         ("q", "quit", "Sair"),
         ("t", "toggle_chart_mode", "Alterna modo do gráfico"),
         ("m", "toggle_more_projects", "Mais/menos projetos"),
+        ("g", "toggle_tab", "Gráficos/Sessões"),
     ]
 
     def __init__(self, mr, data, **kwargs):
@@ -461,6 +462,36 @@ class MetricsTUIApp(App):
 
     def action_toggle_more_projects(self):
         self.query_one(ProjectRankingList).toggle_more()
+
+    def action_toggle_tab(self):
+        tabbed = self.query_one(TabbedContent)
+        # Setting TabbedContent.active reverts within one event-loop tick
+        # if the currently-focused widget (the Tree, focused since
+        # on_mount) still lives inside the pane being switched away from
+        # - a TabPane.Focused message re-asserts that pane as active.
+        # Clearing focus first avoids the revert; confirmed via headless
+        # reproduction during design (see this plan's Global Constraints).
+        self.set_focus(None)
+        if tabbed.active == "tab-sessions":
+            tabbed.active = "tab-panorama"
+        else:
+            tabbed.active = "tab-sessions"
+            self.query_one(Tree).focus()
+
+    def action_toggle_tab(self):
+        tabbed = self.query_one(TabbedContent)
+        # Setting TabbedContent.active reverts within one event-loop tick
+        # if the currently-focused widget (the Tree, focused since
+        # on_mount) still lives inside the pane being switched away from
+        # - a TabPane.Focused message re-asserts that pane as active.
+        # Clearing focus first avoids the revert; confirmed via headless
+        # reproduction during design (see this plan's Global Constraints).
+        self.set_focus(None)
+        if tabbed.active == "tab-sessions":
+            tabbed.active = "tab-panorama"
+        else:
+            tabbed.active = "tab-sessions"
+            self.query_one(Tree).focus()
 
     def on_composition_legend_highlight(self, event):
         self.query_one(TrendChart).set_highlight(event.series)
