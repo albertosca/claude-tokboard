@@ -384,6 +384,7 @@ class TrendChart(PlotextPlot):
                 color = palette
             self.plt.stacked_bar(labels, series_lists, labels=series_labels, color=color)
             self.plt.title("Tokens por dia (por projeto)")
+            max_total = max((sum(series_data[k][i] for k in series_keys) for i in range(len(days))), default=0)
         else:
             input_totals = [sum(r.get("input_tokens", 0) or 0 for r in d["records"]) for d in days]
             output_totals = [sum(r.get("output_tokens", 0) or 0 for r in d["records"]) for d in days]
@@ -403,6 +404,21 @@ class TrendChart(PlotextPlot):
                 color=color,
             )
             self.plt.title("Tokens por dia (por tipo de token)")
+            max_total = max(
+                (
+                    input_totals[i] + output_totals[i] + cache_read_totals[i] + cache_creation_totals[i]
+                    for i in range(len(days))
+                ),
+                default=0,
+            )
+        # plotext's default y-axis ticks are raw, unformatted floats (e.g.
+        # "1591684.7") - unreadable next to token counts everywhere else in
+        # this dashboard already using k/M/B/T suffixes. Overriding with
+        # explicit ticks at even fractions of the tallest bar keeps the
+        # scale meaningful while reusing format_tokens for the labels.
+        tick_values = [max_total * frac for frac in (0, 0.25, 0.5, 0.75, 1.0)]
+        tick_labels = [self.mr.format_tokens(v) for v in tick_values]
+        self.plt.yticks(tick_values, tick_labels)
         self.refresh()
 
 
