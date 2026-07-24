@@ -898,8 +898,16 @@ def render_detail_panel(session_id, subagents, is_active):
 # reads a bucket key back into a datetime (must round-trip key_fmt
 # exactly); tick_fmt is what's shown on the x-axis.
 GRANULARITY_CONFIG = {
+    "minute": {"key_fmt": "%Y-%m-%dT%H:%M", "parse_fmt": "%Y-%m-%dT%H:%M", "tick_fmt": "%H:%M"},
     "hour": {"key_fmt": "%Y-%m-%dT%H", "parse_fmt": "%Y-%m-%dT%H", "tick_fmt": "%d/%m %Hh"},
     "day": {"key_fmt": "%Y-%m-%d", "parse_fmt": "%Y-%m-%d", "tick_fmt": "%d/%m"},
+    # ISO-calendar key ("%G-W%V") sorts correctly as a plain string, but
+    # can't round-trip through strptime without a weekday directive - the
+    # literal "-1" is constant text (not a format code), so every
+    # timestamp in the same ISO week produces the identical key, while
+    # parse_fmt's "%u" reads that literal "1" back as Monday for tick
+    # formatting.
+    "week": {"key_fmt": "%G-W%V-1", "parse_fmt": "%G-W%V-%u", "tick_fmt": "S%V/%y"},
     "month": {"key_fmt": "%Y-%m", "parse_fmt": "%Y-%m", "tick_fmt": "%m/%Y"},
     "year": {"key_fmt": "%Y", "parse_fmt": "%Y", "tick_fmt": "%Y"},
 }
@@ -909,10 +917,14 @@ def choose_granularity(timestamps):
     if len(timestamps) < 2:
         return "day"
     span = max(timestamps) - min(timestamps)
+    if span <= timedelta(hours=2):
+        return "minute"
     if span <= timedelta(hours=48):
         return "hour"
-    if span <= timedelta(days=180):
+    if span <= timedelta(days=45):
         return "day"
+    if span <= timedelta(days=365):
+        return "week"
     if span <= timedelta(days=365 * 3):
         return "month"
     return "year"
