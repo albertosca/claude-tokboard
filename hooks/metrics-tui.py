@@ -282,6 +282,34 @@ class CompositionLegend(Static):
         self.post_message(self.Highlight(self.highlighted))
 
 
+PANE_MAX_PROJECTS = 7
+PANE_COLORS = ["green", "blue", "magenta", "orange", "cyan", "red", "yellow"]
+PANE_OTHER_COLOR = "gray"
+PANE_OTHER_KEY = "__outros__"
+
+
+def compute_pane_projects(mr, chart_records):
+    """Rank projects by total tokens in chart_records, grouped by color_group_key.
+
+    Returns (top_keys, has_other): top_keys is the ordered list of the
+    PANE_MAX_PROJECTS highest-token project keys; has_other is True when
+    there are more distinct projects than that, meaning callers should
+    add one more "outros" bucket for everything not in top_keys.
+    """
+    totals = {}
+    for r in chart_records:
+        key = mr.color_group_key(r.get("project_path"))
+        totals[key] = totals.get(key, 0) + (r.get("input_tokens", 0) or 0) + (r.get("output_tokens", 0) or 0)
+    ordered = sorted(totals.keys(), key=lambda k: totals[k], reverse=True)
+    top_keys = ordered[:PANE_MAX_PROJECTS]
+    has_other = len(ordered) > PANE_MAX_PROJECTS
+    return top_keys, has_other
+
+
+def pane_series_label(mr, key):
+    return "outros" if key == PANE_OTHER_KEY else mr.project_display_label(key)
+
+
 class TrendChart(PlotextPlot):
     SERIES_KEYS = ["series-1", "series-2", "series-3", "series-4"]
     SERIES_COLORS = ["green", "blue", "magenta", "orange"]
@@ -292,6 +320,7 @@ class TrendChart(PlotextPlot):
         self.chart_records = chart_records
         self.mode = "pane"
         self.highlighted = None
+        self.project_highlighted = None
 
     def on_mount(self):
         self.render_chart()
@@ -303,6 +332,11 @@ class TrendChart(PlotextPlot):
     def set_highlight(self, series):
         self.highlighted = series
         if self.mode == "tokens":
+            self.render_chart()
+
+    def set_project_highlight(self, projects):
+        self.project_highlighted = projects
+        if self.mode == "pane":
             self.render_chart()
 
     def render_chart(self):
@@ -323,11 +357,32 @@ class TrendChart(PlotextPlot):
         tick_fmt = self.mr.GRANULARITY_CONFIG[granularity]["tick_fmt"]
         labels = [datetime.strptime(d["day"], parse_fmt).strftime(tick_fmt) for d in days]
         if self.mode == "pane":
-            totals = [
-                sum((r.get("input_tokens", 0) or 0) + (r.get("output_tokens", 0) or 0) for r in d["records"])
-                for d in days
+            top_keys, has_other = compute_pane_projects(self.mr, self.chart_records)
+            series_keys = list(top_keys) + ([PANE_OTHER_KEY] if has_other else [])
+            self.pane_series_keys = series_keys
+            series_data = {k: [] for k in series_keys}
+            for d in days:
+                day_totals = {k: 0 for k in series_keys}
+                for r in d["records"]:
+                    r_key = self.mr.color_group_key(r.get("project_path"))
+                    bucket = r_key if r_key in top_keys else PANE_OTHER_KEY
+                    day_totals[bucket] += (r.get("input_tokens", 0) or 0) + (r.get("output_tokens", 0) or 0)
+                for k in series_keys:
+                    series_data[k].append(day_totals[k])
+            series_lists = [series_data[k] for k in series_keys]
+            series_labels = [pane_series_label(self.mr, k) for k in series_keys]
+            palette = [
+                PANE_COLORS[i] if i < len(PANE_COLORS) else PANE_OTHER_COLOR
+                for i in range(len(series_keys))
             ]
-            self.plt.bar(labels, totals)
+            if self.project_highlighted:
+                color = [
+                    palette[i] if key in self.project_highlighted else "gray"
+                    for i, key in enumerate(series_keys)
+                ]
+            else:
+                color = palette
+            self.plt.stacked_bar(labels, series_lists, labels=series_labels, color=color)
             self.plt.title("Tokens por dia (por projeto)")
         else:
             input_totals = [sum(r.get("input_tokens", 0) or 0 for r in d["records"]) for d in days]
@@ -349,6 +404,54 @@ class TrendChart(PlotextPlot):
             )
             self.plt.title("Tokens por dia (por tipo de token)")
         self.refresh()
+
+
+class ProjectLegend(Static):
+    highlighted = reactive(None)
+
+    class Highlight(Message):
+        def __init__(self, projects):
+            self.projects = projects
+            super().__init__()
+
+    def __init__(self, mr, chart_records, **kwargs):
+        super().__init__(**kwargs)
+        self.mr = mr
+        self.chart_records = chart_records
+
+    def _series_keys(self):
+        top_keys, has_other = compute_pane_projects(self.mr, self.chart_records)
+        return list(top_keys) + ([PANE_OTHER_KEY] if has_other else [])
+
+    def render(self):
+        series_keys = self._series_keys()
+        if not series_keys:
+            return "[dim]Sem dados.[/dim]"
+        chips = []
+        for key in series_keys:
+            label = pane_series_label(self.mr, key)
+            is_highlighted = self.highlighted is not None and key in self.highlighted
+            style = "bold reverse" if is_highlighted else ""
+            chip = f"[{style}]{label}[/{style}]" if style else label
+            chips.append(chip)
+        return "   ".join(chips)
+
+    def on_click(self, event):
+        series_keys = self._series_keys()
+        if not series_keys:
+            return
+        chip_width = self.size.width // len(series_keys) if self.size.width else 0
+        index = min(event.x // max(chip_width, 1), len(series_keys) - 1) if chip_width else 0
+        key = series_keys[index]
+        current = self.highlighted or set()
+        if event.shift:
+            self.highlighted = current | {key}
+        elif event.ctrl:
+            remaining = current - {key}
+            self.highlighted = remaining or None
+        else:
+            self.highlighted = None if current == {key} else {key}
+        self.post_message(self.Highlight(self.highlighted))
 
 
 class ProjectRankingList(Static):
@@ -444,6 +547,7 @@ class MetricsTUIApp(App):
             with TabPane("Panorama", id="tab-panorama"):
                 totals = self.mr.compute_token_type_totals(self.data["records"])
                 yield CompositionLegend(totals, self.mr)
+                yield ProjectLegend(self.mr, self.data["chart_records"])
                 yield TrendChart(self.mr, self.data["chart_records"])
                 yield ProjectRankingList(
                     self.mr,
@@ -456,6 +560,12 @@ class MetricsTUIApp(App):
 
     def on_mount(self):
         self.query_one(Tree).focus()
+        self._sync_legend_visibility()
+
+    def _sync_legend_visibility(self):
+        mode = self.query_one(TrendChart).mode
+        self.query_one(CompositionLegend).display = mode == "tokens"
+        self.query_one(ProjectLegend).display = mode == "pane"
 
     def on_tree_node_selected(self, event):
         session_data = event.node.data
@@ -467,6 +577,7 @@ class MetricsTUIApp(App):
 
     def action_toggle_chart_mode(self):
         self.query_one(TrendChart).toggle_mode()
+        self._sync_legend_visibility()
 
     def action_toggle_more_projects(self):
         self.query_one(ProjectRankingList).toggle_more()
@@ -488,6 +599,9 @@ class MetricsTUIApp(App):
 
     def on_composition_legend_highlight(self, event):
         self.query_one(TrendChart).set_highlight(event.series)
+
+    def on_project_legend_highlight(self, event):
+        self.query_one(TrendChart).set_project_highlight(event.projects)
 
 
 def main():
