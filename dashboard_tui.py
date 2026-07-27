@@ -9,8 +9,8 @@ like every HTML dashboard round was. Requires textual + textual-plotext
     source .venv/bin/activate && python3 hooks/metrics-tui.py
 """
 import argparse
-import importlib.util
 import os
+import sys
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 
@@ -23,13 +23,9 @@ from textual_plotext import PlotextPlot
 
 
 def import_metrics_report():
-    spec = importlib.util.spec_from_file_location(
-        "metrics_report",
-        os.path.join(os.path.dirname(os.path.abspath(__file__)), "metrics-report.py"),
-    )
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib"))
+    import metrics_core
+    return metrics_core
 
 
 def load_data(args, mr=None):
