@@ -90,11 +90,11 @@ def render_composition_bar(record):
     return f'<div class="comp-bar">{"".join(parts)}</div>'
 
 
-def render_session_row(record, is_active, group_colors, group_index, subagent_count=0):
+def render_session_row(record, is_active, group_colors, group_index, subagent_count=0, show_tmux=True):
     session_id = record.get("session_id") or ""
     tag = html.escape(record.get("tag") or "-")
     branch = html.escape(record.get("git_branch") or "-")
-    tmux_window = html.escape(record.get("tmux_window") or "-")
+    tmux_window = html.escape(record.get("tmux_window") or "-") if show_tmux else None
     # Display-layer safeguard on top of compress_to_label's own truncation
     # (2026-07-21) - covers any already-cached label from before that fix
     # existed, so a stale huge cached label can't break this row's layout
@@ -112,6 +112,7 @@ def render_session_row(record, is_active, group_colors, group_index, subagent_co
     # answers "does this session have subagents worth checking" without
     # opening every single row's detail panel to find out.
     subagent_badge = f"🤖{subagent_count}" if subagent_count else ""
+    tmux_span = f'<span class="tmux-window">{tmux_window}</span>' if show_tmux else ""
     return (
         f'<div class="session-row {group_class}{active_class}" id="row-{session_id}" '
         f'data-group="{group_index}" style="display:none" '
@@ -119,7 +120,7 @@ def render_session_row(record, is_active, group_colors, group_index, subagent_co
         f'<span class="sid">{session_id[:12]}</span>'
         f'<span class="subagent-col">{subagent_badge}</span>'
         f'<span class="date-col">{date_str}</span>'
-        f'<span class="tmux-window">{tmux_window}</span>'
+        f"{tmux_span}"
         f'<span class="label-col">{task_label}</span>'
         f'<span class="tag-col">{tag}</span><span class="branch-col">{branch}</span>'
         f'<span class="tokens-total">{total_tokens}</span>'
@@ -146,13 +147,14 @@ def render_group_header(group_index, group):
     )
 
 
-def render_session_header():
+def render_session_header(show_tmux=True):
+    tmux_span = '<span class="tmux-window">aba</span>' if show_tmux else ""
     return (
         '<div class="session-row session-header">'
         '<span class="sid">id</span>'
         '<span class="subagent-col">🤖</span>'
         '<span class="date-col">data</span>'
-        '<span class="tmux-window">aba</span>'
+        f"{tmux_span}"
         '<span class="label-col">tarefa</span>'
         '<span class="tag-col">tag</span>'
         '<span class="branch-col">branch</span>'
@@ -628,6 +630,7 @@ def render_project_totals_chart(records, project_first_seen, project_last_seen, 
 def render_html(records, subagents_by_session, chart_records, project_first_seen, project_last_seen, open_projects):
     group_colors = mr.assign_group_colors(chart_records)
     groups = mr.build_project_groups(records, group_colors)
+    has_tmux_data = any(r.get("tmux_window") for r in records)
 
     # Alberto: omit zero-token sections entirely (2026-07-20) - a
     # session that never recorded any input/output tokens (aborted
@@ -674,7 +677,7 @@ def render_html(records, subagents_by_session, chart_records, project_first_seen
                 if (s.get("input_tokens", 0) or 0) + (s.get("output_tokens", 0) or 0) > 0
             )
             rows_html.append(
-                render_session_row(record, False, group_colors, group_index, visible_subagent_count)
+                render_session_row(record, False, group_colors, group_index, visible_subagent_count, show_tmux=has_tmux_data)
             )
             panels_html.append(render_detail_panel(session_id, session_subagents, False))
 
@@ -1204,7 +1207,7 @@ def render_html(records, subagents_by_session, chart_records, project_first_seen
     sessions_tab_html = (
         '<div class="tab-pane active" id="tab-sessions">'
         '<div class="main-row">'
-        f'<div class="session-list">{render_composition_legend(mr.compute_token_type_totals(records))}{render_session_header()}{"".join(rows_html)}</div>'
+        f'<div class="session-list">{render_composition_legend(mr.compute_token_type_totals(records))}{render_session_header(has_tmux_data)}{"".join(rows_html)}</div>'
         f'<div class="detail-container">{"".join(panels_html)}</div>'
         "</div>"
         "</div>"
