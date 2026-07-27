@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """Terminal dashboard (TUI) for Claude Code session metrics.
 
-Reuses hooks/metrics-report.py's data functions as-is (see that file
-for the data model and docs/superpowers/specs/2026-07-18-terminal-dashboard-design.md
+Imports its data layer from lib/metrics_core (see that package for the
+data model and docs/superpowers/specs/2026-07-18-terminal-dashboard-design.md
 for the full design) - this file is presentation-layer only, exactly
 like every HTML dashboard round was. Requires textual + textual-plotext
-(see requirements-tui.txt) - run inside this project's own .venv:
-    source .venv/bin/activate && python3 hooks/metrics-tui.py
+(see requirements-tui.txt) - run from the repo root using this plugin's
+own .venv (see scripts/setup-tui-venv.sh to create it):
+    python3 dashboard_tui.py
 """
 import argparse
 import os
