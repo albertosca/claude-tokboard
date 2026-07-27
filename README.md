@@ -1,57 +1,53 @@
-# claude-metrics-dashboard
+# metrics-dashboard
 
-Session metrics logger and HTML dashboard for Claude Code. Logs
-per-session token usage, duration, tmux window, and an auto-generated
-task label to `~/.claude/metrics/sessions.jsonl`, and renders an
-interactive HTML dashboard from it.
+A Claude Code plugin that tracks your session history and token usage,
+and shows it back to you two ways: an HTML dashboard, and a full
+terminal (TUI) app. See what you've been working on and how much it's
+costing you, project by project, day by day.
 
-## What's here
+[Leia isto em português](README.pt.md)
 
-- `hooks/metrics-log.py` — wired to Claude Code's `Stop` hook (see
-  `link.sh` below). Appends one JSON record per session pause to
-  `~/.claude/metrics/sessions.jsonl`.
-- `dashboard_html.py` — reads `sessions.jsonl` and either prints a
-  terminal table (default) or generates an HTML dashboard (`--html`) at
-  `~/.claude/metrics/dashboard.html`, including a lazy, cached
-  auto-generated task label per session (via a headless `claude -p`
-  call) and a token composition/trend visualization.
-- `commands/metrics.md` — a Claude Code personal slash command
-  (`/metrics`) that regenerates the dashboard and opens it.
+## What you get
 
-## Setup
+- **Cost and token visibility** - input/output/cache tokens broken
+  down by day, by project, and by token type, so you can see what's
+  actually driving your usage.
+- **Session history** - every session logged with an auto-generated
+  task label (opt-in - see below), searchable/filterable by project or
+  tag, with subagent breakdowns per session.
+- **Two ways to look at it**: `/metrics` opens an interactive HTML
+  dashboard in your browser; `/metrics-tui` opens a full terminal app
+  (built on [Textual](https://github.com/Textualize/textual)) for when
+  a browser isn't convenient.
 
-This project isn't installed as a package — it's symlinked into place,
-the same way Alberto's dotfiles work:
+## Install
 
-```bash
-./link.sh
-```
+Install this plugin through Claude Code's plugin system (see the
+[Claude Code plugin docs](https://docs.claude.com/en/docs/claude-code)
+for how your setup discovers and installs plugins). Once installed,
+`/metrics` works immediately (zero external dependencies) - `/metrics-tui`
+auto-installs its own dependencies (`textual`, `textual-plotext`) into
+a dedicated virtual environment the first time you run it.
 
-This symlinks `hooks/metrics-log.py` and `commands/` into `~/.claude/hooks/` and `~/.claude/commands/`
-respectively. You'll also need `metrics-log.py` wired to the `Stop`
-event in `~/.claude/settings.json` — see `albertosca/dotfiles`'s
-`config/claude/settings.json` for the exact hook configuration this
-project expects.
+## AI-generated task labels (opt-in)
 
-## Terminal dashboard (TUI)
+Both dashboards can auto-generate a short label per session
+(e.g. "fixing auth redirect bug") by summarizing it with a lightweight
+`claude -p` call. **This is off by default** (`--label-budget 0`) -
+it's a real API call per uncached session, so it spends your own
+quota. Pass `--label-budget N` to either dashboard's underlying script
+to turn it on (`N` new labels per run; already-cached labels are
+always free).
 
-A navigable terminal-native dashboard, feature-equivalent to the HTML
-one, for when a browser isn't convenient. Uses `textual` +
-`textual-plotext` (this project's only non-stdlib dependencies) —
-isolated to their own virtualenv:
+## tmux integration (optional, auto-detected)
 
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements-tui.txt
-python3 dashboard_tui.py
-```
+If you run Claude Code inside tmux, session rows show which tmux
+window they happened in. If you don't use tmux at all, that column
+simply doesn't appear - nothing to configure.
 
-Same filtering flags as the HTML/table modes (`--tag`, `--project`,
-`-n`, `--days`, `--all`).
+## Uninstall / data location
 
-## Design docs
-
-Full design history in `docs/superpowers/specs/` and
-`docs/superpowers/plans/`, plus `docs/superpowers/PROJECT-LOG.md` for a
-chronological summary.
+All logged data lives in `~/.claude/metrics/` (`sessions.jsonl`,
+`subagents.jsonl`, label caches, the rendered `dashboard.html`) -
+independent of the plugin itself. Uninstalling the plugin stops new
+data from being logged but doesn't delete what's already there.
