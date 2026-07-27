@@ -10,7 +10,7 @@ interactive HTML dashboard from it.
 - `hooks/metrics-log.py` — wired to Claude Code's `Stop` hook (see
   `link.sh` below). Appends one JSON record per session pause to
   `~/.claude/metrics/sessions.jsonl`.
-- `hooks/metrics-report.py` — reads `sessions.jsonl` and either prints a
+- `dashboard_html.py` — reads `sessions.jsonl` and either prints a
   terminal table (default) or generates an HTML dashboard (`--html`) at
   `~/.claude/metrics/dashboard.html`, including a lazy, cached
   auto-generated task label per session (via a headless `claude -p`
@@ -27,8 +27,7 @@ the same way Alberto's dotfiles work:
 ./link.sh
 ```
 
-This symlinks `hooks/metrics-log.py`, `hooks/metrics-report.py`, and
-`commands/metrics.md` into `~/.claude/hooks/` and `~/.claude/commands/`
+This symlinks `hooks/metrics-log.py` and `commands/` into `~/.claude/hooks/` and `~/.claude/commands/`
 respectively. You'll also need `metrics-log.py` wired to the `Stop`
 event in `~/.claude/settings.json` — see `albertosca/dotfiles`'s
 `config/claude/settings.json` for the exact hook configuration this
@@ -45,7 +44,7 @@ isolated to their own virtualenv:
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements-tui.txt
-python3 hooks/metrics-tui.py
+python3 dashboard_tui.py
 ```
 
 Same filtering flags as the HTML/table modes (`--tag`, `--project`,
