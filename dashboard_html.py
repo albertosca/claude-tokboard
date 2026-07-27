@@ -1244,7 +1244,7 @@ def main():
     parser.add_argument("--project", default=None, help="Filter by project path")
     parser.add_argument("-n", "--limit", type=int, default=20, help="Number of most recent sessions to show")
     parser.add_argument(
-        "--label-budget", type=int, default=100,
+        "--label-budget", type=int, default=0,
         help="Max NEW labels (real claude -p calls) to generate in this run; already-cached labels are free and unlimited. Use 0 for none, a negative number for unlimited.",
     )
     parser.add_argument("--html", action="store_true", help="Generate an HTML dashboard instead of printing a table")

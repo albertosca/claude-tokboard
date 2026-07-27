@@ -548,7 +548,7 @@ def build_arg_parser():
     parser.add_argument("--days", type=int, default=None, help="Only include sessions from the last N days")
     parser.add_argument("--all", action="store_true", help="Show the full history, bypassing the default 30-day active-project window")
     parser.add_argument(
-        "--label-budget", type=int, default=100,
+        "--label-budget", type=int, default=0,
         help="Max NEW labels (real claude -p calls) to generate this run; already-cached labels are free and unlimited. Use 0 for none, a negative number for unlimited.",
     )
     return parser
