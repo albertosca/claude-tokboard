@@ -30,6 +30,13 @@ externas) - `/metrics-tui` instala sozinho suas dependências
 (`textual`, `textual-plotext`) num ambiente virtual dedicado, na
 primeira vez que você rodar.
 
+No Debian/Ubuntu, esse passo de auto-instalação precisa do pacote
+`python3-venv`, que nem sempre já vem instalado. Se o `/metrics-tui`
+falhar na primeira vez com um erro sobre `ensurepip`, rode
+`sudo apt install python3-venv` (ou o `python3.X-venv` específico da
+versão que a mensagem de erro citar) e tente de novo - o `/metrics`
+em si não é afetado, já que não tem dependência nenhuma pra instalar.
+
 ## Rótulos de tarefa por IA (opcional)
 
 Os dois dashboards conseguem gerar automaticamente um rótulo curto por

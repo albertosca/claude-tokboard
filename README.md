@@ -29,6 +29,13 @@ for how your setup discovers and installs plugins). Once installed,
 auto-installs its own dependencies (`textual`, `textual-plotext`) into
 a dedicated virtual environment the first time you run it.
 
+On Debian/Ubuntu, that auto-install step needs the `python3-venv` package,
+which isn't always preinstalled. If `/metrics-tui` fails on first run with
+an error about `ensurepip`, run `sudo apt install python3-venv` (or the
+version-specific `python3.X-venv` the error message names) and try again -
+`/metrics` itself is unaffected either way, since it has no dependencies
+to install.
+
 ## AI-generated task labels (opt-in)
 
 Both dashboards can auto-generate a short label per session
