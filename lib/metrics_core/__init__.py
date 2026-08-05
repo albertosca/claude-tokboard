@@ -14,6 +14,7 @@ from .records import (
     filter_records,
     filter_by_days,
     compute_token_type_totals,
+    fold_subagent_tokens_into_sessions,
 )
 from .projects import (
     compute_project_first_seen,

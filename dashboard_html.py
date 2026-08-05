@@ -1361,6 +1361,13 @@ def main():
             subagent["agent_label"] = label_by_agent_id.get(subagent.get("agent_id"))
         mr.save_agent_label_cache(agent_label_cache)
         subagents_by_session = mr.group_subagents_by_session(subagent_records)
+        # Mutates the same dict objects all_time_records/chart_records/records
+        # already share (none of the load/dedupe/filter steps above copy the
+        # records, only filter the list) - so every aggregate view downstream
+        # picks up subagent tokens automatically, without touching each one
+        # individually. See fold_subagent_tokens_into_sessions's own
+        # docstring for why this was missing (2026-08-05).
+        mr.fold_subagent_tokens_into_sessions(all_time_records, subagent_records)
 
         label_cache = mr.load_label_cache()
         unique_sessions = {}
@@ -1400,6 +1407,8 @@ def main():
         print(output_path)
         return
 
+    subagent_records = mr.dedupe_subagents(mr.load_records(mr.SUBAGENTS_FILE))
+    mr.fold_subagent_tokens_into_sessions(records, subagent_records)
     print(format_table(records))
     print(format_summary(records))
 

@@ -182,3 +182,34 @@ def compute_token_type_totals(records):
         "series-3": sum(r.get("cache_read_tokens", 0) or 0 for r in records),
         "series-4": sum(r.get("cache_creation_tokens", 0) or 0 for r in records),
     }
+
+
+def fold_subagent_tokens_into_sessions(records, subagent_records):
+    # A session's own record only counts tokens spent on its own direct
+    # messages - every subagent it dispatched burns real quota too, but
+    # lives in a separate record (subagent_records) linked only by
+    # session_id. Without this, every aggregate view (composition
+    # legend, trend chart, project totals, even each session row's own
+    # total) silently excludes subagent usage - found 2026-08-05 when
+    # a heavy subagent-driven-development week made the dashboard show
+    # well under half of real token consumption (subagents outweighed
+    # direct session tokens 1.3x in that window). Mutates records
+    # in-place so every list derived from the same dicts earlier in the
+    # pipeline (all_time_records, chart_records, the day/limit-filtered
+    # records) picks up the fold automatically.
+    token_fields = ("input_tokens", "output_tokens", "cache_read_tokens", "cache_creation_tokens")
+    subagent_totals_by_session = {}
+    for subagent in subagent_records:
+        session_id = subagent.get("session_id")
+        if session_id is None:
+            continue
+        totals = subagent_totals_by_session.setdefault(session_id, dict.fromkeys(token_fields, 0))
+        for field in token_fields:
+            totals[field] += subagent.get(field, 0) or 0
+    for record in records:
+        totals = subagent_totals_by_session.get(record.get("session_id"))
+        if not totals:
+            continue
+        for field in token_fields:
+            record[field] = (record.get(field, 0) or 0) + totals[field]
+    return records
