@@ -449,10 +449,10 @@ def render_trend_chart(records, group_colors):
         # Labeled by the PARENT project (color_group_key), not the
         # specific worktree first seen (2026-07-21 fix: a merged entry
         # could pick up a random worktree's own name as if it were the
-        # whole group's name - "some-feature:
-        # job-hunter / some-feature" -
-        # wrong name AND redundant). Parent path -> plain basename, so
-        # raw_name and label naturally match and the ":" is dropped.
+        # whole group's name - e.g. "some-worktree-name:my-project /
+        # some-worktree-name" - wrong name AND redundant). Parent path
+        # -> plain basename, so raw_name and label naturally match and
+        # the ":" is dropped.
         parent = mr.color_group_key(project)
         raw_name = html.escape(os.path.basename((parent or "").rstrip("/")) or "sem projeto")
         label = html.escape(mr.project_display_label(parent))
