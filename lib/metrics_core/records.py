@@ -184,6 +184,78 @@ def compute_token_type_totals(records):
     }
 
 
+def expand_records_to_daily_deltas(raw_records):
+    # The Stop/SubagentStop hooks append a fresh CUMULATIVE snapshot every
+    # turn, not one row per session/subagent - dedupe_sessions/
+    # dedupe_subagents pick a single representative (largest
+    # duration_seconds) for every other purpose, which is correct for
+    # all-time totals but wrong for day-by-day charts: that single row's
+    # timestamp_start is fixed at the session's START, so a long-running
+    # session's ENTIRE cumulative total lands on one day bucket, however
+    # long it actually ran. Found 2026-08-06: 77 of 4518 sessions (43 of
+    # 1034 subagents) span multiple snapshots, the longest running 33.8
+    # days - each one dumped its whole multi-million-token total onto a
+    # single day up to a month in the past, making any given week look
+    # artificially quiet no matter how much real usage happened inside
+    # one of these long sessions.
+    #
+    # This must run on RAW (pre-dedupe) records - by the time
+    # dedupe_sessions/dedupe_subagents runs, every snapshot but one is
+    # already gone. Call this BEFORE dedup, on its own copy of the raw
+    # list; the dashboards' regular deduped `records`/`chart_records`
+    # pipeline (used by the composition legend, project rankings, and
+    # every per-session row) is untouched and still correct - only the
+    # day-based trend chart needs this expanded, delta-attributed view.
+    #
+    # Confirmed against real data before this was written: token counts
+    # are monotonically non-decreasing across a session/subagent's
+    # snapshots (no resets), and sorting by duration_seconds gives the
+    # exact same order as sorting by timestamp_end - safe to reuse the
+    # same sort key dedupe_by_key already relies on.
+    token_fields = ("input_tokens", "output_tokens", "cache_read_tokens", "cache_creation_tokens")
+    # agent_id checked FIRST: subagent records carry BOTH their own
+    # agent_id AND their parent session's session_id - checking
+    # session_id first would group every subagent dispatched by the same
+    # session together as if they were sequential snapshots of one
+    # entity, corrupting deltas across unrelated subagents (found
+    # 2026-08-06: 1012 of 1036 agent_ids mismatched dedup's own totals
+    # this way on real data). Session records never carry agent_id at
+    # all, so they always fall through to session_id correctly.
+    id_fields = ("agent_id", "session_id")
+    by_id = {}
+    for record in raw_records:
+        record_id = None
+        for field in id_fields:
+            value = record.get(field)
+            if value is not None:
+                record_id = (field, value)
+                break
+        if record_id is None:
+            continue
+        by_id.setdefault(record_id, []).append(record)
+
+    deltas = []
+    for snapshots in by_id.values():
+        snapshots.sort(key=lambda r: r.get("duration_seconds") or 0)
+        previous = dict.fromkeys(token_fields, 0)
+        for snapshot in snapshots:
+            delta_record = dict(snapshot)
+            for field in token_fields:
+                current = snapshot.get(field, 0) or 0
+                # max(..., 0): a defensive floor, not expected to trigger -
+                # every snapshot checked in real data was monotonically
+                # non-decreasing, but a future hook change or a corrupted
+                # row shouldn't be able to produce a negative delta.
+                delta_record[field] = max(current - previous[field], 0)
+                previous[field] = current
+            # Dated by THIS snapshot's own timestamp_end (when this chunk
+            # of usage was actually recorded), not the session's fixed
+            # timestamp_start - that's the entire point of this function.
+            delta_record["timestamp_start"] = snapshot.get("timestamp_end") or snapshot.get("timestamp_start")
+            deltas.append(delta_record)
+    return deltas
+
+
 def fold_subagent_tokens_into_sessions(records, subagent_records):
     # A session's own record only counts tokens spent on its own direct
     # messages - every subagent it dispatched burns real quota too, but

@@ -627,7 +627,7 @@ def render_project_totals_chart(records, project_first_seen, project_last_seen, 
     )
 
 
-def render_html(records, subagents_by_session, chart_records, project_first_seen, project_last_seen, open_projects):
+def render_html(records, subagents_by_session, chart_records, daily_chart_records, project_first_seen, project_last_seen, open_projects):
     group_colors = mr.assign_group_colors(chart_records)
     groups = mr.build_project_groups(records, group_colors)
     has_tmux_data = any(r.get("tmux_window") for r in records)
@@ -681,7 +681,7 @@ def render_html(records, subagents_by_session, chart_records, project_first_seen
             )
             panels_html.append(render_detail_panel(session_id, session_subagents, False))
 
-    trend_html = render_trend_chart(chart_records, group_colors)
+    trend_html = render_trend_chart(daily_chart_records, group_colors)
     project_totals_html = render_project_totals_chart(chart_records, project_first_seen, project_last_seen, open_projects)
 
     style = """
@@ -1259,6 +1259,15 @@ def main():
     args = parser.parse_args()
 
     records = mr.load_records(mr.METRICS_FILE)
+    # Captured before dedupe_sessions discards every snapshot but one per
+    # session_id - expand_records_to_daily_deltas needs the FULL raw
+    # history to correctly spread a long-running session's token growth
+    # across the days it actually happened (2026-08-06 fix). Normalized
+    # and tag/project-filtered independently so it stays consistent with
+    # the main `records` pipeline below, without depending on dedup ever
+    # having run.
+    raw_session_records = mr.normalize_project_paths(list(records))
+    raw_session_records = mr.filter_records(raw_session_records, tag=args.tag, project=args.project)
     records = mr.dedupe_sessions(records)
     records = mr.normalize_project_paths(records)
     records = mr.filter_records(records, tag=args.tag, project=args.project)
@@ -1296,7 +1305,16 @@ def main():
         records = records[-args.limit:]
 
     if args.html:
-        subagent_records = mr.dedupe_subagents(mr.load_records(mr.SUBAGENTS_FILE))
+        raw_subagent_records = mr.load_records(mr.SUBAGENTS_FILE)
+        subagent_records = mr.dedupe_subagents(raw_subagent_records)
+        # See expand_records_to_daily_deltas's docstring: raw (pre-dedup)
+        # session + subagent snapshots, delta-attributed to the day each
+        # was actually recorded - used ONLY by the trend chart below, so
+        # every other view (legend, project rankings, per-row totals)
+        # keeps using the regular deduped/folded records untouched.
+        daily_chart_records = mr.expand_records_to_daily_deltas(
+            raw_session_records
+        ) + mr.expand_records_to_daily_deltas(raw_subagent_records)
         agent_label_cache = mr.load_agent_label_cache()
         # Real data has duplicate agent_id/session_id records (the metrics
         # log has no dedup). Deduping to one representative per key before
@@ -1400,7 +1418,7 @@ def main():
         project_first_seen = mr.compute_project_first_seen(all_time_records)
         project_last_seen = mr.compute_project_last_seen(all_time_records)
         open_projects = mr.get_open_projects()
-        html_output = render_html(records, subagents_by_session, chart_records, project_first_seen, project_last_seen, open_projects)
+        html_output = render_html(records, subagents_by_session, chart_records, daily_chart_records, project_first_seen, project_last_seen, open_projects)
         output_path = os.path.expanduser("~/.claude/metrics/dashboard.html")
         with open(output_path, "w") as f:
             f.write(html_output)

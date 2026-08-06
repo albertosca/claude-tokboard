@@ -42,6 +42,13 @@ def load_data(args, mr=None):
     # metrics-report.py for the fan-out safeguard that keeps it from
     # collapsing unrelated projects into a shared container directory.
     records = mr.load_records(mr.METRICS_FILE)
+    # Captured before dedupe_sessions discards every snapshot but one per
+    # session_id - expand_records_to_daily_deltas needs the FULL raw
+    # history to correctly spread a long-running session's token growth
+    # across the days it actually happened (2026-08-06 fix), instead of
+    # dumping it all onto the session's fixed start day.
+    raw_session_records = mr.normalize_project_paths(list(records))
+    raw_session_records = mr.filter_records(raw_session_records, tag=args.tag, project=args.project)
     records = mr.dedupe_sessions(records)
     records = mr.normalize_project_paths(records)
     records = mr.filter_records(records, tag=args.tag, project=args.project)
@@ -72,7 +79,15 @@ def load_data(args, mr=None):
     # concern: two THREADS racing the same cache key could otherwise
     # interleave a real label with a failed one, and negative-caching would
     # then permanently lock in whichever thread wrote last.
-    subagent_records = mr.dedupe_subagents(mr.load_records(mr.SUBAGENTS_FILE))
+    raw_subagent_records = mr.load_records(mr.SUBAGENTS_FILE)
+    subagent_records = mr.dedupe_subagents(raw_subagent_records)
+    # See expand_records_to_daily_deltas's docstring: used ONLY by the
+    # trend chart, so every other view (composition legend, project
+    # rankings, per-row totals) keeps using the regular deduped/folded
+    # records untouched.
+    daily_chart_records = mr.expand_records_to_daily_deltas(
+        raw_session_records
+    ) + mr.expand_records_to_daily_deltas(raw_subagent_records)
     agent_label_cache = mr.load_agent_label_cache()
     unique_agents = {}
     for subagent in subagent_records:
@@ -141,6 +156,7 @@ def load_data(args, mr=None):
     return {
         "records": records,
         "chart_records": chart_records,
+        "daily_chart_records": daily_chart_records,
         "subagents_by_session": subagents_by_session,
         "project_first_seen": project_first_seen,
         "project_last_seen": project_last_seen,
@@ -590,7 +606,7 @@ class MetricsTUIApp(App):
                 totals = self.mr.compute_token_type_totals(self.data["records"])
                 yield CompositionLegend(totals, self.mr)
                 yield ProjectLegend(self.mr, self.data["chart_records"])
-                yield TrendChart(self.mr, self.data["chart_records"])
+                yield TrendChart(self.mr, self.data["daily_chart_records"])
                 yield ProjectRankingList(
                     self.mr,
                     self.data["chart_records"],
