@@ -5,6 +5,8 @@ import json
 import os
 from datetime import datetime
 
+from .records import record_token_total
+
 
 def compute_project_first_seen(records):
     first_seen = {}
@@ -63,7 +65,10 @@ def compute_project_totals(records, project_last_seen):
     totals = {}
     for r in records:
         project = r.get("project_path")
-        totals[project] = totals.get(project, 0) + (r.get("input_tokens", 0) or 0) + (r.get("output_tokens", 0) or 0)
+        # All four token kinds - this panel is titled "Total de tokens por
+        # projeto", and until 2026-08-10 it summed input+output only,
+        # reporting ~0.3% of real volume under a label promising totals.
+        totals[project] = totals.get(project, 0) + record_token_total(r)
     # Sorted by most-recent-activity, not by token volume — answers "what
     # have I touched lately" rather than "what costs the most," and pairs
     # naturally with the top-10-then-collapse cutoff callers apply (the most

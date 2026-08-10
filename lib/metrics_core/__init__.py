@@ -13,6 +13,7 @@ from .records import (
     dedupe_subagents,
     filter_records,
     filter_by_days,
+    record_token_total,
     compute_token_type_totals,
     expand_records_to_daily_deltas,
     fold_subagent_tokens_into_sessions,

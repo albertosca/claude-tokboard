@@ -105,7 +105,7 @@ def render_session_row(record, is_active, group_colors, group_index, subagent_co
     task_label = html.escape(raw_task_label)
     date_str = mr.format_date(record.get("timestamp_start"))
     duration_str = mr.format_duration(record.get("duration_seconds"))
-    total_tokens = mr.format_tokens((record.get("input_tokens", 0) or 0) + (record.get("output_tokens", 0) or 0))
+    total_tokens = mr.format_tokens(mr.record_token_total(record))
     active_class = " active" if is_active else ""
     group_class = group_colors.get(record.get("project_path"), "group-color-none")
     # Compact "has subagents" indicator (2026-07-21) - a count badge here
@@ -134,9 +134,7 @@ def render_group_header(group_index, group):
     project_path = group["project"]
     label = mr.project_display_label(project_path)
     count = len(group["records"])
-    total_tokens = mr.format_tokens(
-        sum((r.get("input_tokens", 0) or 0) + (r.get("output_tokens", 0) or 0) for r in group["records"])
-    )
+    total_tokens = mr.format_tokens(sum(mr.record_token_total(r) for r in group["records"]))
     title_attr = f' title="{html.escape(project_path)}"' if project_path else ""
     return (
         f'<div class="group-header collapsed {group["class"]}" id="group-{group_index}"{title_attr} '
@@ -170,7 +168,7 @@ def render_detail_panel(session_id, subagents, is_active):
     title = ""
     subagents = [
         s for s in subagents
-        if (s.get("input_tokens", 0) or 0) + (s.get("output_tokens", 0) or 0) > 0
+        if mr.record_token_total(s) > 0
     ]
     if not subagents:
         body = '<p class="empty">Nenhum subagente nesta sessão.</p>'
@@ -203,9 +201,7 @@ def render_detail_panel(session_id, subagents, is_active):
             # número de tokens gastos") - the bar alone showed the
             # composition/proportions but never the actual amount,
             # unlike the session table's tokens column which has both.
-            subagent_total_tokens = mr.format_tokens(
-                (subagent.get("input_tokens", 0) or 0) + (subagent.get("output_tokens", 0) or 0)
-            )
+            subagent_total_tokens = mr.format_tokens(mr.record_token_total(subagent))
             zebra_class = " subagent-row-odd" if i % 2 == 1 else ""
             rows.append(
                 f'<div class="subagent-row{zebra_class}">'
@@ -234,26 +230,21 @@ def render_trend_chart(records, group_colors):
     if n < 2:
         return ""
 
-    day_totals = [
-        sum((r.get("input_tokens", 0) or 0) + (r.get("output_tokens", 0) or 0) for r in day["records"])
-        for day in days
-    ]
-    day_token_totals = [
-        sum(
-            (r.get("input_tokens", 0) or 0)
-            + (r.get("output_tokens", 0) or 0)
-            + (r.get("cache_read_tokens", 0) or 0)
-            + (r.get("cache_creation_tokens", 0) or 0)
-            for r in day["records"]
-        )
-        for day in days
-    ]
-    # Each mode gets its OWN scale/axis — see the note on this in an
-    # earlier round's fix: sharing one denominator between the two modes
-    # let cache-heavy days starve the "por projeto" bars to near-zero
-    # height. That's still true per-day, so the same split applies here.
+    day_totals = [sum(mr.record_token_total(r) for r in day["records"]) for day in days]
+    day_token_totals = day_totals
+    # The two tabs now decompose the SAME quantity - total tokens - one
+    # split by project, the other by token type, so they deliberately
+    # share one scale: a full-height bar means the same thing on both,
+    # and switching tabs re-slices a day rather than rescaling it.
+    #
+    # This replaces an earlier split-denominator fix. That one was right
+    # about its symptom (cache-heavy days starving the "por projeto"
+    # bars) but wrong about the cause: "por projeto" was summing only
+    # input+output, so it wasn't a scale problem at all - the mode was
+    # measuring a different, ~300x smaller quantity than its own axis
+    # labels and tooltips claimed (2026-08-10).
     max_pane = max(day_totals) or 1
-    max_tokens = max(day_token_totals) or 1
+    max_tokens = max_pane
 
     height = 150
     padding_left = 45
@@ -349,7 +340,7 @@ def render_trend_chart(records, group_colors):
                 if project not in by_project:
                     by_project[project] = 0
                     project_order.append(project)
-                by_project[project] += (r.get("input_tokens", 0) or 0) + (r.get("output_tokens", 0) or 0)
+                by_project[project] += mr.record_token_total(r)
             y_cursor = padding_top + plot_height
             for project in project_order:
                 value = by_project[project]
@@ -627,8 +618,27 @@ def render_project_totals_chart(records, project_first_seen, project_last_seen, 
     )
 
 
+def build_group_colors(chart_records, daily_chart_records):
+    # The trend chart renders daily_chart_records (raw, pre-dedup snapshots
+    # expanded into per-day deltas) while colours and the legend are built
+    # from chart_records (one deduped representative per session). Any
+    # project_path reachable only through the raw feed - a worktree, a
+    # directory a session cd'ed out of before its final snapshot, a
+    # subagent's own path - was therefore missing from the colour map and
+    # fell back to "group-color-none", so clicking that bar highlighted
+    # nothing in the legend (regression introduced by bd2e899; measured
+    # 2026-08-10 at 38 of 67 rendered paths uncoloured on real data).
+    #
+    # chart_records goes FIRST so every colour slot already assigned keeps
+    # the exact number it had - assign_group_colors skips a project_path it
+    # has seen, so appending the daily feed can only ever ADD the missing
+    # ones. Worktrees still collapse onto their parent's colour, because
+    # the slot is chosen by color_group_key rather than the raw path.
+    return mr.assign_group_colors(list(chart_records) + list(daily_chart_records))
+
+
 def render_html(records, subagents_by_session, chart_records, daily_chart_records, project_first_seen, project_last_seen, open_projects):
-    group_colors = mr.assign_group_colors(chart_records)
+    group_colors = build_group_colors(chart_records, daily_chart_records)
     groups = mr.build_project_groups(records, group_colors)
     has_tmux_data = any(r.get("tmux_window") for r in records)
 
@@ -642,7 +652,7 @@ def render_html(records, subagents_by_session, chart_records, daily_chart_record
     for group_index, group in enumerate(groups):
         visible_records = [
             r for r in group["records"]
-            if (r.get("input_tokens", 0) or 0) + (r.get("output_tokens", 0) or 0) > 0
+            if mr.record_token_total(r) > 0
         ]
         if visible_records:
             visible_groups.append((group_index, {**group, "records": visible_records}))
@@ -674,7 +684,7 @@ def render_html(records, subagents_by_session, chart_records, daily_chart_record
             session_subagents = subagents_by_session.get(session_id, [])
             visible_subagent_count = sum(
                 1 for s in session_subagents
-                if (s.get("input_tokens", 0) or 0) + (s.get("output_tokens", 0) or 0) > 0
+                if mr.record_token_total(s) > 0
             )
             rows_html.append(
                 render_session_row(record, False, group_colors, group_index, visible_subagent_count, show_tmux=has_tmux_data)

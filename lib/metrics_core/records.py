@@ -175,6 +175,21 @@ def filter_by_days(records, days):
     return filtered
 
 
+def record_token_total(record):
+    # Every token a record consumed, all four kinds. Cache dominates real
+    # usage by orders of magnitude - measured 2026-08-10 against Claude
+    # Code's own session transcripts, input+output was ~0.3% of the day's
+    # true volume (4.2M shown against 1.42B actually spent). Any view that
+    # calls its number a token "total" has to use this, or it reports a
+    # rounding error as if it were the whole story.
+    return (
+        (record.get("input_tokens", 0) or 0)
+        + (record.get("output_tokens", 0) or 0)
+        + (record.get("cache_read_tokens", 0) or 0)
+        + (record.get("cache_creation_tokens", 0) or 0)
+    )
+
+
 def compute_token_type_totals(records):
     return {
         "series-1": sum(r.get("input_tokens", 0) or 0 for r in records),

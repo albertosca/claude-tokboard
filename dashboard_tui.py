@@ -178,15 +178,12 @@ def build_session_tree(records, subagents_by_session, mr):
         # is skipped entirely rather than left as an empty, expandable node.
         visible_records = [
             r for r in group["records"]
-            if (r.get("input_tokens", 0) or 0) + (r.get("output_tokens", 0) or 0) > 0
+            if mr.record_token_total(r) > 0
         ]
         if not visible_records:
             continue
         label = mr.project_display_label(project_path)
-        total_tokens = sum(
-            (r.get("input_tokens", 0) or 0) + (r.get("output_tokens", 0) or 0)
-            for r in visible_records
-        )
+        total_tokens = sum(mr.record_token_total(r) for r in visible_records)
         group_node = tree.root.add(
             f"{label} ({len(visible_records)} sessões · {mr.format_tokens(total_tokens)} tokens)",
             expand=False,
@@ -195,9 +192,7 @@ def build_session_tree(records, subagents_by_session, mr):
             session_id = record.get("session_id") or ""
             date_str = mr.format_date(record.get("timestamp_start"))
             task_label = record.get("task_label") or "-"
-            tokens = mr.format_tokens(
-                (record.get("input_tokens", 0) or 0) + (record.get("output_tokens", 0) or 0)
-            )
+            tokens = mr.format_tokens(mr.record_token_total(record))
             duration = record.get("duration_seconds")
             duration_str = f"{duration:.0f}s" if duration is not None else "-"
             # Subagent count badge (2026-07-21, ported from
@@ -209,7 +204,7 @@ def build_session_tree(records, subagents_by_session, mr):
             session_subagents = subagents_by_session.get(session_id, [])
             visible_subagent_count = sum(
                 1 for s in session_subagents
-                if (s.get("input_tokens", 0) or 0) + (s.get("output_tokens", 0) or 0) > 0
+                if mr.record_token_total(s) > 0
             )
             subagent_badge = f" 🤖{visible_subagent_count}" if visible_subagent_count else ""
             group_node.add_leaf(
@@ -319,7 +314,7 @@ def compute_pane_projects(mr, chart_records):
     totals = {}
     for r in chart_records:
         key = mr.color_group_key(r.get("project_path"))
-        totals[key] = totals.get(key, 0) + (r.get("input_tokens", 0) or 0) + (r.get("output_tokens", 0) or 0)
+        totals[key] = totals.get(key, 0) + mr.record_token_total(r)
     ordered = sorted(totals.keys(), key=lambda k: totals[k], reverse=True)
     top_keys = ordered[:PANE_MAX_PROJECTS]
     has_other = len(ordered) > PANE_MAX_PROJECTS
@@ -400,7 +395,7 @@ class TrendChart(PlotextPlot):
                 for r in d["records"]:
                     r_key = self.mr.color_group_key(r.get("project_path"))
                     bucket = r_key if r_key in top_keys else PANE_OTHER_KEY
-                    day_totals[bucket] += (r.get("input_tokens", 0) or 0) + (r.get("output_tokens", 0) or 0)
+                    day_totals[bucket] += self.mr.record_token_total(r)
                 for k in series_keys:
                     series_data[k].append(day_totals[k])
             series_lists = [series_data[k] for k in series_keys]
