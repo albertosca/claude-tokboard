@@ -15,6 +15,7 @@ def parse_transcript(path):
     cache_read_tokens = 0
     cache_creation_tokens = 0
     tool_call_count = 0
+    seen_message_ids = set()
     first_timestamp = None
     last_timestamp = None
 
@@ -36,6 +37,16 @@ def parse_transcript(path):
 
             if entry.get("type") == "assistant":
                 message = entry.get("message") or {}
+                # Same replay problem the session hook guards against: a
+                # transcript can hold several copies of one assistant
+                # message, and counting each one inflates every figure
+                # (see metrics-log.py for the measured 1.89x). Entries
+                # with no id can't be deduped, so they are always counted.
+                message_id = message.get("id")
+                if message_id is not None:
+                    if message_id in seen_message_ids:
+                        continue
+                    seen_message_ids.add(message_id)
                 usage = message.get("usage") or {}
                 input_tokens += usage.get("input_tokens", 0) or 0
                 output_tokens += usage.get("output_tokens", 0) or 0

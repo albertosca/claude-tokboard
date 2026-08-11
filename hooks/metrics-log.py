@@ -59,6 +59,7 @@ def parse_transcript(path):
     cache_creation_tokens = 0
     turn_count = 0
     tool_call_count = 0
+    seen_message_ids = set()
     first_timestamp = None
     last_timestamp = None
     git_branch = None
@@ -84,8 +85,21 @@ def parse_transcript(path):
                 git_branch = branch
 
             if entry.get("type") == "assistant":
-                turn_count += 1
                 message = entry.get("message") or {}
+                # One assistant message can appear many times in a single
+                # transcript: resuming or compacting a session replays
+                # earlier turns back into the file. Summing every
+                # occurrence inflated every number this tool reports -
+                # measured 2026-08-11 across the twelve largest
+                # transcripts, 47.2% of all token volume was a repeat of
+                # an id already counted, an overall 1.89x. Entries with no
+                # id can't be deduped, so they are always counted.
+                message_id = message.get("id")
+                if message_id is not None:
+                    if message_id in seen_message_ids:
+                        continue
+                    seen_message_ids.add(message_id)
+                turn_count += 1
                 usage = message.get("usage") or {}
                 input_tokens += usage.get("input_tokens", 0) or 0
                 output_tokens += usage.get("output_tokens", 0) or 0
