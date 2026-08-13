@@ -29,8 +29,9 @@ def import_metrics_report():
     return metrics_core
 
 
-def load_data(args, mr=None):
+def load_data(args, mr=None, period_id=None):
     mr = mr or import_metrics_report()
+    period_id = period_id or mr.DEFAULT_PERIOD_ID
 
     # Dedupe + normalize the same way metrics-report.py's main() does
     # before ANYTHING else touches records (2026-07-21) - the Stop hook
@@ -153,6 +154,12 @@ def load_data(args, mr=None):
     project_last_seen = mr.compute_project_last_seen(all_time_records)
     open_projects = mr.get_open_projects()
 
+    render_now = datetime.now().astimezone()
+    window = mr.resolve_period(period_id, render_now)
+    records = mr.filter_sessions_by_window(records, window)
+    chart_records = mr.filter_sessions_by_window(chart_records, window)
+    daily_chart_records = mr.filter_deltas_by_window(daily_chart_records, window)
+
     return {
         "records": records,
         "chart_records": chart_records,
@@ -161,6 +168,7 @@ def load_data(args, mr=None):
         "project_first_seen": project_first_seen,
         "project_last_seen": project_last_seen,
         "open_projects": open_projects,
+        "period_id": period_id,
     }
 
 
@@ -584,12 +592,14 @@ class MetricsTUIApp(App):
         ("t", "toggle_chart_mode", "Alterna modo do gráfico"),
         ("m", "toggle_more_projects", "Mais/menos projetos"),
         ("g", "toggle_tab", "Gráficos/Sessões"),
+        ("p", "cycle_period", "período"),
     ]
 
-    def __init__(self, mr, data, **kwargs):
+    def __init__(self, mr, data, args=None, **kwargs):
         super().__init__(**kwargs)
         self.mr = mr
         self.data = data
+        self.args = args
 
     def compose(self) -> ComposeResult:
         with TabbedContent():
@@ -656,12 +666,24 @@ class MetricsTUIApp(App):
     def on_project_legend_highlight(self, event):
         self.query_one(TrendChart).set_project_highlight(event.projects)
 
+    def action_cycle_period(self):
+        ids = [p.id for p in self.mr.PERIODS]
+        current = self.data.get("period_id", self.mr.DEFAULT_PERIOD_ID)
+        next_id = ids[(ids.index(current) + 1) % len(ids)]
+        # Focus is dropped before the rebuild for the same reason
+        # action_toggle_tab does it: a focused widget inside a pane being
+        # replaced makes Textual revert the change within one tick.
+        self.set_focus(None)
+        self.data = load_data(self.args, mr=self.mr, period_id=next_id)
+        self.refresh(recompose=True)
+        self.notify(f"período: {dict((p.id, p.label) for p in self.mr.PERIODS)[next_id]}")
+
 
 def main():
     args = build_arg_parser().parse_args()
     mr = import_metrics_report()
     data = load_data(args, mr=mr)
-    app = MetricsTUIApp(mr, data)
+    app = MetricsTUIApp(mr, data, args=args)
     app.run()
 
 
