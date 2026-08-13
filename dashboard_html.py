@@ -824,6 +824,13 @@ def render_html(records, subagents_by_session, chart_records, daily_chart_record
         --text-secondary: #52514e;
         --text-muted: #898781;
         --border: #e1e0d9;
+        /* Pinned height for the sticky period filter, so .trend-container -
+           which is sticky at top: 0 too - can offset itself by exactly the
+           bar's height instead of being covered by it on scroll. Defined
+           once and consumed by both rules, so the two cannot drift apart.
+           The dark @media block below only overrides colours, so this stays
+           in effect in both themes. */
+        --period-filter-height: 44px;
         --series-1: #2a78d6;
         --series-2: #1baf7a;
         --series-3: #eda100;
@@ -904,7 +911,7 @@ def render_html(records, subagents_by_session, chart_records, daily_chart_record
           --group-none: #898781; --group-none-tint: transparent;
         }
       }
-      .trend-container { padding: 12px 16px; border-bottom: 1px solid var(--border); position: sticky; top: 0; z-index: 5; background: var(--surface-1); }
+      .trend-container { padding: 12px 16px; border-bottom: 1px solid var(--border); position: sticky; top: var(--period-filter-height); z-index: 5; background: var(--surface-1); }
       .trend-mode-tabs { display: flex; gap: 4px; margin-bottom: 8px; }
       .trend-pane { display: none; }
       .trend-pane.active { display: block; }
@@ -1214,7 +1221,7 @@ def render_html(records, subagents_by_session, chart_records, daily_chart_record
       .subagent-row.subagent-header { font-weight: bold; color: var(--text-muted); font-size: 10px; border-bottom: 2px solid var(--border); }
       .subagent-row-odd { background: rgba(0,0,0,0.02); }
       .empty { color: var(--text-muted); }
-      .period-filter { display: flex; gap: 8px; padding: 10px 16px; position: sticky; top: 0; z-index: 20; background: inherit; }
+      .period-filter { display: flex; align-items: center; gap: 8px; padding: 8px 16px; height: var(--period-filter-height); box-sizing: border-box; position: sticky; top: 0; z-index: 20; background: var(--surface-1); }
       .period-chip { cursor: pointer; border: 1px solid currentColor; border-radius: 999px; padding: 4px 12px; font: inherit; background: none; color: inherit; opacity: 0.55; }
       .period-chip.active { opacity: 1; font-weight: 600; }
       .period-block[hidden] { display: none; }
