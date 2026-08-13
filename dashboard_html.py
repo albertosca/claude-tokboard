@@ -139,17 +139,36 @@ def render_session_row(record, is_active, group_colors, group_index, subagent_co
     )
 
 
-def render_group_header(group_index, group):
+def render_group_header(group_index, group, period_windows):
+    # Period-aware since 2026-08-13. The header used to state one all-time
+    # "N sessões · X tokens" that no period ever re-scoped, so under "ontem"
+    # every project header stayed on screen quoting the whole history. Two
+    # things follow from that: the counts are pre-rendered once per period
+    # (one .period-block span each, swapped by the same selectPeriod call
+    # that swaps the charts), and the header carries data-periods so it can
+    # be hidden outright when no session of its own belongs to the active
+    # period - a header reading "0 sessões" would be worse than no header.
     project_path = group["project"]
     label = mr.project_display_label(project_path)
-    count = len(group["records"])
-    total_tokens = mr.format_tokens(sum(mr.record_token_total(r) for r in group["records"]))
     title_attr = f' title="{html.escape(project_path)}"' if project_path else ""
+    member_periods = []
+    counts = []
+    for period in mr.PERIODS:
+        scoped = mr.filter_sessions_by_window(group["records"], period_windows[period.id])
+        if scoped:
+            member_periods.append(period.id)
+        total_tokens = mr.format_tokens(sum(mr.record_token_total(r) for r in scoped))
+        hidden_attr = "" if period.id == mr.DEFAULT_PERIOD_ID else " hidden"
+        counts.append(
+            f'<span class="group-count period-block" data-period="{period.id}"{hidden_attr}>'
+            f"({len(scoped)} sessões · {total_tokens} tokens)</span>"
+        )
     return (
         f'<div class="group-header collapsed {group["class"]}" id="group-{group_index}"{title_attr} '
+        f'data-periods="{" ".join(member_periods)}" '
         f"onclick=\"toggleGroup({group_index})\">"
         '<span class="group-icon">▸</span>'
-        f"<span>{html.escape(label)} ({count} sessões · {total_tokens} tokens)</span>"
+        f'<span>{html.escape(label)} {"".join(counts)}</span>'
         "</div>"
     )
 
@@ -720,7 +739,7 @@ def render_html(records, subagents_by_session, chart_records, daily_chart_record
     rows_html = []
     panels_html = []
     for group_index, group in visible_groups:
-        rows_html.append(render_group_header(group_index, group))
+        rows_html.append(render_group_header(group_index, group, period_windows))
         for record in group["records"]:
             session_id = record.get("session_id") or ""
             label = record.get("task_label")
@@ -755,6 +774,12 @@ def render_html(records, subagents_by_session, chart_records, daily_chart_record
     # period.
     trend_blocks = []
     panorama_blocks = []
+    # The composition legend is the Sessions tab's own total. It used to be
+    # rendered once from the unfiltered records and left outside every
+    # period block, so it reported the all-time total under every period -
+    # the loudest possible way for two surfaces to disagree. It is small, so
+    # one pre-rendered copy per period is the cheapest fix (2026-08-13).
+    legend_blocks = []
     for period in mr.PERIODS:
         window = period_windows[period.id]
         scoped_chart = mr.filter_sessions_by_window(chart_records, window)
@@ -780,8 +805,16 @@ def render_html(records, subagents_by_session, chart_records, daily_chart_record
             )
             + "</div>"
         )
+        legend_blocks.append(
+            f'<div class="period-block" data-period="{period.id}"{hidden_attr}>'
+            + render_composition_legend(
+                mr.compute_token_type_totals(mr.filter_sessions_by_window(records, window))
+            )
+            + "</div>"
+        )
     trend_blocks_html = "".join(trend_blocks)
     panorama_blocks_html = "".join(panorama_blocks)
+    legend_blocks_html = "".join(legend_blocks)
 
     style = """
     <style>
@@ -1190,6 +1223,7 @@ def render_html(records, subagents_by_session, chart_records, daily_chart_record
          compose instead of fighting (see render_session_row). */
       .session-row.collapsed { display: none; }
       .session-row.period-hidden { display: none; }
+      .group-header.period-hidden { display: none; }
     </style>
     """
     script = """
@@ -1303,10 +1337,13 @@ def render_html(records, subagents_by_session, chart_records, daily_chart_record
         block.hidden = block.dataset.period !== periodId;
       });
       // Membership was decided in Python, where the span-overlap rule and
-      // its tests live. This only reads the answer.
-      document.querySelectorAll('.session-row[data-periods]').forEach(function (row) {
-        var belongs = row.dataset.periods.split(' ').indexOf(periodId) !== -1;
-        row.classList.toggle('period-hidden', !belongs);
+      // its tests live. This only reads the answer. Group headers use the
+      // same attribute and the same class: a header whose every session
+      // falls outside the period disappears with its rows, instead of
+      // sitting there announcing a count for sessions nobody can see.
+      document.querySelectorAll('.session-row[data-periods], .group-header[data-periods]').forEach(function (el) {
+        var belongs = el.dataset.periods.split(' ').indexOf(periodId) !== -1;
+        el.classList.toggle('period-hidden', !belongs);
       });
     }
     document.querySelectorAll('.trend-scroll').forEach(function(el) { el.scrollLeft = el.scrollWidth; });
@@ -1335,7 +1372,7 @@ def render_html(records, subagents_by_session, chart_records, daily_chart_record
     sessions_tab_html = (
         '<div class="tab-pane active" id="tab-sessions">'
         '<div class="main-row">'
-        f'<div class="session-list">{render_composition_legend(mr.compute_token_type_totals(records))}{render_session_header(has_tmux_data)}{"".join(rows_html)}</div>'
+        f'<div class="session-list">{legend_blocks_html}{render_session_header(has_tmux_data)}{"".join(rows_html)}</div>'
         f'<div class="detail-container">{"".join(panels_html)}</div>'
         "</div>"
         "</div>"
