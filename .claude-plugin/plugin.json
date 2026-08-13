@@ -3,7 +3,7 @@
   "description": "Session metrics logger and dashboard for Claude Code - HTML and terminal (TUI) modes, token usage, cost, and project/session history",
   "version": "1.0.3",
   "author": {
-    "name": "Alberto de S\u00e1 Cavalcanti de Albuquerque"
+    "name": "Alberto de Sá Cavalcanti de Albuquerque"
   },
   "homepage": "https://github.com/albertosca/claude-metrics-dashboard",
   "repository": "https://github.com/albertosca/claude-metrics-dashboard",
