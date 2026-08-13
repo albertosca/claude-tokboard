@@ -113,10 +113,18 @@ def render_session_row(record, is_active, group_colors, group_index, subagent_co
     # opening every single row's detail panel to find out.
     subagent_badge = f"🤖{subagent_count}" if subagent_count else ""
     tmux_span = f'<span class="tmux-window">{tmux_window}</span>' if show_tmux else ""
+    # Row visibility is class-driven ONLY (2026-08-13). This row used to be
+    # born with an inline style="display:none" that toggleGroup then
+    # overwrote with an inline display:flex. An inline declaration beats any
+    # non-!important author rule, so the period filter's .period-hidden rule
+    # could never win: an expanded row stayed on screen under every period.
+    # Collapse state and period membership are both plain classes now, so the
+    # two mechanisms cannot contradict each other - the row shows only when
+    # it is neither collapsed nor outside the active period.
     return (
-        f'<div class="session-row {group_class}{active_class}" id="row-{session_id}" '
-        f'data-group="{group_index}" style="display:none" '
-        f' data-periods="{" ".join(period_ids)}" '
+        f'<div class="session-row {group_class}{active_class} collapsed" id="row-{session_id}" '
+        f'data-group="{group_index}" '
+        f'data-periods="{" ".join(period_ids)}" '
         f"onclick=\"showSession('{session_id}')\">"
         f'<span class="sid">{session_id[:12]}</span>'
         f'<span class="subagent-col">{subagent_badge}</span>'
@@ -1177,7 +1185,11 @@ def render_html(records, subagents_by_session, chart_records, daily_chart_record
       .period-chip { cursor: pointer; border: 1px solid currentColor; border-radius: 999px; padding: 4px 12px; font: inherit; background: none; color: inherit; opacity: 0.55; }
       .period-chip.active { opacity: 1; font-weight: 600; }
       .period-block[hidden] { display: none; }
-      .session-row[data-periods].period-hidden { display: none; }
+      /* The only two rules that hide a session row, both class-driven and
+         both display:none - no inline style competes with either, so they
+         compose instead of fighting (see render_session_row). */
+      .session-row.collapsed { display: none; }
+      .session-row.period-hidden { display: none; }
     </style>
     """
     script = """
@@ -1236,7 +1248,10 @@ def render_html(records, subagents_by_session, chart_records, daily_chart_record
       if (!header) { return; }
       var collapsed = header.classList.contains('collapsed');
       var rows = document.querySelectorAll('.session-row[data-group="' + id + '"]');
-      rows.forEach(function(el) { el.style.display = collapsed ? 'flex' : 'none'; });
+      // Toggles a class rather than writing an inline display, so a row the
+      // period filter has hidden stays hidden through an expand/collapse and
+      // the two mechanisms never overwrite each other.
+      rows.forEach(function(el) { el.classList.toggle('collapsed', !collapsed); });
       header.classList.toggle('collapsed');
       var icon = header.querySelector('.group-icon');
       if (icon) { icon.textContent = collapsed ? '▾' : '▸'; }
