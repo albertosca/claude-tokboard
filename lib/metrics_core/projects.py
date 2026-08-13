@@ -69,11 +69,16 @@ def compute_project_totals(records, project_last_seen):
         # projeto", and until 2026-08-10 it summed input+output only,
         # reporting ~0.3% of real volume under a label promising totals.
         totals[project] = totals.get(project, 0) + record_token_total(r)
-    # Sorted by most-recent-activity, not by token volume — answers "what
-    # have I touched lately" rather than "what costs the most," and pairs
-    # naturally with the top-10-then-collapse cutoff callers apply (the most
-    # recently active projects are the ones most likely to matter right now).
-    ordered_projects = sorted(totals.keys(), key=lambda p: project_last_seen.get(p, ""), reverse=True)
+    # Sorted by spend, with most-recent activity only as a tie-break.
+    # This panel used to sort by recency, answering "what have I touched
+    # lately" - a reasonable question, but not the one it is titled for
+    # and not the one Alberto opens it to ask (2026-08-13). Recency
+    # survives elsewhere as a marker on the row, not as the order.
+    ordered_projects = sorted(
+        totals.keys(),
+        key=lambda p: (totals[p], project_last_seen.get(p, "")),
+        reverse=True,
+    )
     max_total = max(totals.values()) if totals else 0
     return ordered_projects, totals, max_total
 
