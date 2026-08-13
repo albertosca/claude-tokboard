@@ -90,7 +90,7 @@ def render_composition_bar(record):
     return f'<div class="comp-bar">{"".join(parts)}</div>'
 
 
-def render_session_row(record, is_active, group_colors, group_index, subagent_count=0, show_tmux=True):
+def render_session_row(record, is_active, group_colors, group_index, subagent_count=0, show_tmux=True, period_ids=("tudo",)):
     session_id = record.get("session_id") or ""
     tag = html.escape(record.get("tag") or "-")
     branch = html.escape(record.get("git_branch") or "-")
@@ -116,6 +116,7 @@ def render_session_row(record, is_active, group_colors, group_index, subagent_co
     return (
         f'<div class="session-row {group_class}{active_class}" id="row-{session_id}" '
         f'data-group="{group_index}" style="display:none" '
+        f' data-periods="{" ".join(period_ids)}" '
         f"onclick=\"showSession('{session_id}')\">"
         f'<span class="sid">{session_id[:12]}</span>'
         f'<span class="subagent-col">{subagent_badge}</span>'
@@ -425,15 +426,23 @@ def render_trend_chart(records, group_colors):
     # deduped by color_group_key so a worktree collapses into its
     # parent's single entry instead of getting its own near-duplicate
     # (they already share a color, per assign_group_colors above).
-    pane_projects = []
-    seen_keys = set()
+    # Ordered by spend within this period, not by first appearance -
+    # same reasoning as compute_project_totals. Kept keyed by
+    # color_group_key so a worktree stays merged into its parent's single
+    # entry, and the first raw path seen for a group is what the chip
+    # links to, exactly as before.
+    pane_totals = {}
+    pane_first_path = {}
     for day in days:
         for r in day["records"]:
             project = r.get("project_path")
             key = mr.color_group_key(project)
-            if key not in seen_keys:
-                seen_keys.add(key)
-                pane_projects.append(project)
+            pane_totals[key] = pane_totals.get(key, 0) + mr.record_token_total(r)
+            pane_first_path.setdefault(key, project)
+    pane_projects = [
+        pane_first_path[key]
+        for key in sorted(pane_totals, key=lambda k: pane_totals[k], reverse=True)
+    ]
     pane_legend_chips = []
     for project in pane_projects:
         group_class = group_colors.get(project, "group-color-none")
@@ -637,8 +646,28 @@ def build_group_colors(chart_records, daily_chart_records):
     return mr.assign_group_colors(list(chart_records) + list(daily_chart_records))
 
 
-def render_html(records, subagents_by_session, chart_records, daily_chart_records, project_first_seen, project_last_seen, open_projects):
+def render_period_filter():
+    chips = []
+    for period in mr.PERIODS:
+        active = " active" if period.id == mr.DEFAULT_PERIOD_ID else ""
+        chips.append(
+            f'<button type="button" class="period-chip{active}" '
+            f'data-period="{period.id}" onclick="selectPeriod(\'{period.id}\')">'
+            f"{html.escape(period.label)}</button>"
+        )
+    return f'<div class="period-filter">{"".join(chips)}</div>'
+
+
+def render_html(records, subagents_by_session, chart_records, daily_chart_records, period_windows, project_first_seen, project_last_seen, open_projects):
     group_colors = build_group_colors(chart_records, daily_chart_records)
+
+    def periods_for(record):
+        return tuple(
+            period.id
+            for period in mr.PERIODS
+            if mr.filter_sessions_by_window([record], period_windows[period.id])
+        )
+
     groups = mr.build_project_groups(records, group_colors)
     has_tmux_data = any(r.get("tmux_window") for r in records)
 
@@ -687,12 +716,28 @@ def render_html(records, subagents_by_session, chart_records, daily_chart_record
                 if mr.record_token_total(s) > 0
             )
             rows_html.append(
-                render_session_row(record, False, group_colors, group_index, visible_subagent_count, show_tmux=has_tmux_data)
+                render_session_row(
+                    record, False, group_colors, group_index, visible_subagent_count,
+                    show_tmux=has_tmux_data, period_ids=periods_for(record),
+                )
             )
             panels_html.append(render_detail_panel(session_id, session_subagents, False))
 
-    trend_html = render_trend_chart(daily_chart_records, group_colors)
-    project_totals_html = render_project_totals_chart(chart_records, project_first_seen, project_last_seen, open_projects)
+    period_blocks = []
+    for period in mr.PERIODS:
+        window = period_windows[period.id]
+        scoped_chart = mr.filter_sessions_by_window(chart_records, window)
+        scoped_daily = mr.filter_deltas_by_window(daily_chart_records, window)
+        hidden = "" if period.id == mr.DEFAULT_PERIOD_ID else " hidden"
+        period_blocks.append(
+            f'<div class="period-block{hidden}" data-period="{period.id}">'
+            + render_trend_chart(scoped_daily, group_colors)
+            + render_project_totals_chart(
+                scoped_chart, project_first_seen, project_last_seen, open_projects
+            )
+            + "</div>"
+        )
+    period_blocks_html = "".join(period_blocks)
 
     style = """
     <style>
@@ -1092,6 +1137,11 @@ def render_html(records, subagents_by_session, chart_records, daily_chart_record
       .subagent-row.subagent-header { font-weight: bold; color: var(--text-muted); font-size: 10px; border-bottom: 2px solid var(--border); }
       .subagent-row-odd { background: rgba(0,0,0,0.02); }
       .empty { color: var(--text-muted); }
+      .period-filter { display: flex; gap: 8px; padding: 10px 16px; position: sticky; top: 0; z-index: 20; background: inherit; }
+      .period-chip { cursor: pointer; border: 1px solid currentColor; border-radius: 999px; padding: 4px 12px; font: inherit; background: none; color: inherit; opacity: 0.55; }
+      .period-chip.active { opacity: 1; font-weight: 600; }
+      .period-block[hidden] { display: none; }
+      .session-row[data-periods].period-hidden { display: none; }
     </style>
     """
     script = """
@@ -1191,6 +1241,20 @@ def render_html(records, subagents_by_session, chart_records, daily_chart_record
     function highlightProject(groupClass, event) {
       toggleHighlight(groupClass, event);
     }
+    function selectPeriod(periodId) {
+      document.querySelectorAll('.period-chip').forEach(function (chip) {
+        chip.classList.toggle('active', chip.dataset.period === periodId);
+      });
+      document.querySelectorAll('.period-block').forEach(function (block) {
+        block.hidden = block.dataset.period !== periodId;
+      });
+      // Membership was decided in Python, where the span-overlap rule and
+      // its tests live. This only reads the answer.
+      document.querySelectorAll('.session-row[data-periods]').forEach(function (row) {
+        var belongs = row.dataset.periods.split(' ').indexOf(periodId) !== -1;
+        row.classList.toggle('period-hidden', !belongs);
+      });
+    }
     document.querySelectorAll('.trend-scroll').forEach(function(el) { el.scrollLeft = el.scrollWidth; });
     // Clicking outside any legend chip / chart bar clears the selection
     // back to the page's original default (everything highlighted,
@@ -1222,11 +1286,15 @@ def render_html(records, subagents_by_session, chart_records, daily_chart_record
         "</div>"
         "</div>"
     )
-    panorama_tab_html = (
-        '<div class="tab-pane" id="tab-panorama">'
-        f"{project_totals_html}"
-        "</div>"
-    )
+    # Panorama's own chart used to live only here, gated behind this tab.
+    # It is now part of period_blocks_html (see above), always visible in
+    # the sticky area regardless of which tab is active - inserting it a
+    # second time here would duplicate every period's markup (and the
+    # ids inside render_trend_chart/render_project_totals_chart aren't
+    # unique per period, so a second copy would collide with the first).
+    # The pane is kept, empty, so the "Panorama" tab button still exists
+    # and toggles without a restructure of the tab bar itself.
+    panorama_tab_html = '<div class="tab-pane" id="tab-panorama"></div>'
     # Opens with every token type AND every project color already
     # selected (2026-07-21: "tanto lá quanto na legenda... precisa
     # começar com todos selecionados") - the dashboard shows everything
@@ -1242,7 +1310,8 @@ def render_html(records, subagents_by_session, chart_records, daily_chart_record
         "<!DOCTYPE html><html><head><meta charset='utf-8'>"
         f"<title>Claude Code Metrics Dashboard</title>{style}</head>"
         f'<body data-highlight="{default_highlight}">'
-        f"{trend_html}"
+        f"{render_period_filter()}"
+        f"{period_blocks_html}"
         f"{tabs_html}"
         f"{sessions_tab_html}"
         f"{panorama_tab_html}"
@@ -1325,6 +1394,15 @@ def main():
         daily_chart_records = mr.expand_records_to_daily_deltas(
             raw_session_records
         ) + mr.expand_records_to_daily_deltas(raw_subagent_records)
+
+        # One clock reading for the whole render. Calling now() per
+        # surface could straddle midnight and put two panels in
+        # different days.
+        render_now = datetime.now().astimezone()
+        period_windows = {
+            period.id: mr.resolve_period(period.id, render_now)
+            for period in mr.PERIODS
+        }
         agent_label_cache = mr.load_agent_label_cache()
         # Real data has duplicate agent_id/session_id records (the metrics
         # log has no dedup). Deduping to one representative per key before
@@ -1428,7 +1506,7 @@ def main():
         project_first_seen = mr.compute_project_first_seen(all_time_records)
         project_last_seen = mr.compute_project_last_seen(all_time_records)
         open_projects = mr.get_open_projects()
-        html_output = render_html(records, subagents_by_session, chart_records, daily_chart_records, project_first_seen, project_last_seen, open_projects)
+        html_output = render_html(records, subagents_by_session, chart_records, daily_chart_records, period_windows, project_first_seen, project_last_seen, open_projects)
         output_path = os.path.expanduser("~/.claude/metrics/dashboard.html")
         with open(output_path, "w") as f:
             f.write(html_output)
