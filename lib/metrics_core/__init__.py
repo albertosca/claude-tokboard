@@ -2,6 +2,7 @@
 and TUI Claude Code metrics dashboards. Presentation code (dashboard_html.py,
 dashboard_tui.py) imports from this package instead of each other."""
 from .format import format_tokens, format_duration, format_date
+from .periods import PERIODS, DEFAULT_PERIOD_ID, Period, resolve_period
 from .records import (
     METRICS_FILE,
     SUBAGENTS_FILE,
