@@ -69,3 +69,40 @@ def test_filtering_does_not_mutate_the_input():
     snapshot = [dict(r) for r in records]
     mr.filter_sessions_by_window(records, YESTERDAY)
     assert records == snapshot
+
+
+# Boundary regression tests: the window's exclusive end is the design's sharp edge.
+# YESTERDAY is [2026-08-12 00:00, 2026-08-13 00:00) — these tests protect against
+# flipping start < window_end to start <= window_end in filter_sessions_by_window,
+# or <= to < in filter_deltas_by_window, changes that would pass every other test
+# in the suite but violate the period contract that Tasks 4 and 5 build on.
+
+
+def test_session_ending_exactly_at_window_start_is_included():
+    # Session span [2026-08-11 23:00, 2026-08-12 00:00) overlaps [2026-08-12 00:00, ...)
+    # because end=window_start, and the overlap test is start < window_end AND end >= window_start.
+    # The "end >= window_start" part catches this.
+    records = [session(stamp(2026, 8, 11, 23), stamp(2026, 8, 12, 0))]
+    assert mr.filter_sessions_by_window(records, YESTERDAY) == records
+
+
+def test_session_starting_exactly_at_window_end_is_excluded():
+    # Session span [2026-08-13 00:00, 2026-08-13 01:00) does NOT overlap
+    # [2026-08-12 00:00, 2026-08-13 00:00) — the overlap test is start < window_end,
+    # and 2026-08-13 00:00 is NOT less than window_end (2026-08-13 00:00).
+    records = [session(stamp(2026, 8, 13, 0), stamp(2026, 8, 13, 1))]
+    assert mr.filter_sessions_by_window(records, YESTERDAY) == []
+
+
+def test_delta_dated_exactly_at_window_start_is_included():
+    # Delta point test: window_start <= moment < window_end.
+    # moment=2026-08-12 00:00 satisfies 2026-08-12 00:00 <= 2026-08-12 00:00.
+    records = [delta(stamp(2026, 8, 12, 0))]
+    assert mr.filter_deltas_by_window(records, YESTERDAY) == records
+
+
+def test_delta_dated_exactly_at_window_end_is_excluded():
+    # Delta point test: window_start <= moment < window_end.
+    # moment=2026-08-13 00:00 does NOT satisfy moment < 2026-08-13 00:00.
+    records = [delta(stamp(2026, 8, 13, 0))]
+    assert mr.filter_deltas_by_window(records, YESTERDAY) == []
