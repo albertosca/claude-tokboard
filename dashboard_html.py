@@ -1420,7 +1420,7 @@ def main():
     parser.add_argument("--days", type=int, default=None, help="Only include sessions from the last N days")
     parser.add_argument(
         "--all", action="store_true",
-        help="Show the full history, bypassing the default 30-day active-project window",
+        help="Accepted for compatibility and now the default: the full history is shown unless --days is given",
     )
     args = parser.parse_args()
 
@@ -1439,23 +1439,16 @@ def main():
     records = mr.filter_records(records, tag=args.tag, project=args.project)
     all_time_records = records
 
-    if args.days is not None:
-        effective_days = args.days
-    elif args.all or not args.html:
-        # No explicit --days and no --all: only the --html dashboard
-        # defaults to a 30-day active-project window. Terminal-table mode
-        # keeps its original behavior (no default period) per this plan's
-        # "terminal mode stays behaviorally unchanged" constraint.
-        effective_days = None
-    else:
-        # No explicit --days and no --all, --html requested: default to a
-        # 60-day active-project window (2026-07-21: widened from 30 so the
-        # chart's per-day width - already 3x'd per earlier feedback -
-        # extends further into the past instead of mostly sitting on an
-        # unused floor width) rather than the entire history, so the
-        # everyday dashboard view stays focused on what's actually being
-        # worked on.
-        effective_days = 60
+    # The period is the single authority on time (2026-08-13). The --html
+    # dashboard used to also apply a default 60-day window here, on top of
+    # the period filtering, using filter_by_days - which keys on
+    # timestamp_start, the exact start-date rule this phase replaced with
+    # span overlap. It happened to drop zero records on today's data, but a
+    # cap that silently starts biting later is the same defect waiting: it
+    # would make "tudo" quietly mean "tudo, up to 60 days". --days stays as
+    # an explicit user override, and --all is still accepted (it now names
+    # what already happens by default) so existing invocations keep working.
+    effective_days = args.days
 
     # The chart always covers the full history (2026-07-21: "por que não
     # cobrir mais datas?") - only the session-list table is bounded by

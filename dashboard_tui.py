@@ -55,12 +55,17 @@ def load_data(args, mr=None, period_id=None):
     records = mr.filter_records(records, tag=args.tag, project=args.project)
     all_time_records = records
 
-    if args.days is not None:
-        effective_days = args.days
-    elif args.all:
-        effective_days = None
-    else:
-        effective_days = 30
+    # The period is the single authority on time (2026-08-13). This used to
+    # default to a 30-day window applied through filter_by_days BEFORE the
+    # period filter ran - and filter_by_days keys on timestamp_start, the
+    # exact start-date rule this phase replaced with span overlap. The
+    # result was a dashboard that lied: "tudo" showed 3644 of 4530 sessions,
+    # "mes" and "tudo" were byte-identical on four of five surfaces, and
+    # TrendChart disagreed with the rest of its own screen because
+    # daily_chart_records was captured before the cap. --days stays as an
+    # explicit user override, and --all is still accepted (it now names what
+    # already happens by default) so existing invocations keep working.
+    effective_days = args.days
 
     records = mr.filter_by_days(records, effective_days)
     chart_records = records
@@ -573,7 +578,7 @@ def build_arg_parser():
     # bound it anyway.
     parser.add_argument("-n", "--limit", type=int, default=None, help="Number of most recent sessions to show (unbounded by default)")
     parser.add_argument("--days", type=int, default=None, help="Only include sessions from the last N days")
-    parser.add_argument("--all", action="store_true", help="Show the full history, bypassing the default 30-day active-project window")
+    parser.add_argument("--all", action="store_true", help="Accepted for compatibility and now the default: the full history is shown unless --days is given")
     parser.add_argument(
         "--label-budget", type=int, default=0,
         help="Max NEW labels (real claude -p calls) to generate this run; already-cached labels are free and unlimited. Use 0 for none, a negative number for unlimited.",
