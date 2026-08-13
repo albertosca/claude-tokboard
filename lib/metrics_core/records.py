@@ -175,6 +175,58 @@ def filter_by_days(records, days):
     return filtered
 
 
+def _parse_moment(value):
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone()
+    except (ValueError, AttributeError, TypeError):
+        return None
+
+
+def filter_sessions_by_window(records, window):
+    # A session belongs to a period when its ACTIVE SPAN OVERLAPS the
+    # window, not when it started inside it. Alberto keeps sessions open
+    # for weeks - one running since 2026-07-20 was still logging on
+    # 08-10 - so a start-date test would empty the session list for
+    # "ontem" while the trend chart, which is built from per-snapshot
+    # deltas, correctly showed yesterday's work. Two surfaces, two
+    # answers about one period, which the design forbids.
+    #
+    # A record with no end (never seen in real data, but a hook killed
+    # mid-write could produce one) falls back to being a point at its
+    # start rather than being silently dropped.
+    if window is None:
+        return records
+    window_start, window_end = window
+    kept = []
+    for record in records:
+        start = _parse_moment(record.get("timestamp_start"))
+        if start is None:
+            continue
+        end = _parse_moment(record.get("timestamp_end")) or start
+        if start < window_end and end >= window_start:
+            kept.append(record)
+    return kept
+
+
+def filter_deltas_by_window(records, window):
+    # The counterpart for expand_records_to_daily_deltas' output, where
+    # each record is a single dated chunk of usage rather than a span -
+    # so a plain point-in-window test is the correct one. Note the field
+    # read here is timestamp_start, which for these records holds the
+    # snapshot's END time; see expand_records_to_daily_deltas.
+    if window is None:
+        return records
+    window_start, window_end = window
+    kept = []
+    for record in records:
+        moment = _parse_moment(record.get("timestamp_start"))
+        if moment is not None and window_start <= moment < window_end:
+            kept.append(record)
+    return kept
+
+
 def record_token_total(record):
     # Every token a record consumed, all four kinds. Cache dominates real
     # usage by orders of magnitude - measured 2026-08-10 against Claude

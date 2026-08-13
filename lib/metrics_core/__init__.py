@@ -14,6 +14,8 @@ from .records import (
     dedupe_subagents,
     filter_records,
     filter_by_days,
+    filter_sessions_by_window,
+    filter_deltas_by_window,
     record_token_total,
     compute_token_type_totals,
     expand_records_to_daily_deltas,
