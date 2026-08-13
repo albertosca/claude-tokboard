@@ -223,7 +223,7 @@ def render_detail_panel(session_id, subagents, is_active):
 
 
 
-def render_trend_chart(records, group_colors):
+def render_trend_chart(records, group_colors, period_id):
     granularity, days = mr.aggregate_by_day(records)
     parse_fmt = mr.GRANULARITY_CONFIG[granularity]["parse_fmt"]
     tick_fmt = mr.GRANULARITY_CONFIG[granularity]["tick_fmt"]
@@ -391,13 +391,19 @@ def render_trend_chart(records, group_colors):
     # only when 1 viewBox unit == 1 CSS pixel). .trend-scroll's
     # overflow-x:auto gives the "long axis" instead, by scrolling past
     # this fixed width rather than squishing/stretching it.
+    # Every id below is suffixed with period_id - render_trend_chart is
+    # now called once per period (see the trend_blocks loop in
+    # render_html), and a fixed id would repeat once per period,
+    # leaving getElementById always resolving to the FIRST period's
+    # element regardless of which one is actually visible. Duplicate ids
+    # are also invalid HTML on their own.
     pane_svg = (
-        f'<svg viewBox="0 0 {width} {height}" class="trend-svg" id="chart-pane" preserveAspectRatio="none" '
+        f'<svg viewBox="0 0 {width} {height}" class="trend-svg" id="chart-pane-{period_id}" preserveAspectRatio="none" '
         f'style="width:{width}px">'
         f"{highlight_html}{build_y_axis(max_pane)}{x_axis_html}{bars_for_pane()}</svg>"
     )
     tokens_svg = (
-        f'<svg viewBox="0 0 {width} {height}" class="trend-svg" id="chart-tokens" preserveAspectRatio="none" '
+        f'<svg viewBox="0 0 {width} {height}" class="trend-svg" id="chart-tokens-{period_id}" preserveAspectRatio="none" '
         f'style="width:{width}px">'
         f"{highlight_html}{build_y_axis(max_tokens)}{x_axis_html}{bars_for_tokens()}</svg>"
     )
@@ -468,10 +474,10 @@ def render_trend_chart(records, group_colors):
     return (
         '<div class="trend-container">'
         '<div class="trend-mode-tabs">'
-        '<span class="tab-btn active" id="trend-btn-pane" onclick="showTrendMode(\'pane\')">Por projeto</span>'
-        '<span class="tab-btn" id="trend-btn-tokens" onclick="showTrendMode(\'tokens\')">Por tipo de token</span>'
+        f'<span class="tab-btn active" id="trend-btn-pane-{period_id}" onclick="showTrendMode(\'pane\', \'{period_id}\')">Por projeto</span>'
+        f'<span class="tab-btn" id="trend-btn-tokens-{period_id}" onclick="showTrendMode(\'tokens\', \'{period_id}\')">Por tipo de token</span>'
         "</div>"
-        '<div class="trend-pane active" id="trend-pane-pane">'
+        f'<div class="trend-pane active" id="trend-pane-pane-{period_id}">'
         f'<div class="trend-scroll" data-floor-hit="{str(scrollable).lower()}">{pane_svg}</div>'
         # Fixed-height, internally-scrollable slot (2026-07-21) - "por
         # projeto" can have many legend chips wrapping to several lines
@@ -481,7 +487,7 @@ def render_trend_chart(records, group_colors):
         # ("pulando") every time you switched.
         f'<div class="trend-legend-slot">{pane_legend_html}</div>'
         "</div>"
-        '<div class="trend-pane" id="trend-pane-tokens">'
+        f'<div class="trend-pane" id="trend-pane-tokens-{period_id}">'
         f'<div class="trend-scroll" data-floor-hit="{str(scrollable).lower()}">{tokens_svg}</div>'
         '<div class="trend-legend-slot"></div>'
         "</div>"
@@ -502,7 +508,7 @@ def compute_project_series_totals(records):
     return per_project, grand_totals
 
 
-def render_project_totals_chart(records, project_first_seen, project_last_seen, open_projects):
+def render_project_totals_chart(records, project_first_seen, project_last_seen, open_projects, period_id):
     ordered_projects, _totals, _max_total = mr.compute_project_totals(records, project_last_seen)
     # Segmented by token type (2026-07-20) instead of one flat bar, so the
     # composition legend can highlight/filter these bars the same way it
@@ -595,12 +601,15 @@ def render_project_totals_chart(records, project_first_seen, project_last_seen, 
     more_html = ""
     if hidden_projects:
         hidden_rows, hidden_height = render_rows(hidden_projects)
+        # Suffixed with period_id for the same reason as render_trend_chart's
+        # ids above - this function is now called once per period too.
         hidden_svg = (
             f'<svg viewBox="0 0 {width} {hidden_height}" class="project-chart-svg" '
-            f'id="project-chart-more" style="display:none">{"".join(hidden_rows)}</svg>'
+            f'id="project-chart-more-{period_id}" style="display:none">{"".join(hidden_rows)}</svg>'
         )
         more_html = (
-            f'<div class="project-chart-toggle" id="project-chart-toggle" onclick="toggleProjectsMore()">'
+            f'<div class="project-chart-toggle" id="project-chart-toggle-{period_id}" '
+            f'onclick="toggleProjectsMore(\'{period_id}\')">'
             f"+ {len(hidden_projects)} projetos históricos</div>"
             f"{hidden_svg}"
         )
@@ -723,21 +732,48 @@ def render_html(records, subagents_by_session, chart_records, daily_chart_record
             )
             panels_html.append(render_detail_panel(session_id, session_subagents, False))
 
-    period_blocks = []
+    # Two INDEPENDENT sets of period blocks, not one combined set - ruling
+    # from fix-round-1 review. The trend chart stays at its original
+    # always-visible sticky spot and the Panorama chart stays inside its
+    # own tab pane, exactly as they were laid out before this phase; only
+    # each one's own content is now scoped per period and swapped by
+    # `hidden`. That is 10 `.period-block` elements total (5 + 5), not 5 -
+    # a two-panel layout restructure is explicitly a later phase, and
+    # merging the two here would have been exactly that restructure,
+    # smuggled into a filtering task. Both sets carry the same
+    # `data-period` values and the same `.period-block` class, so
+    # selectPeriod()'s single querySelectorAll('.period-block') toggles
+    # both sets together - the surfaces still cannot disagree about the
+    # period.
+    trend_blocks = []
+    panorama_blocks = []
     for period in mr.PERIODS:
         window = period_windows[period.id]
         scoped_chart = mr.filter_sessions_by_window(chart_records, window)
         scoped_daily = mr.filter_deltas_by_window(daily_chart_records, window)
-        hidden = "" if period.id == mr.DEFAULT_PERIOD_ID else " hidden"
-        period_blocks.append(
-            f'<div class="period-block{hidden}" data-period="{period.id}">'
-            + render_trend_chart(scoped_daily, group_colors)
+        # A real boolean HTML attribute, not a class token - `hidden` has
+        # to sit outside `class="..."` or neither the .period-block[hidden]
+        # CSS rule nor the DOM's own `.hidden` IDL property (which
+        # selectPeriod's JS reads/writes) ever sees it, and every period's
+        # chart stays stacked visible on first load instead of only
+        # "tudo" (caught by executing this markup in jsdom, not by reading
+        # it - the earlier `class="period-block hidden"` form parses fine
+        # as HTML, it just isn't the `hidden` attribute).
+        hidden_attr = "" if period.id == mr.DEFAULT_PERIOD_ID else " hidden"
+        trend_blocks.append(
+            f'<div class="period-block" data-period="{period.id}"{hidden_attr}>'
+            + render_trend_chart(scoped_daily, group_colors, period.id)
+            + "</div>"
+        )
+        panorama_blocks.append(
+            f'<div class="period-block" data-period="{period.id}"{hidden_attr}>'
             + render_project_totals_chart(
-                scoped_chart, project_first_seen, project_last_seen, open_projects
+                scoped_chart, project_first_seen, project_last_seen, open_projects, period.id
             )
             + "</div>"
         )
-    period_blocks_html = "".join(period_blocks)
+    trend_blocks_html = "".join(trend_blocks)
+    panorama_blocks_html = "".join(panorama_blocks)
 
     style = """
     <style>
@@ -1176,17 +1212,20 @@ def render_html(records, subagents_by_session, chart_records, daily_chart_record
       if (pane) { pane.classList.add('active'); }
       if (btn) { btn.classList.add('active'); }
     }
-    function showTrendMode(name) {
+    function showTrendMode(name, periodId) {
       document.querySelectorAll('.trend-pane').forEach(function(el) { el.classList.remove('active'); });
       document.querySelectorAll('.trend-mode-tabs .tab-btn').forEach(function(el) { el.classList.remove('active'); });
-      var pane = document.getElementById('trend-pane-' + name);
-      var btn = document.getElementById('trend-btn-' + name);
+      // ids are suffixed with periodId (render_trend_chart runs once per
+      // period) so this always resolves the pane/button belonging to the
+      // chart that was actually clicked, not just the first period's.
+      var pane = document.getElementById('trend-pane-' + name + '-' + periodId);
+      var btn = document.getElementById('trend-btn-' + name + '-' + periodId);
       if (pane) { pane.classList.add('active'); }
       if (btn) { btn.classList.add('active'); }
     }
-    function toggleProjectsMore() {
-      var svg = document.getElementById('project-chart-more');
-      var toggle = document.getElementById('project-chart-toggle');
+    function toggleProjectsMore(periodId) {
+      var svg = document.getElementById('project-chart-more-' + periodId);
+      var toggle = document.getElementById('project-chart-toggle-' + periodId);
       if (!svg) { return; }
       var hidden = svg.style.display === 'none';
       svg.style.display = hidden ? 'block' : 'none';
@@ -1286,15 +1325,11 @@ def render_html(records, subagents_by_session, chart_records, daily_chart_record
         "</div>"
         "</div>"
     )
-    # Panorama's own chart used to live only here, gated behind this tab.
-    # It is now part of period_blocks_html (see above), always visible in
-    # the sticky area regardless of which tab is active - inserting it a
-    # second time here would duplicate every period's markup (and the
-    # ids inside render_trend_chart/render_project_totals_chart aren't
-    # unique per period, so a second copy would collide with the first).
-    # The pane is kept, empty, so the "Panorama" tab button still exists
-    # and toggles without a restructure of the tab bar itself.
-    panorama_tab_html = '<div class="tab-pane" id="tab-panorama"></div>'
+    panorama_tab_html = (
+        '<div class="tab-pane" id="tab-panorama">'
+        f"{panorama_blocks_html}"
+        "</div>"
+    )
     # Opens with every token type AND every project color already
     # selected (2026-07-21: "tanto lá quanto na legenda... precisa
     # começar com todos selecionados") - the dashboard shows everything
@@ -1311,7 +1346,7 @@ def render_html(records, subagents_by_session, chart_records, daily_chart_record
         f"<title>Claude Code Metrics Dashboard</title>{style}</head>"
         f'<body data-highlight="{default_highlight}">'
         f"{render_period_filter()}"
-        f"{period_blocks_html}"
+        f"{trend_blocks_html}"
         f"{tabs_html}"
         f"{sessions_tab_html}"
         f"{panorama_tab_html}"
