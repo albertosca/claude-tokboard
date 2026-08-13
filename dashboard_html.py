@@ -1352,8 +1352,18 @@ def render_html(records, subagents_by_session, chart_records, daily_chart_record
         var belongs = el.dataset.periods.split(' ').indexOf(periodId) !== -1;
         el.classList.toggle('period-hidden', !belongs);
       });
+      scrollTrendToNewest(periodId);
     }
-    document.querySelectorAll('.trend-scroll').forEach(function(el) { el.scrollLeft = el.scrollWidth; });
+    // A trend block that is `hidden` has scrollWidth 0, so scrolling it is a
+    // no-op - which is why doing this once at parse time left every
+    // non-default period opening on its OLDEST data. It has to run again
+    // once the newly-selected block is actually visible.
+    function scrollTrendToNewest(periodId) {
+      document.querySelectorAll('.period-block[data-period="' + periodId + '"] .trend-scroll')
+        .forEach(function (el) { el.scrollLeft = el.scrollWidth; });
+    }
+    var initialChip = document.querySelector('.period-chip.active');
+    if (initialChip) { scrollTrendToNewest(initialChip.dataset.period); }
     // Clicking outside any legend chip / chart bar clears the selection
     // back to the page's original default (everything highlighted,
     // 2026-07-22 - "clicar fora dele deve tirar a seleção e voltar pro
