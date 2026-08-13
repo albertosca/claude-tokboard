@@ -600,7 +600,11 @@ class MetricsTUIApp(App):
         ("p", "cycle_period", "período"),
     ]
 
-    def __init__(self, mr, data, args=None, **kwargs):
+    # `args` is required, not an args=None default (2026-08-13): the app
+    # hands it straight to load_data on every period cycle, so a None here
+    # does not fail at construction - it raises AttributeError deep inside
+    # load_data the first time someone presses "p".
+    def __init__(self, mr, data, args, **kwargs):
         super().__init__(**kwargs)
         self.mr = mr
         self.data = data
