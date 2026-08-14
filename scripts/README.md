@@ -121,3 +121,26 @@ To refuse that trap, the probe:
    and "on screen with 0px overlap" are different findings and the
    probe never conflates them -- an element that isn't on screen fails
    loudly instead of silently reporting zero.
+
+## verify-detectors.py
+
+Re-proves that `tests/` actually catches the two Criticals it was built for, instead of leaving that proof sitting in a session transcript that eventually rots. Both defects shipped past five reviews because every check that existed asserted the markup *contained* an attribute, which is true whether the thing the attribute controls works or not:
+
+1. **The inert row filter.** `.session-row.period-hidden { display: none }` had no `!important`, and `toggleGroup` used to write an inline `style.display` on expand -- an inline declaration beats any non-`!important` class rule regardless of specificity, so no period ever actually hid an expanded row. Under `ontem` the chart showed 11 sessions while the list below it showed all 4530.
+2. **The unscoped totals.** `render_composition_legend` used to be fed the full, unfiltered `records` instead of the period-scoped window, so it reported the same all-time token figure under every period -- 29.3B where `ontem` was actually 5.9B.
+
+For each defect the script backs up `dashboard_html.py`, applies an anchored patch that reproduces that exact shape, runs the full suite, records whether it went red and which test caught it, then restores the file and verifies the restore two independent ways (a sha256 comparison against the pre-patch backup, and `git diff --exit-code`). It never uses `git checkout --` to restore -- on a file that is modified but not yet committed, that command is destructive, not a restore, and it has already destroyed real work in this project twice.
+
+Like `layout-probe.js`, this is not wired into `pytest` -- it shells out to a full `pytest tests/` run of its own, twice, and mutates `dashboard_html.py` on disk (temporarily) to do it, which is not something a test in the suite itself should ever do.
+
+### When to run it
+
+Any time you touch how the period filter hides things: the `.period-hidden` CSS rule, `toggleGroup`, `selectPeriod`, or which `records` a `render_*` call is scoped from. A change here can silently turn one of these two Criticals back into a defect the suite would no longer catch, and nothing else checks that.
+
+### How to run it
+
+```
+PYTHONPATH=lib:tests python3 scripts/verify-detectors.py
+```
+
+Exits 0 only if both defects are reported `DETECTED`, naming the test(s) that caught them, and `dashboard_html.py` came back byte-identical. Exits non-zero if either defect goes undetected, if a patch's anchor doesn't match dashboard_html.py's current text (refused loudly rather than silently applying to nothing, which would misreport a defect as undetectable when it was never actually injected), or if the restore doesn't verify clean -- any of those is a hole in the suite's teeth, or in this script, and neither is something to shrug off.
