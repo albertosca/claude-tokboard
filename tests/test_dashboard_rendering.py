@@ -4,12 +4,21 @@ that asserted the markup CONTAINED an attribute - which is true whether
 the filter works or does nothing at all."""
 import json
 import os
+import re
 import subprocess
+from datetime import datetime
 
 import metrics_core as mr
 from js_runtime import require_node_with_jsdom
 
 HERE = os.path.dirname(__file__)
+
+# A ratchet, not a guess: the harness currently makes exactly this many
+# assertions, and the Python side has no other way to notice a section
+# quietly shrinking to nothing. Raise it when you add assertions; lowering
+# it means you removed coverage, which is a thing to say out loud in the
+# commit message rather than to absorb silently.
+MIN_ASSERTIONS = 173
 
 
 def _fixture_records(home):
@@ -18,22 +27,51 @@ def _fixture_records(home):
         return [json.loads(line) for line in f if line.strip()]
 
 
+def _trend_chip(project_path):
+    # Mirrors the trend legend's own labelling rule: a worktree collapses
+    # into its parent, and the chip reads "<basename>" unless the display
+    # label disagrees with it, in which case it reads "<basename>:<label>".
+    parent = mr.color_group_key(project_path)
+    raw_name = os.path.basename((parent or "").rstrip("/")) or "sem projeto"
+    label = mr.project_display_label(parent)
+    return raw_name if raw_name == label else f"{raw_name}:{label}"
+
+
 def _expectations(dashboard_page):
-    # The legend's four chips are derived the same way the session ids are:
-    # from metrics_core, over the records the fixture wrote, scoped by the
-    # session ids metrics_core itself decided belong to the period. No part
-    # of the rendering layer gets a say in what the right answer is.
+    # Every expected value below comes from metrics_core, over the records
+    # the fixture wrote, scoped by the session ids metrics_core itself
+    # decided belong to the period. No part of the rendering layer gets a
+    # say in what the right answer is.
     records = _fixture_records(dashboard_page.home)
+    # The trend chart is the one surface fed per-DAY deltas rather than
+    # whole sessions - a delta is judged by its own date, so its scoping
+    # cannot be derived from the session ids and needs the real window.
+    # This is a second reading of the clock; the fixture deliberately sits
+    # hours away from every window edge so that is safe.
+    now = datetime.now().astimezone()
+    deltas = mr.expand_records_to_daily_deltas(records)
     periods = {}
     for period, data in dashboard_page.expected.items():
         scoped = [r for r in records if r["session_id"] in data["session_ids"]]
         totals = mr.compute_token_type_totals(scoped)
+        scoped_deltas = mr.filter_deltas_by_window(deltas, mr.resolve_period(period, now))
         periods[period] = {
             "session_ids": sorted(data["session_ids"]),
             "token_total": data["token_total"],
             "legend": {series: mr.format_tokens(value) for series, value in totals.items()},
+            "trend_projects": sorted({_trend_chip(d.get("project_path")) for d in scoped_deltas}),
+            # Panorama is fed whole sessions, so the period's own session
+            # ids are all it takes. Projects with no tokens at all are
+            # dropped by the chart; the fixture has none.
+            "panorama_projects": sorted(
+                {mr.project_display_label(r.get("project_path")) for r in scoped}
+            ),
         }
-    return {"periods": periods, "default_period": mr.DEFAULT_PERIOD_ID}
+    return {
+        "periods": periods,
+        "default_period": mr.DEFAULT_PERIOD_ID,
+        "session_tokens": {r["session_id"]: mr.record_token_total(r) for r in records},
+    }
 
 
 def _drive(dashboard_page, node):
@@ -66,3 +104,12 @@ def test_the_harness_reports_which_periods_it_checked(dashboard_page):
     for period in ("ontem", "desde-segunda", "15-dias", "mes", "tudo"):
         assert period in result.stdout, f"harness never reported on {period}: {result.stdout}"
     assert "assertions" in result.stdout.lower()
+    # Naming the periods is not enough on its own: several sections derive
+    # how much they check from the fixture and guard it with an `if`, so a
+    # fixture change could delete assertions without deleting any output.
+    total = re.search(r"^TOTAL: (\d+) assertions", result.stdout, re.MULTILINE)
+    assert total, f"harness printed no TOTAL line: {result.stdout}"
+    assert int(total.group(1)) >= MIN_ASSERTIONS, (
+        f"the harness made {total.group(1)} assertions, down from {MIN_ASSERTIONS} - "
+        f"coverage was removed, not added\n{result.stdout}"
+    )
