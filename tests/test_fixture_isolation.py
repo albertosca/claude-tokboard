@@ -6,9 +6,22 @@ import json
 import os
 
 
+FIXTURE_SESSION_IDS = {
+    "long-1", "yest-1", "today-a", "today-b", "days4-1", "week-1", "days21-1", "old-1",
+}
+
+# Full paths, not bare names: the page prints the path in each group
+# header's title attribute, and a bare "beta" would also match the word
+# inside any unrelated prose the page happens to carry.
+FIXTURE_PROJECTS = (
+    "/projects/alpha", "/projects/beta", "/projects/gamma", "/projects/delta",
+    "/projects/epsilon", "/projects/zeta", "/projects/eta",
+)
+
+
 def test_dashboard_is_generated_from_the_fixture(dashboard_page):
     html = open(dashboard_page.html_path, encoding="utf-8").read()
-    for project in ("alpha", "beta", "gamma"):
+    for project in FIXTURE_PROJECTS:
         assert project in html, f"fixture project {project!r} missing from the page"
 
 
@@ -28,14 +41,47 @@ def test_output_landed_inside_the_temporary_home(dashboard_page):
 def test_fixture_records_are_where_the_builder_says(dashboard_page):
     path = os.path.join(dashboard_page.home, ".claude/metrics/sessions.jsonl")
     ids = {json.loads(line)["session_id"] for line in open(path) if line.strip()}
-    assert ids == {"long-1", "yest-1", "old-1", "week-1"}
+    assert ids == FIXTURE_SESSION_IDS
 
 
 def test_expected_periods_are_nested_as_the_windows_are(dashboard_page):
     exp = dashboard_page.expected
-    # ontem is the narrowest, tudo the widest, and each contains the last.
-    for narrow, wide in (("ontem", "desde-segunda"), ("desde-segunda", "15-dias"), ("15-dias", "mes"), ("mes", "tudo")):
+    # Containment, in window order - but "ontem" is deliberately NOT
+    # compared against "desde-segunda". desde-segunda is calendar-anchored,
+    # so on a MONDAY its window is today alone while ontem is Sunday: two
+    # DISJOINT windows. Asserting ontem <= desde-segunda was false by
+    # definition one day in seven, and no fixture could have fixed it.
+    # ontem's real container is 15-dias, which always reaches back
+    # fourteen days whatever the weekday.
+    for narrow, wide in (("ontem", "15-dias"), ("desde-segunda", "15-dias"), ("15-dias", "mes"), ("mes", "tudo")):
         assert exp[narrow]["session_ids"] <= exp[wide]["session_ids"], f"{narrow} not contained in {wide}"
-    assert exp["tudo"]["session_ids"] == {"long-1", "yest-1", "old-1", "week-1"}
+    assert exp["tudo"]["session_ids"] == FIXTURE_SESSION_IDS
     assert "old-1" not in exp["mes"]["session_ids"]
     assert "long-1" in exp["ontem"]["session_ids"], "the span-overlap case must survive into ontem"
+
+
+def test_every_period_holds_a_different_set_of_sessions(dashboard_page):
+    """The harness loops over five periods; the fixture has to be able to
+    tell them apart, or twelve of those fifteen readings are decoration. It
+    used to hold three distinguishable outcomes for five periods, and two
+    window-widening injections walked straight through the suite.
+
+    This only proves it for the weekday the suite happens to run on. The
+    per-weekday proof is in the fix report (every weekday simulated by
+    forcing periods.resolve_period's now.weekday() term)."""
+    exp = dashboard_page.expected
+    by_period = {p: frozenset(exp[p]["session_ids"]) for p in
+                 ("ontem", "desde-segunda", "15-dias", "mes", "tudo")}
+    for period, ids in by_period.items():
+        assert ids, (
+            f"{period} holds no session at all - every non-vacuity guard in the "
+            "harness is unsatisfiable under it"
+        )
+    seen = {}
+    for period, ids in by_period.items():
+        clash = seen.get(ids)
+        assert clash is None, (
+            f"{period} and {clash} hold the identical set {sorted(ids)} - a window "
+            "widened from one to the other would go undetected"
+        )
+        seen[ids] = period
