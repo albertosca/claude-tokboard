@@ -52,8 +52,15 @@ def _expectations(dashboard_page):
     # The trend chart is the one surface fed per-DAY deltas rather than
     # whole sessions - a delta is judged by its own date, so its scoping
     # cannot be derived from the session ids and needs the real window.
-    # This is a second reading of the clock; the fixture deliberately sits
-    # hours away from every window edge so that is safe.
+    # This is a second reading of the clock. The fixture records (today-a
+    # and today-b) sit at fractions of today - not hours from edges, but
+    # seconds after midnight. The exposure is a race condition between this
+    # read and the fixture's timestamps across a midnight boundary. On
+    # Mondays, the worst case is a roughly 90-second window at the very
+    # start of the day where the trend chart could be empty; this is
+    # documented in build_fixture.py's _today_at docstring. A third clock
+    # read is unavoidable (the dashboard subprocess reads its own), so the
+    # second one here is acceptable as long as that window is known.
     now = datetime.now().astimezone()
     deltas = mr.expand_records_to_daily_deltas(records)
     periods = {}
