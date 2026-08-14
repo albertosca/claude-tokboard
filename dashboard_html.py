@@ -824,12 +824,12 @@ def render_html(records, subagents_by_session, chart_records, daily_chart_record
         --text-secondary: #52514e;
         --text-muted: #898781;
         --border: #e1e0d9;
-        /* Pinned height for the sticky period filter, so .trend-container -
-           which is sticky at top: 0 too - can offset itself by exactly the
-           bar's height instead of being covered by it on scroll. Defined
-           once and consumed by both rules, so the two cannot drift apart.
-           The dark @media block below only overrides colours, so this stays
-           in effect in both themes. */
+        /* Pinned height for the sticky period filter, so the trend chart's
+           own sticky wrapper (body > .period-block, see below) can offset
+           itself by exactly the bar's height instead of being covered by it
+           on scroll. Defined once and consumed by both rules, so the two
+           cannot drift apart. The dark @media block below only overrides
+           colours, so this stays in effect in both themes. */
         --period-filter-height: 44px;
         --series-1: #2a78d6;
         --series-2: #1baf7a;
@@ -911,7 +911,18 @@ def render_html(records, subagents_by_session, chart_records, daily_chart_record
           --group-none: #898781; --group-none-tint: transparent;
         }
       }
-      .trend-container { padding: 12px 16px; border-bottom: 1px solid var(--border); position: sticky; top: var(--period-filter-height); z-index: 5; background: var(--surface-1); }
+      .trend-container { padding: 12px 16px; border-bottom: 1px solid var(--border); background: var(--surface-1); }
+      /* The sticky offset lives on the WRAPPER, not on .trend-container
+         itself (2026-08-13 fix). .trend-container's sticky containing block
+         used to be its own `.period-block` wrapper, and that wrapper is
+         exactly the container's own height - zero sticky travel, so `top`
+         was declared but never had anywhere to go and the bar never stuck.
+         `body > .period-block` selects only the trend period-blocks: they
+         are the one set of the three `.period-block` groups (trend,
+         Panorama, composition legend - see render_html) rendered as direct
+         children of <body>; the other two sit inside the tab panes. That
+         makes the selector do the scoping instead of a new class. */
+      body > .period-block { position: sticky; top: var(--period-filter-height); z-index: 5; }
       .trend-mode-tabs { display: flex; gap: 4px; margin-bottom: 8px; }
       .trend-pane { display: none; }
       .trend-pane.active { display: block; }
