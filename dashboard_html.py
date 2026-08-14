@@ -191,8 +191,8 @@ def render_session_header(show_tmux=True):
     )
 
 
-def render_detail_panel(session_id, subagents, is_active):
-    display = "block" if is_active else "none"
+def render_detail_panel(session_id, subagents, is_active, period_ids=("tudo",)):
+    open_class = " open" if is_active else ""
     title = ""
     subagents = [
         s for s in subagents
@@ -241,8 +241,19 @@ def render_detail_panel(session_id, subagents, is_active):
                 "</div>"
             )
         body = "\n".join(rows)
+    # Period-aware like the row it belongs to (2026-08-13): carries the same
+    # data-periods attribute as the session row, swept by the same
+    # selectPeriod() loop, so a panel left open for a session that falls
+    # outside the newly-selected period disappears with its row instead of
+    # floating on screen describing a session nobody can see anymore.
+    # Open/closed state moved from an inline style to the "open" class
+    # (previously the only visibility mechanism here, always inert to
+    # class rules) specifically so it can compose with .period-hidden
+    # instead of an inline style unconditionally beating it - the exact
+    # inline-vs-class fight render_session_row was fixed to avoid.
     return (
-        f'<div class="detail-panel" id="detail-{session_id}" style="display:{display}">'
+        f'<div class="detail-panel{open_class}" id="detail-{session_id}" '
+        f'data-periods="{" ".join(period_ids)}">'
         f'<button class="detail-close" onclick="closeDetail(\'{session_id}\')" aria-label="Fechar">×</button>'
         f"<h3>{session_id}</h3>{title}{body}</div>"
     )
@@ -757,7 +768,9 @@ def render_html(records, subagents_by_session, chart_records, daily_chart_record
                     show_tmux=has_tmux_data, period_ids=periods_for(record),
                 )
             )
-            panels_html.append(render_detail_panel(session_id, session_subagents, False))
+            panels_html.append(
+                render_detail_panel(session_id, session_subagents, False, period_ids=periods_for(record))
+            )
 
     # Two INDEPENDENT sets of period blocks, not one combined set - ruling
     # from fix-round-1 review. The trend chart stays at its original
@@ -1221,7 +1234,12 @@ def render_html(records, subagents_by_session, chart_records, daily_chart_record
       .group-header.group-color-none { border-left: 3px solid var(--group-none); }
       .group-icon { width: 10px; display: inline-block; }
       .detail-container { flex: 1; }
-      .detail-panel { padding: 16px; font-family: monospace; }
+      .detail-panel { display: none; padding: 16px; font-family: monospace; }
+      .detail-panel.open { display: block; }
+      /* Higher specificity (3 classes) than .detail-panel.open (2 classes)
+         wins on its own, no !important needed - an open panel whose
+         session just left the active period still disappears. */
+      .detail-panel.open.period-hidden { display: none; }
       .detail-close { float: right; background: none; border: none; font-size: 18px; cursor: pointer; color: var(--text-muted); line-height: 1; padding: 0; }
       .detail-close:hover { color: var(--text-primary); }
       .subagent-row { display: grid; grid-template-columns: 0.6fr minmax(200px, 1.6fr) 0.9fr 0.6fr 0.7fr; padding: 4px 8px; border-bottom: 1px solid var(--border); }
@@ -1253,15 +1271,15 @@ def render_html(records, subagents_by_session, chart_records, daily_chart_record
         var header = document.getElementById('group-' + groupId);
         if (header && header.classList.contains('collapsed')) { toggleGroup(parseInt(groupId, 10)); }
       }
-      document.querySelectorAll('.detail-panel').forEach(function(el) { el.style.display = 'none'; });
+      document.querySelectorAll('.detail-panel').forEach(function(el) { el.classList.remove('open'); });
       document.querySelectorAll('.session-row').forEach(function(el) { el.classList.remove('active'); });
       var panel = document.getElementById('detail-' + id);
-      if (panel) { panel.style.display = 'block'; }
+      if (panel) { panel.classList.add('open'); }
       if (row) { row.classList.add('active'); }
     }
     function closeDetail(id) {
       var panel = document.getElementById('detail-' + id);
-      if (panel) { panel.style.display = 'none'; }
+      if (panel) { panel.classList.remove('open'); }
       var row = document.getElementById('row-' + id);
       if (row) { row.classList.remove('active'); }
     }
@@ -1359,7 +1377,17 @@ def render_html(records, subagents_by_session, chart_records, daily_chart_record
       // same attribute and the same class: a header whose every session
       // falls outside the period disappears with its rows, instead of
       // sitting there announcing a count for sessions nobody can see.
-      document.querySelectorAll('.session-row[data-periods], .group-header[data-periods]').forEach(function (el) {
+      // Detail panels swept alongside rows and headers (2026-08-13) - a
+      // panel left open for a session outside the newly-selected period
+      // must disappear with its row rather than staying on screen for a
+      // row nobody can see anymore. Its `open` class (showSession /
+      // closeDetail) is untouched here on purpose: switching back to a
+      // period that includes the session should find the panel exactly
+      // as it was left, the same way the row's own `active` class is
+      // never touched by this loop either.
+      document.querySelectorAll(
+        '.session-row[data-periods], .group-header[data-periods], .detail-panel[data-periods]'
+      ).forEach(function (el) {
         var belongs = el.dataset.periods.split(' ').indexOf(periodId) !== -1;
         el.classList.toggle('period-hidden', !belongs);
       });
