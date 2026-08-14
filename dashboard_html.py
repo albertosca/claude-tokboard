@@ -772,19 +772,29 @@ def render_html(records, subagents_by_session, chart_records, daily_chart_record
                 render_detail_panel(session_id, session_subagents, False, period_ids=periods_for(record))
             )
 
-    # Two INDEPENDENT sets of period blocks, not one combined set - ruling
-    # from fix-round-1 review. The trend chart stays at its original
+    # INDEPENDENT sets of period blocks, not one combined set - ruling from
+    # fix-round-1 review. The trend chart stays at its original
     # always-visible sticky spot and the Panorama chart stays inside its
     # own tab pane, exactly as they were laid out before this phase; only
     # each one's own content is now scoped per period and swapped by
-    # `hidden`. That is 10 `.period-block` elements total (5 + 5), not 5 -
-    # a two-panel layout restructure is explicitly a later phase, and
-    # merging the two here would have been exactly that restructure,
-    # smuggled into a filtering task. Both sets carry the same
-    # `data-period` values and the same `.period-block` class, so
-    # selectPeriod()'s single querySelectorAll('.period-block') toggles
-    # both sets together - the surfaces still cannot disagree about the
-    # period.
+    # `hidden`. Merging them would have been a two-panel layout
+    # restructure, which is explicitly a later phase, smuggled into a
+    # filtering task.
+    #
+    # There are THREE such div sets now - the composition legend below
+    # became the third - and each group header additionally carries one
+    # `group-count period-block` span per period. So the page holds
+    # 3 x 5 = 15 `.period-block` divs, plus one span per group per period:
+    # measured on the test fixture's own generated page (2026-08-14), 15
+    # divs and 35 spans over 7 groups. This comment used to read "10
+    # `.period-block` elements total (5 + 5), not 5" - true when written,
+    # wrong through both changes since and never updated, so trust the
+    # shape stated here over any count you remember.
+    #
+    # Every set carries the same `data-period` values and the same
+    # `.period-block` class, so selectPeriod()'s single
+    # querySelectorAll('.period-block') toggles all of them together - the
+    # surfaces still cannot disagree about the period.
     trend_blocks = []
     panorama_blocks = []
     # The composition legend is the Sessions tab's own total. It used to be
