@@ -18,7 +18,13 @@ HERE = os.path.dirname(__file__)
 # quietly shrinking to nothing. Raise it when you add assertions; lowering
 # it means you removed coverage, which is a thing to say out loud in the
 # commit message rather than to absorb silently.
-MIN_ASSERTIONS = 173
+#
+# Read off the harness's own TOTAL line, never guessed from the diff:
+# 173 -> 188 when the two charts gained a magnitude check each (2026-08-14).
+# The four fixture records added the same day moved it by nothing at all -
+# every section's count is structural, not per-record - which is exactly
+# why this has to be measured rather than reasoned about.
+MIN_ASSERTIONS = 188
 
 
 def _fixture_records(home):
@@ -55,17 +61,30 @@ def _expectations(dashboard_page):
         scoped = [r for r in records if r["session_id"] in data["session_ids"]]
         totals = mr.compute_token_type_totals(scoped)
         scoped_deltas = mr.filter_deltas_by_window(deltas, mr.resolve_period(period, now))
+        # A set of project names catches a chart fed the UNFILTERED records,
+        # and misses a chart fed the WRONG WINDOW whenever the two windows
+        # happen to hold the same projects. The two figures below are what
+        # give the charts the teeth the composition legend and the group
+        # headers already had: a magnitude, not just a name.
+        panorama_totals = {}
+        for record in scoped:
+            label = mr.project_display_label(record.get("project_path"))
+            panorama_totals[label] = panorama_totals.get(label, 0) + mr.record_token_total(record)
         periods[period] = {
             "session_ids": sorted(data["session_ids"]),
             "token_total": data["token_total"],
             "legend": {series: mr.format_tokens(value) for series, value in totals.items()},
             "trend_projects": sorted({_trend_chip(d.get("project_path")) for d in scoped_deltas}),
+            # Every bar segment the trend chart draws carries its own value
+            # in a <title>; they add up to exactly the tokens in the window.
+            "trend_tokens": sum(mr.record_token_total(d) for d in scoped_deltas),
             # Panorama is fed whole sessions, so the period's own session
             # ids are all it takes. Projects with no tokens at all are
             # dropped by the chart; the fixture has none.
             "panorama_projects": sorted(
                 {mr.project_display_label(r.get("project_path")) for r in scoped}
             ),
+            "panorama_totals": panorama_totals,
         }
     return {
         "periods": periods,

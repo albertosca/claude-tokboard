@@ -109,6 +109,62 @@ function parseFormatted(text) {
   return { value: parseFloat(match[1]) * unit, tolerance: match[2] ? unit * 0.05 : 0 };
 }
 
+// Adds up every value the trend chart's own bar tooltips print for a
+// period ("<project> · <bucket> - <formatted> tokens"), so the chart is
+// asked for a NUMBER and not only for a set of project names. A name set
+// cannot tell a chart scoped to the right window from one scoped to a
+// wrong window that happens to contain the same projects; the token volume
+// can. Returns null when a title fails to parse, so an unreadable chart
+// reads as a failure rather than as a zero that might coincidentally match.
+function trendTokensDrawn(periodId) {
+  const pane = document.getElementById("chart-pane-" + periodId);
+  if (!pane) return { value: 0, tolerance: 0, segments: 0 };
+  const titles = Array.from(pane.querySelectorAll(".chart-bar title"));
+  let value = 0;
+  let tolerance = 0;
+  for (const title of titles) {
+    const match = / - (\S+) tokens$/.exec(title.textContent.trim());
+    const parsed = match && parseFormatted(match[1]);
+    if (!parsed) return null;
+    value += parsed.value;
+    tolerance += parsed.tolerance;
+  }
+  return { value, tolerance, segments: titles.length };
+}
+
+// Panorama's rows are <text> label, then the bar, then a <text> carrying
+// the printed grand total - so the visible labels and the visible totals
+// pair up positionally, in document order. The total's text is
+// "<formatted>[ · há N dias]"; only the leading figure is the number.
+function panoramaTotalsDrawn() {
+  const labels = Array.from(document.querySelectorAll(".project-chart-label")).filter(isVisible);
+  const totals = Array.from(document.querySelectorAll(".total-grand")).filter(isVisible);
+  if (labels.length !== totals.length) return null;
+  const drawn = {};
+  labels.forEach((label, i) => {
+    const name = label.textContent.replace(/\s*●$/, "").trim();
+    drawn[name] = parseFormatted(totals[i].textContent.split("·")[0]);
+  });
+  return drawn;
+}
+
+// Which projects print a total that is not what their own in-period
+// sessions add up to - same shape, and same rounding tolerance, as the
+// group headers' token check.
+function panoramaTotalMismatches(want, drawn) {
+  if (drawn === null) return ["Panorama's labels and printed totals do not pair up"];
+  const mismatches = [];
+  Object.keys(want).forEach((project) => {
+    const shown = drawn[project];
+    if (!shown || Math.abs(shown.value - want[project]) > shown.tolerance) {
+      mismatches.push(
+        `${project} prints ${shown ? shown.value : "nothing"}, expected ${want[project]} tokens`
+      );
+    }
+  });
+  return mismatches.sort();
+}
+
 function toggleTo(header, wantCollapsed) {
   if (header.classList.contains("collapsed") !== wantCollapsed) {
     window.toggleGroup(parseInt(header.id.replace("group-", ""), 10));
@@ -333,6 +389,20 @@ for (const order of ["expand-then-period", "period-then-expand"]) {
     check(`trend chart legend names at least one project under ${periodId}`, trendProjects.length > 0, true);
     check(`trend chart is built from ${periodId}'s data alone`, trendProjects, want.trend_projects);
 
+    // The names say WHICH projects; this says HOW MUCH. Guarded by a
+    // non-zero segment count, because a chart that rendered nothing at all
+    // would otherwise sum to 0 and could match a period that is empty.
+    const drawnTokens = trendTokensDrawn(periodId);
+    check(`trend chart under ${periodId} drew bar segments at all`, drawnTokens !== null && drawnTokens.segments > 0, true);
+    if (drawnTokens !== null) {
+      check(
+        `trend chart bars under ${periodId} add up to the period's tokens ` +
+        `(${want.trend_tokens} +/- ${drawnTokens.tolerance})`,
+        Math.abs(drawnTokens.value - want.trend_tokens) <= drawnTokens.tolerance,
+        true
+      );
+    }
+
     // Panorama sits inside its own tab pane, so it is display:none until the
     // page's own showTab makes it active. Switching for real keeps every
     // reading a getComputedStyle reading instead of an attribute inspection.
@@ -345,6 +415,11 @@ for (const order of ["expand-then-period", "period-then-expand"]) {
       .sort();
     check(`Panorama chart names at least one project under ${periodId}`, panoramaProjects.length > 0, true);
     check(`Panorama chart is built from ${periodId}'s data alone`, panoramaProjects, want.panorama_projects);
+    check(
+      `token figure printed by each Panorama row under ${periodId}`,
+      panoramaTotalMismatches(want.panorama_totals, panoramaTotalsDrawn()),
+      []
+    );
     window.showTab("sessions");
   }
   endSection("chart scoping", started);
