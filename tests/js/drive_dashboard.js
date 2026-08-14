@@ -426,6 +426,15 @@ for (const order of ["expand-then-period", "period-then-expand"]) {
   const topTrend = window.getComputedStyle(trendWrapper).top;
   check("period filter pins to viewport top", topFilter, "0px");
   check("trend wrapper is offset, not also at top: 0", topTrend !== "0px" && topTrend !== "", true);
+  // This one assertion's green depends on a jsdom LIMITATION, not on a
+  // guarantee: jsdom 24.1.3 does not resolve custom properties, so
+  // getComputedStyle().top hands back the literal "var(--period-filter-height)"
+  // instead of a pixel value. A jsdom release that started resolving var()
+  // would make this fail on a build that is perfectly correct - a false RED.
+  // That is why package-lock.json is committed (package.json only asks for
+  // ^24.0.0): the pin is what keeps this readable. If the lockfile is ever
+  // refreshed, expect to rewrite this check to accept a resolved pixel value
+  // too, rather than to "fix" the CSS it is pointing at.
   check(
     "trend wrapper offset uses the filter-bar height variable",
     topTrend.indexOf("--period-filter-height") !== -1,
