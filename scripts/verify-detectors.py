@@ -25,7 +25,7 @@ For each defect this script:
   3. Clears every __pycache__ under the repo, both before and after running
      the suite - a same-byte-length edit within the same second can reuse a
      stale .pyc and make a real restore look like a failed one.
-  4. Runs `PYTHONPATH=lib:tests <sys.executable> -m pytest tests/ -v` from
+  4. Runs `PYTHONPATH=lib:tests <sys.executable> -m pytest tests/ -vv` from
      the repo root. Always sys.executable, never the bare string "python3":
      plain python3 on this machine's PATH is an asdf shim that exits 126 the
      moment HOME is overridden, which is exactly what the suite's own
@@ -37,6 +37,16 @@ For each defect this script:
      the pre-patch backup and the restored file, and (belt and suspenders,
      since the file is tracked and was clean before this script ran)
      `git diff --exit-code -- dashboard_html.py`.
+
+"Detected" means the RIGHT assertion fired, not that the suite went red.
+Every defect below names the pytest node id that must fail and the harness
+assertion label that must appear in the failure output, and both are
+required. "Any red counts" was the earlier criterion and it could not tell
+"the assertion that exists for this defect caught it" from "something else
+broke": a syntax error in the patched file, or only the MIN_ASSERTIONS
+ratchet tripping because a section quietly stopped running, would both have
+printed DETECTED while proving nothing. A criterion that cannot distinguish
+success from failure is not a verification.
 
 Usage:
     PYTHONPATH=lib:tests python3 scripts/verify-detectors.py
@@ -78,8 +88,12 @@ def run_suite() -> subprocess.CompletedProcess:
     # injected defect, which is the same false-green shape as a patch
     # that matched nothing. Force the real check to run.
     env.pop("METRICS_SKIP_JS_TESTS", None)
+    # -vv, not -v: pytest truncates a long assertion message under -v, and
+    # the harness's own FAIL lines - the evidence this script now requires
+    # to call a defect DETECTED - travel inside exactly such a message.
+    # Under -v they are replaced by "...Full output truncated".
     return subprocess.run(
-        [sys.executable, "-m", "pytest", "tests/", "-v"],
+        [sys.executable, "-m", "pytest", "tests/", "-vv"],
         cwd=REPO_ROOT, env=env, capture_output=True, text=True, timeout=300,
     )
 
@@ -89,11 +103,31 @@ def failed_test_names(output: str):
 
 
 class Defect:
-    def __init__(self, name, description, anchor, replacement):
+    def __init__(self, name, description, anchor, replacement,
+                 expected_tests, expected_labels):
         self.name = name
         self.description = description
         self.anchor = anchor
         self.replacement = replacement
+        # The pytest node id(s) that must be among the failures, and the
+        # harness assertion label(s) that must appear as FAIL lines inside
+        # them. Both pinned so a red suite only counts when it is red for
+        # this defect's own reason.
+        self.expected_tests = expected_tests
+        self.expected_labels = expected_labels
+
+    def missing_evidence(self, caught, output):
+        missing = [f"expected failing test {t}" for t in self.expected_tests if t not in caught]
+        # The harness's stdout reaches here only through the assertion
+        # message of the test that failed, and pytest prefixes those lines
+        # ("E   FAIL ..."), so this looks for the label anywhere on a line
+        # rather than anchoring it to the start.
+        missing += [
+            f"expected harness assertion {label!r} to fail"
+            for label in self.expected_labels
+            if f"FAIL {label}:" not in output
+        ]
+        return missing
 
     def patch(self, text: str) -> str:
         count = text.count(self.anchor)
@@ -127,6 +161,12 @@ DEFECTS = [
             "rows.forEach(function(el) { el.classList.toggle('collapsed', "
             "!collapsed); el.style.display = collapsed ? 'flex' : 'none'; });"
         ),
+        expected_tests=[
+            "tests/test_dashboard_rendering.py::test_every_period_shows_exactly_the_sessions_that_belong",
+        ],
+        # Rows that do not belong to the period stay on screen, so the very
+        # first thing the harness measures per period disagrees.
+        expected_labels=["visible session ids"],
     ),
     Defect(
         name="the unscoped totals",
@@ -139,6 +179,12 @@ DEFECTS = [
         ),
         anchor="mr.compute_token_type_totals(mr.filter_sessions_by_window(records, window))",
         replacement="mr.compute_token_type_totals(records)",
+        expected_tests=[
+            "tests/test_dashboard_rendering.py::test_every_period_shows_exactly_the_sessions_that_belong",
+        ],
+        # The legend's own chips are what carries the wrong total; the sum
+        # check fails alongside them, but the chips are the direct reading.
+        expected_labels=["composition legend chips"],
     ),
 ]
 
@@ -188,8 +234,10 @@ def main() -> int:
 
         clear_pycache()
         result = run_suite()
+        output = result.stdout + result.stderr
         went_red = result.returncode != 0
-        caught = failed_test_names(result.stdout + result.stderr)
+        caught = failed_test_names(output)
+        missing = defect.missing_evidence(caught, output)
 
         restore_ok = restore(original_hash)
         if not restore_ok:
@@ -203,7 +251,7 @@ def main() -> int:
             overall_ok = False
             break
 
-        detected = went_red and bool(caught)
+        detected = went_red and not missing
         status = "DETECTED" if detected else "NOT DETECTED"
         if not detected:
             overall_ok = False
@@ -213,10 +261,16 @@ def main() -> int:
 
         print(f"suite went red: {went_red}")
         print(f"caught by: {caught if caught else '(none)'}")
+        print(f"expected failing test(s): {defect.expected_tests}")
+        print(f"expected harness assertion(s): {defect.expected_labels}")
+        if missing:
+            print("MISSING EVIDENCE - the suite went red for some other reason:")
+            for item in missing:
+                print(f"  - {item}")
         print(f"restore verified byte-identical (sha256): {restore_ok}")
         print(f"=> {status}")
 
-        results.append((defect, status, caught, None))
+        results.append((defect, status, caught, "; ".join(missing) or None))
 
     # Final, independent confirmation: the file is tracked by git and was
     # clean before this script ran, so git itself should agree nothing is
