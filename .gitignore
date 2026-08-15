@@ -1,5 +1,8 @@
 .superpowers/
-.claude/
+# Only the agent worktree scratch, NOT all of .claude/ - a project
+# .claude/settings.json is a real, shareable config file and ignoring
+# the whole directory would silently swallow it.
+.claude/worktrees/
 .venv/
 __pycache__/
 .DS_Store
