@@ -129,6 +129,20 @@ def load_base_data(args, mr=None):
     # (real API calls) this run generates before it stops (2026-07-23,
     # same reasoning as metrics-report.py's --label-budget: unbounded
     # backfills burn real quota and kept getting killed mid-run anyway).
+    #
+    # Kept rather than replaced by a plain loop, measured not assumed
+    # (2026-08-17). With max_workers=1 the pool is pure overhead when every
+    # lookup is a cache hit, and it is: 2.07s median startup with it against
+    # 1.86s with a serial stand-in, over five runs on a 4545-session
+    # dataset - 0.21s, one time, while the app is already starting. That
+    # buys keeping the structure this comment documents, which is the thing
+    # that makes "serial ON PURPOSE" visible to whoever next touches the
+    # budget>0 path where the subprocesses are real. What actually costs
+    # here is neither the pool nor the cache: 262 of 4545 sessions miss the
+    # cache and, since --label-budget 0 deliberately declines to cache them
+    # so a later run can pick them up, each load re-reads their transcripts
+    # (~1.2s). That is unchanged by this split, and no longer on the
+    # keypress path.
     label_budget = mr.LabelBudget(None if args.label_budget < 0 else args.label_budget)
     agent_keys = list(unique_agents.keys())
     with ThreadPoolExecutor(max_workers=1) as executor:
