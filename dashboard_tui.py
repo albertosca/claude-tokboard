@@ -44,8 +44,8 @@ def load_base_data(args, mr=None):
     action_cycle_period called the whole of load_data synchronously on the
     event loop for every keypress, measured at 2.1-2.7s per press on a
     4545-session dataset - long enough that the tmux pane looked hung and
-    had to be killed. See test_tui_period_latency.py for the regression
-    test that keeps that work out of the keypress path.
+    had to be killed. See tests/test_tui_responsiveness.py for the
+    regression test that keeps that work out of the keypress path.
     """
     mr = mr or import_metrics_report()
 
