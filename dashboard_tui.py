@@ -29,9 +29,25 @@ def import_metrics_report():
     return metrics_core
 
 
-def load_data(args, mr=None, period_id=None):
+def load_base_data(args, mr=None):
+    """The expensive half of the load: everything that does NOT depend on
+    the period.
+
+    Loading the JSONL files, deduping snapshots, normalizing project paths,
+    expanding daily deltas, resolving labels and folding subagent tokens all
+    produce byte-identical results whatever period is selected - the period
+    only decides which of those records survive a filter at the very end.
+    So this runs ONCE, at startup, and `apply_period` re-windows its output
+    as many times as the user cares to press "p".
+
+    Splitting here is not a micro-optimization (2026-08-17). Before it,
+    action_cycle_period called the whole of load_data synchronously on the
+    event loop for every keypress, measured at 2.1-2.7s per press on a
+    4545-session dataset - long enough that the tmux pane looked hung and
+    had to be killed. See test_tui_period_latency.py for the regression
+    test that keeps that work out of the keypress path.
+    """
     mr = mr or import_metrics_report()
-    period_id = period_id or mr.DEFAULT_PERIOD_ID
 
     # Dedupe + normalize the same way metrics-report.py's main() does
     # before ANYTHING else touches records (2026-07-21) - the Stop hook
@@ -159,12 +175,6 @@ def load_data(args, mr=None, period_id=None):
     project_last_seen = mr.compute_project_last_seen(all_time_records)
     open_projects = mr.get_open_projects()
 
-    render_now = datetime.now().astimezone()
-    window = mr.resolve_period(period_id, render_now)
-    records = mr.filter_sessions_by_window(records, window)
-    chart_records = mr.filter_sessions_by_window(chart_records, window)
-    daily_chart_records = mr.filter_deltas_by_window(daily_chart_records, window)
-
     return {
         "records": records,
         "chart_records": chart_records,
@@ -173,8 +183,60 @@ def load_data(args, mr=None, period_id=None):
         "project_first_seen": project_first_seen,
         "project_last_seen": project_last_seen,
         "open_projects": open_projects,
-        "period_id": period_id,
     }
+
+
+def apply_period(base, period_id, mr, now=None):
+    """The cheap half: narrows already-loaded data to one period's window.
+
+    Pure list filtering over records that are already in memory, so this is
+    milliseconds even on a dataset where load_base_data takes seconds. It
+    is what every "p" press runs, and the only thing it is allowed to run.
+
+    The three filters return NEW lists of the SAME record dicts, so nothing
+    here mutates the base - re-windowing is repeatable in any order, any
+    number of times. That matters beyond tidiness: the base's
+    fold_subagent_tokens_into_sessions step mutates records in place and
+    would double-count if it ever ran twice over the same dicts.
+
+    `now` is a parameter for the same reason resolve_period takes one - so
+    a test can pin the clock - but it defaults to the real clock read HERE,
+    per press, rather than being captured once at startup: a TUI left open
+    across midnight must resolve "ontem" against today, not against the day
+    it was launched.
+    """
+    render_now = now or datetime.now().astimezone()
+    window = mr.resolve_period(period_id, render_now)
+    return {
+        "records": mr.filter_sessions_by_window(base["records"], window),
+        "chart_records": mr.filter_sessions_by_window(base["chart_records"], window),
+        "daily_chart_records": mr.filter_deltas_by_window(base["daily_chart_records"], window),
+        "subagents_by_session": base["subagents_by_session"],
+        "project_first_seen": base["project_first_seen"],
+        "project_last_seen": base["project_last_seen"],
+        "open_projects": base["open_projects"],
+        "period_id": period_id,
+        # The period-independent source this view was derived from, carried
+        # along so any holder of a view can re-window it without reloading.
+        # Kept inside the dict rather than added as a load_data return value
+        # or an app constructor argument so that every existing caller -
+        # main(), the headless drivers under .superpowers/ - keeps working
+        # unchanged while still getting the fast path.
+        "base": base,
+    }
+
+
+def load_data(args, mr=None, period_id=None):
+    """Loads and windows in one call - the original signature, unchanged.
+
+    Kept for callers that just want data for one period (main(), the
+    headless drivers, ad-hoc scripts). Anything that re-windows repeatedly
+    must call load_base_data once and apply_period per period instead;
+    calling this in a loop is precisely the defect it was split to fix.
+    """
+    mr = mr or import_metrics_report()
+    period_id = period_id or mr.DEFAULT_PERIOD_ID
+    return apply_period(load_base_data(args, mr=mr), period_id, mr)
 
 
 def build_session_tree(records, subagents_by_session, mr):
@@ -609,6 +671,11 @@ class MetricsTUIApp(App):
         self.mr = mr
         self.data = data
         self.args = args
+        # Read eagerly, not lazily inside action_cycle_period, for the same
+        # reason `args` is required above: a data dict built by hand without
+        # a "base" should fail loudly at construction, where the mistake is,
+        # instead of raising on the first "p" press in front of the user.
+        self.base = data["base"]
 
     def compose(self) -> ComposeResult:
         with TabbedContent():
@@ -683,7 +750,12 @@ class MetricsTUIApp(App):
         # action_toggle_tab does it: a focused widget inside a pane being
         # replaced makes Textual revert the change within one tick.
         self.set_focus(None)
-        self.data = load_data(self.args, mr=self.mr, period_id=next_id)
+        # Re-window data already in memory. This MUST NOT call load_data:
+        # that re-reads both JSONL files, re-dedupes, re-labels and re-folds
+        # subagent tokens, all of which produce the same answer for every
+        # period, and all of which run on the event loop - blocking the
+        # whole UI for seconds per press (2026-08-17).
+        self.data = apply_period(self.base, next_id, self.mr)
         self.refresh(recompose=True)
         self.notify(f"período: {dict((p.id, p.label) for p in self.mr.PERIODS)[next_id]}")
 
