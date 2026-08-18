@@ -584,8 +584,10 @@ def render_project_totals_chart(records, project_first_seen, project_last_seen, 
             is_open = project in open_projects
             # Bar color now carries token-type (to match the legend), so
             # "open now" moved from bar color to a small text marker next
-            # to the label instead of being lost.
-            open_marker = " ●" if is_open else ""
+            # to the label instead of being lost. An SVG <title> element
+            # explains what the marker means to readers who might think it
+            # is scoped to the period filter.
+            open_marker = ' <title>aberto agora</title>●' if is_open else ""
             days_running = mr.project_days_running(project_first_seen, project)
             seg_rects = []
             x_cursor = label_x

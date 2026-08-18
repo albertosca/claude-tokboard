@@ -89,7 +89,7 @@ def project_days_running(project_first_seen, project):
         return ""
     try:
         first_dt = datetime.fromisoformat(first_seen.replace("Z", "+00:00")).astimezone()
-        return f" · há {(datetime.now().astimezone() - first_dt).days} dias"
+        return f" · 1º uso há {(datetime.now().astimezone() - first_dt).days} dias"
     except (ValueError, AttributeError, TypeError):
         return ""
 
