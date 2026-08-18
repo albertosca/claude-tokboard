@@ -429,6 +429,12 @@ def floor_stacked_bottom_series(bottom_series, day_totals):
 
 
 class TrendChart(PlotextPlot):
+    # PlotextPlot is not focusable by default (2026-08-18): it needs to be
+    # so action_cycle_period has something inside the Panorama pane to land
+    # focus on after "p", the same way Tree already anchors the Sessões
+    # pane. It is the widget the user actually meant by "o gráfico".
+    can_focus = True
+
     SERIES_KEYS = ["series-1", "series-2", "series-3", "series-4"]
     SERIES_COLORS = ["green", "blue", "magenta", "orange"]
 
@@ -690,9 +696,19 @@ class MetricsTUIApp(App):
         # a "base" should fail loudly at construction, where the mistake is,
         # instead of raising on the first "p" press in front of the user.
         self.base = data["base"]
+        # Which TabPane is active, tracked independently of TabbedContent
+        # itself (2026-08-18). compose() builds a brand-new TabbedContent
+        # every time action_cycle_period recomposes the widget tree, and a
+        # fresh TabbedContent() with no `initial=` always opens on its first
+        # pane - so without this, cycling the period while on "Panorama"
+        # silently bounced the user back to "Sessões". Reproduced headlessly
+        # before this field existed: g then p left tabbed.active as
+        # "tab-sessions", not "tab-panorama". Default matches TabbedContent's
+        # own default (first pane) and on_mount's unconditional Tree focus.
+        self.active_tab_id = "tab-sessions"
 
     def compose(self) -> ComposeResult:
-        with TabbedContent():
+        with TabbedContent(initial=self.active_tab_id):
             with TabPane("Sessões", id="tab-sessions"):
                 with Horizontal():
                     yield build_session_tree(self.data["records"], self.data["subagents_by_session"], self.mr)
@@ -749,6 +765,10 @@ class MetricsTUIApp(App):
         else:
             tabbed.active = "tab-sessions"
             self.query_one(Tree).focus()
+        # Kept in sync here so a later action_cycle_period recompose (which
+        # builds a brand-new TabbedContent from scratch) knows which pane
+        # to reopen on, instead of always defaulting to the first one.
+        self.active_tab_id = tabbed.active
 
     def on_composition_legend_highlight(self, event):
         self.query_one(TrendChart).set_highlight(event.series)
@@ -771,7 +791,38 @@ class MetricsTUIApp(App):
         # whole UI for seconds per press (2026-08-17).
         self.data = apply_period(self.base, next_id, self.mr)
         self.refresh(recompose=True)
+        # Restore focus once the recompose above has actually swapped in the
+        # new widgets, not before (2026-08-18). Found by hand: after "p" the
+        # Footer went blank until Tab was pressed. Root cause was two
+        # compounding effects of set_focus(None) + recompose, not one:
+        #   1. Textual's Footer only repaints when the screen's
+        #      bindings-changed signal fires (Screen.set_focus schedules
+        #      that). recompose() throws away the old Footer instance
+        #      (subscribed to that signal) and mounts a brand-new one that
+        #      has never received it, so it renders nothing until some
+        #      later focus change fires the signal again - which is exactly
+        #      what pressing Tab did.
+        #   2. Nothing was landing focus back on a widget belonging to the
+        #      pane the recompose actually reopened on, so that "later focus
+        #      change" never happened on its own.
+        # Focusing a real widget here fixes both: it fires the same signal
+        # Tab was relied on for, and it is what makes "the shortcuts are
+        # visible without pressing anything" true. self.call_next (not
+        # call_after_refresh) queues right behind the recompose's own
+        # call_next(self._check_recompose) - confirmed headlessly that by
+        # the time this runs, query_one(Tree) already returns the NEW tree,
+        # not the one about to be torn down.
+        self.call_next(self._restore_focus_after_period_cycle)
         self.notify(f"período: {dict((p.id, p.label) for p in self.mr.PERIODS)[next_id]}")
+
+    def _restore_focus_after_period_cycle(self):
+        """Focus a widget that actually belongs to the pane recompose
+        reopened on (self.active_tab_id), mirroring the pattern
+        action_toggle_tab already uses for the sessions tab."""
+        if self.active_tab_id == "tab-sessions":
+            self.query_one(Tree).focus()
+        else:
+            self.query_one(TrendChart).focus()
 
 
 def main():
