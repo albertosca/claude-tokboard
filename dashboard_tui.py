@@ -673,6 +673,7 @@ class MetricsTUIApp(App):
     Horizontal { height: 1fr; }
     Tree { width: 62%; }
     SessionDetailPanel { width: 1fr; border-left: solid $panel; padding: 1; }
+    .backfill-note { color: $text-muted; height: auto; padding: 0 1; }
     """
     BINDINGS = [
         ("q", "quit", "Sair"),
@@ -708,6 +709,10 @@ class MetricsTUIApp(App):
         self.active_tab_id = "tab-sessions"
 
     def compose(self) -> ComposeResult:
+        yield Static(
+            self.mr.describe_backfill_state(self.mr.load_backfill_state()),
+            classes="backfill-note",
+        )
         with TabbedContent(initial=self.active_tab_id):
             with TabPane("Sessões", id="tab-sessions"):
                 with Horizontal():

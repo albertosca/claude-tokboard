@@ -695,6 +695,11 @@ def build_group_colors(chart_records, daily_chart_records):
     return mr.assign_group_colors(list(chart_records) + list(daily_chart_records))
 
 
+def render_backfill_note():
+    text = mr.describe_backfill_state(mr.load_backfill_state())
+    return f'<span class="backfill-note">{html.escape(text)}</span>'
+
+
 def render_period_filter():
     chips = []
     for period in mr.PERIODS:
@@ -704,7 +709,7 @@ def render_period_filter():
             f'data-period="{period.id}" onclick="selectPeriod(\'{period.id}\')">'
             f"{html.escape(period.label)}</button>"
         )
-    return f'<div class="period-filter">{"".join(chips)}</div>'
+    return f'<div class="period-filter">{"".join(chips)}{render_backfill_note()}</div>'
 
 
 def render_html(records, subagents_by_session, chart_records, daily_chart_records, period_windows, project_first_seen, project_last_seen, open_projects):
@@ -1265,6 +1270,7 @@ def render_html(records, subagents_by_session, chart_records, daily_chart_record
       .period-filter { display: flex; align-items: center; gap: 8px; padding: 8px 16px; height: var(--period-filter-height); box-sizing: border-box; position: sticky; top: 0; z-index: 20; background: var(--surface-1); }
       .period-chip { cursor: pointer; border: 1px solid currentColor; border-radius: 999px; padding: 4px 12px; font: inherit; background: none; color: inherit; opacity: 0.55; }
       .period-chip.active { opacity: 1; font-weight: 600; }
+      .backfill-note { margin-left: auto; font-size: 11px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
       .period-block[hidden] { display: none; }
       /* The only two rules that hide a session row, both class-driven and
          both display:none - no inline style competes with either, so they
