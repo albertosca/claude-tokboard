@@ -60,6 +60,12 @@ def test_write_atomically_refuses_a_non_append_change(tmp_path, script):
 
 
 def test_main_writes_backfill_state_after_a_successful_apply(tmp_path, script, monkeypatch):
+    # No transcript exists for "s1" here, so plan_corrections finds nothing
+    # to correct and main() takes the `if not plan:` branch. This exercises
+    # the state-write call on the EMPTY-plan path (still real: this is what
+    # every run after the file is fully caught up looks like) - the
+    # non-empty path, which drives the backup/write/verify block, is
+    # covered separately below.
     metrics_file = tmp_path / "sessions.jsonl"
     projects_dir = tmp_path / "projects"
     projects_dir.mkdir()
@@ -82,5 +88,81 @@ def test_main_writes_backfill_state_after_a_successful_apply(tmp_path, script, m
     assert exit_code == 0
     assert state_path.exists()
     state = json.loads(state_path.read_text())
+    assert state["cutoff"]
+    assert "applied_at" in state
+    assert state["corrected_rows"] == 0
+
+
+def _write_transcript(path, entries):
+    """entries: list of (timestamp, message_id, usage_dict). Mirrors
+    tests/test_backfill.py's write_transcript/usage helpers - see that
+    file for the JSON shape index_transcripts/scan_transcript expect."""
+    with open(path, "w") as f:
+        for timestamp, message_id, usage in entries:
+            f.write(json.dumps({
+                "type": "assistant",
+                "timestamp": timestamp,
+                "message": {"id": message_id, "usage": usage},
+            }) + "\n")
+
+
+def test_main_rewrites_the_file_through_the_real_backup_and_write_path(
+    tmp_path, script, monkeypatch
+):
+    # Unlike the test above, this seeds a real transcript with a duplicated
+    # message id, and stores the RAW (duplicate-inflated) sum in the
+    # metrics row - so plan_corrections returns a non-empty plan and main()
+    # actually runs the backup-creation, backup-verification, and
+    # write_atomically block, not just the `if not plan:` shortcut.
+    metrics_file = tmp_path / "sessions.jsonl"
+    projects_dir = tmp_path / "projects"
+    # index_transcripts globs <projects_dir>/*/<session_id>.jsonl.
+    slug_dir = projects_dir / "some-project"
+    slug_dir.mkdir(parents=True)
+    backup_dir = tmp_path / "backups"
+    state_path = tmp_path / "backfill_state.json"
+
+    usage = {
+        "input_tokens": 100, "output_tokens": 0,
+        "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0,
+    }
+    _write_transcript(slug_dir / "s1.jsonl", [
+        ("2026-08-01T10:00:00", "msg-1", usage),
+        ("2026-08-01T10:00:01", "msg-1", usage),  # replay: the broken hook's bug
+    ])
+    # deduped as-of sum is 100 (one real message); the broken hook summed
+    # both copies and stored the raw sum, 200.
+    metrics_file.write_text(json.dumps({
+        "session_id": "s1", "timestamp_end": "2026-08-01T10:00:01",
+        "input_tokens": 200, "output_tokens": 0,
+        "cache_read_tokens": 0, "cache_creation_tokens": 0,
+    }) + "\n")
+
+    monkeypatch.setattr("sys.argv", [
+        "backfill-token-dedup.py",
+        "--metrics-file", str(metrics_file),
+        "--projects-dir", str(projects_dir),
+        "--backup-dir", str(backup_dir),
+        "--apply",
+        "--state-file", str(state_path),
+    ])
+    exit_code = script.main()
+
+    assert exit_code == 0
+
+    # the backup block ran and left exactly one verified backup behind
+    backups = list(backup_dir.glob("sessions.jsonl.backfill-*.bak"))
+    assert len(backups) == 1
+    assert backups[0].read_bytes() == b'{"session_id": "s1", "timestamp_end": ' \
+        b'"2026-08-01T10:00:01", "input_tokens": 200, "output_tokens": 0, ' \
+        b'"cache_read_tokens": 0, "cache_creation_tokens": 0}\n'
+
+    # write_atomically actually ran, through main(): the live file now
+    # holds the corrected (deduped) value, not the original raw one.
+    corrected = json.loads(metrics_file.read_text().strip())
+    assert corrected["input_tokens"] == 100
+
+    state = json.loads(state_path.read_text())
+    assert state["corrected_rows"] == 1
     assert state["cutoff"]
     assert "applied_at" in state
