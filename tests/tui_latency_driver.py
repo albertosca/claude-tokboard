@@ -9,13 +9,6 @@ has to hand this file to .venv/bin/python3 and read a result back.
 Everything is measured inside one process, on one machine, under one load,
 so the numbers are comparable to each other even when the machine is busy:
 
-  full_loads   complete load_base_data calls - the period-INDEPENDENT work
-               that used to run on every keypress. Taken while the app is
-               already up, so they are warm numbers, like a reload would be.
-               Several samples, because the caller compares medians: one
-               unlucky sample either side must not decide the verdict.
-  actions      wall time inside action_cycle_period per "p" press - the
-               work the keypress is actually allowed to do.
   presses      wall time of the whole key round-trip, recompose included -
                what the human waits for.
   load_records the number of times the data layer re-read the JSONL files
@@ -42,27 +35,11 @@ async def main():
     data = tui.load_data(args, mr=mr)
     app = tui.MetricsTUIApp(mr, data, args=args)
 
-    actions = []
-    original_action = app.action_cycle_period
-
-    def timed_action():
-        started = time.perf_counter()
-        original_action()
-        actions.append(time.perf_counter() - started)
-
-    app.action_cycle_period = timed_action
-
     presses = []
     periods = []
     records_seen = []
     async with app.run_test(size=(140, 45)) as pilot:
         await pilot.pause()
-
-        full_loads = []
-        for _ in range(3):
-            started = time.perf_counter()
-            tui.load_base_data(args, mr=mr)
-            full_loads.append(time.perf_counter() - started)
 
         # Counted only from here on, so the startup load above is not
         # mistaken for a reload triggered by a keypress.
@@ -86,8 +63,6 @@ async def main():
             mr.load_records = real_load_records
 
     print(json.dumps({
-        "full_loads": full_loads,
-        "actions": actions,
         "presses": presses,
         "periods": periods,
         "load_records_calls_during_presses": reload_count["n"],

@@ -21,12 +21,22 @@ cannot fail is worse than no check:
     cannot flake: during the presses, the data layer must not read the
     JSONL files at all. A return to per-keypress reloading fails it on the
     first press whatever the dataset.
-  * the cost ratio generalises it. Re-windowing must be measurably cheaper
-    than reloading, which also catches expensive per-press work that never
-    touches load_records - re-labelling, re-folding, a rebuilt index.
   * the absolute ceiling is the human-facing claim. It is the only one that
     speaks in seconds, and the only one that would catch a NEW blocking
     call (a subprocess, a network read) added to the keypress path.
+
+There used to be a third assertion here: a ratio requiring a re-window to
+cost at most half of a full reload. It was deleted (2026-08-18) after
+measuring a 33% failure rate over six consecutive runs - see git history
+for the exact numbers. On the committed eight-record fixture a full reload
+costs under a millisecond, so the "reload" and "re-window" samples it
+compared were both sub-millisecond noise dominated by scheduler jitter, GC
+pauses and OS-level timer resolution, not by the code path under test; no
+amount of raising the threshold fixes a comparison where both operands are
+noise. The reload counter above already carries this regression, exactly
+and without flaking: it does not matter whether a reload is fast or slow,
+only whether it happened, and it fails deterministically on the first
+press if action_cycle_period ever goes back to load_data.
 
 The absolute ceiling is deliberately loose: the fixture is eight records,
 so on it even a full reload costs about a millisecond and no wall-clock
@@ -39,7 +49,6 @@ makes the number a bound and not a decoration.
 """
 import json
 import os
-import statistics
 import subprocess
 
 import pytest
@@ -64,12 +73,6 @@ _INSTALL_HINT = (
 # round-trip and roughly half the shipped defect's real-data latency, so it
 # is loose enough to survive a busy machine and still name the failure.
 MAX_PRESS_SECONDS = 1.5
-
-# A re-window must cost at most half a reload. The fixture caps how large
-# this ratio can get - reloading eight records is only about five times a
-# re-window, against ~5000x on the real dataset - so half is what is safely
-# provable here, not what is actually achieved.
-MAX_REWINDOW_SHARE_OF_A_RELOAD = 0.5
 
 
 @pytest.fixture(scope="session")
@@ -122,17 +125,6 @@ def test_cycling_the_period_never_re_reads_the_data(cycle_timings):
         f"pressing 'p' re-read the metrics files "
         f"{cycle_timings['load_records_calls_during_presses']} time(s). The period-independent "
         "work belongs in load_base_data, once, at startup - see apply_period"
-    )
-
-
-def test_cycling_the_period_costs_far_less_than_reloading(cycle_timings):
-    """Medians on both sides, measured in the same process under the same
-    machine load, so a busy machine slows both and the ratio survives."""
-    rewindow = statistics.median(cycle_timings["actions"])
-    reload_cost = statistics.median(cycle_timings["full_loads"])
-    assert rewindow < reload_cost * MAX_REWINDOW_SHARE_OF_A_RELOAD, (
-        f"re-windowing a period took {rewindow * 1000:.2f}ms against {reload_cost * 1000:.2f}ms "
-        f"to reload everything from scratch - the keypress is doing the loading work again"
     )
 
 
