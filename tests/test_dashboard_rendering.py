@@ -20,11 +20,13 @@ HERE = os.path.dirname(__file__)
 # commit message rather than to absorb silently.
 #
 # Read off the harness's own TOTAL line, never guessed from the diff:
-# 173 -> 188 when the two charts gained a magnitude check each (2026-08-14).
+# 173 -> 188 when the two charts gained a magnitude check each (2026-08-14);
+# 188 -> 238 when the [trend-mode] section was added to catch a sub-tab
+# click on one period blanking every other period's chart (2026-08-18).
 # The four fixture records added the same day moved it by nothing at all -
 # every section's count is structural, not per-record - which is exactly
 # why this has to be measured rather than reasoned about.
-MIN_ASSERTIONS = 188
+MIN_ASSERTIONS = 238
 
 
 def _fixture_records(home):

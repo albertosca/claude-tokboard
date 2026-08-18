@@ -132,6 +132,18 @@ function trendTokensDrawn(periodId) {
   return { value, tolerance, segments: titles.length };
 }
 
+// A period's own trend sub-tabs ("por projeto" / "por tipo de token") live
+// inside that period's .trend-container, one such container per
+// .period-block[data-period]. Scoped here the same way, so this can tell
+// "no pane active in THIS period" from "no pane active anywhere".
+function visibleTrendPanes(periodId) {
+  const container = document.querySelector(
+    '.period-block[data-period="' + periodId + '"] .trend-container'
+  );
+  if (!container) return [];
+  return Array.from(container.querySelectorAll(".trend-pane")).filter(isVisible);
+}
+
 // Panorama's rows are <text> label, then the bar, then a <text> carrying
 // the printed grand total - so the visible labels and the visible totals
 // pair up positionally, in document order. The total's text is
@@ -423,6 +435,44 @@ for (const order of ["expand-then-period", "period-then-expand"]) {
     window.showTab("sessions");
   }
   endSection("chart scoping", started);
+}
+
+// A trend sub-tab click (showTrendMode) must only touch the period it was
+// clicked in. It used to clear 'active' from every .trend-pane and every
+// .trend-mode-tabs button DOCUMENT-WIDE, only re-adding it for the period
+// actually operated on - so every OTHER period was left with no active pane
+// at all, and switching there next showed no chart whatsoever (shipped bug,
+// 2026-08-18: "o gráfico sumiu pra todas exceto o filtro que eu tava, de
+// ontem" - reproduced by clicking either trend sub-tab and then changing the
+// period; changing the period alone, or clicking the sub-tab alone, was
+// fine on its own - only the combination broke it).
+{
+  const started = section("[trend-mode] a sub-tab click on one period leaves every other period's chart intact");
+  for (const clickedPeriod of PERIOD_IDS) {
+    for (const mode of ["pane", "tokens"]) {
+      window.selectPeriod(clickedPeriod);
+      window.showTrendMode(mode, clickedPeriod);
+      freshStyles();
+      const clicked = visibleTrendPanes(clickedPeriod);
+      check(
+        `clicked period ${clickedPeriod} shows exactly its '${mode}' pane after showTrendMode`,
+        clicked.map((el) => el.id),
+        ["trend-pane-" + mode + "-" + clickedPeriod]
+      );
+      for (const otherPeriod of PERIOD_IDS) {
+        if (otherPeriod === clickedPeriod) continue;
+        window.selectPeriod(otherPeriod);
+        freshStyles();
+        const stillVisible = visibleTrendPanes(otherPeriod);
+        check(
+          `switching to ${otherPeriod} after showTrendMode('${mode}', '${clickedPeriod}') still shows one chart`,
+          stillVisible.length,
+          1
+        );
+      }
+    }
+  }
+  endSection("trend-mode isolation", started);
 }
 
 // A detail panel left open for a session that just left the period has to

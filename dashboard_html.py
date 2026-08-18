@@ -1307,13 +1307,26 @@ def render_html(records, subagents_by_session, chart_records, daily_chart_record
       if (btn) { btn.classList.add('active'); }
     }
     function showTrendMode(name, periodId) {
-      document.querySelectorAll('.trend-pane').forEach(function(el) { el.classList.remove('active'); });
-      document.querySelectorAll('.trend-mode-tabs .tab-btn').forEach(function(el) { el.classList.remove('active'); });
       // ids are suffixed with periodId (render_trend_chart runs once per
       // period) so this always resolves the pane/button belonging to the
       // chart that was actually clicked, not just the first period's.
       var pane = document.getElementById('trend-pane-' + name + '-' + periodId);
       var btn = document.getElementById('trend-btn-' + name + '-' + periodId);
+      // Clearing is scoped to THIS period's own .trend-container, found via
+      // closest() on the clicked pane/button rather than by re-deriving it
+      // from periodId - each period has its own trend-mode-tabs/trend-pane
+      // pair, and there are two other kinds of .period-block sharing the
+      // same data-period (panorama, composition legend), so a lookup keyed
+      // only on data-period could silently latch onto the wrong one if
+      // their document order ever changed. A document-wide clear here used
+      // to strip 'active' from every OTHER period's pane/button too,
+      // leaving them with no active pane at all the next time the reader
+      // switched to one (2026-08-18 fix - "o gráfico sumiu pra todas exceto
+      // o filtro que eu tava").
+      var container = (pane || btn) && (pane || btn).closest('.trend-container');
+      if (!container) { return; }
+      container.querySelectorAll('.trend-pane').forEach(function(el) { el.classList.remove('active'); });
+      container.querySelectorAll('.trend-mode-tabs .tab-btn').forEach(function(el) { el.classList.remove('active'); });
       if (pane) { pane.classList.add('active'); }
       if (btn) { btn.classList.add('active'); }
     }
