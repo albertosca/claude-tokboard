@@ -33,6 +33,26 @@ from .projects import (
     build_project_groups,
 )
 from .granularity import GRANULARITY_CONFIG, choose_granularity, aggregate_by_day
+from .backfill import (
+    TOKEN_FIELDS,
+    DEFAULT_CUTOFF,
+    BACKFILL_STATE_FILE,
+    sha256_of,
+    sha256_bytes,
+    index_transcripts,
+    scan_transcript,
+    build_prefix_sums,
+    as_of,
+    token_sum,
+    plan_corrections,
+    find_nonmonotonic_sessions,
+    apply_plan,
+    daily_totals,
+    verify_fields,
+    load_backfill_state,
+    write_backfill_state,
+    describe_backfill_state,
+)
 from .labels import (
     TASK_LABELS_FILE,
     AGENT_LABELS_FILE,
