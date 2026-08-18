@@ -166,6 +166,8 @@ def main():
     parser.add_argument("--metrics-file", default=METRICS_FILE)
     parser.add_argument("--projects-dir", default=PROJECTS_DIR)
     parser.add_argument("--backup-dir", default=BACKUP_DIR)
+    parser.add_argument("--state-file", default=BACKFILL_STATE_FILE,
+                        help="where to record the cutoff and timestamp of a successful apply")
     parser.add_argument("--cutoff", default=DEFAULT_CUTOFF,
                         help="rows whose timestamp_end sorts at or after this are left alone")
     parser.add_argument("--daily-days", type=int, default=15,
@@ -231,37 +233,39 @@ def main():
 
     if not plan:
         print("\nnothing to correct; leaving the file untouched")
-        return 0
+    else:
+        os.makedirs(args.backup_dir, exist_ok=True)
+        stamp = datetime.now().strftime("%Y-%m-%d-%H%M%S")
+        backup = os.path.join(args.backup_dir, f"sessions.jsonl.backfill-{stamp}.bak")
+        shutil.copy2(path, backup)
+        source_sha = sha256_of(path)
+        backup_sha = sha256_of(backup)
+        if source_sha != backup_sha:
+            # Can legitimately differ if a hook appended between the copy and the
+            # re-read; either way an unverified backup is not a backup.
+            print(f"BACKUP VERIFICATION FAILED\n  source {source_sha}\n  backup {backup_sha}",
+                  file=sys.stderr)
+            return 1
+        print(f"\nbackup verified: {backup}\n  sha256 {backup_sha}")
 
-    os.makedirs(args.backup_dir, exist_ok=True)
-    stamp = datetime.now().strftime("%Y-%m-%d-%H%M%S")
-    backup = os.path.join(args.backup_dir, f"sessions.jsonl.backfill-{stamp}.bak")
-    shutil.copy2(path, backup)
-    source_sha = sha256_of(path)
-    backup_sha = sha256_of(backup)
-    if source_sha != backup_sha:
-        # Can legitimately differ if a hook appended between the copy and the
-        # re-read; either way an unverified backup is not a backup.
-        print(f"BACKUP VERIFICATION FAILED\n  source {source_sha}\n  backup {backup_sha}",
-              file=sys.stderr)
-        return 1
-    print(f"\nbackup verified: {backup}\n  sha256 {backup_sha}")
+        mode = stat.S_IMODE(os.stat(path).st_mode)
+        new_lines = [json.dumps(record).encode("utf-8") for record in corrected]
+        appended = write_atomically(path, snapshot, new_lines, mode)
 
-    mode = stat.S_IMODE(os.stat(path).st_mode)
-    new_lines = [json.dumps(record).encode("utf-8") for record in corrected]
-    appended = write_atomically(path, snapshot, new_lines, mode)
+        with open(path, "rb") as f:
+            written = f.read()
+        written_count = written.count(b"\n")
+        expected = len(raw_lines) + appended
+        print(f"wrote {path}: {written_count} lines "
+              f"({len(raw_lines)} rewritten + {appended} appended while running)")
+        if written_count != expected:
+            print(f"LINE COUNT MISMATCH: expected {expected}, got {written_count}", file=sys.stderr)
+            return 1
+        print(f"  mode {oct(stat.S_IMODE(os.stat(path).st_mode))}")
+        print(f"  sha256 {sha256_bytes(written)}")
 
-    with open(path, "rb") as f:
-        written = f.read()
-    written_count = written.count(b"\n")
-    expected = len(raw_lines) + appended
-    print(f"wrote {path}: {written_count} lines "
-          f"({len(raw_lines)} rewritten + {appended} appended while running)")
-    if written_count != expected:
-        print(f"LINE COUNT MISMATCH: expected {expected}, got {written_count}", file=sys.stderr)
-        return 1
-    print(f"  mode {oct(stat.S_IMODE(os.stat(path).st_mode))}")
-    print(f"  sha256 {sha256_bytes(written)}")
+    write_backfill_state(args.cutoff, datetime.now().isoformat(), len(plan), path=args.state_file)
+    print(f"  backfill state recorded: {args.state_file}")
     return 0
 
 
