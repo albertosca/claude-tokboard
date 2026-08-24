@@ -311,7 +311,7 @@ def describe_backfill_state(state):
             f"(dados anteriores a {DEFAULT_CUTOFF} podem estar inflados)"
         )
     return (
-        f"duplicação corrigida para sessões encerradas até {state['cutoff']} "
+        f"duplicação corrigida para sessões encerradas antes de {state['cutoff']} "
         f"(aplicado em {state['applied_at'][:10]}); sessões sem transcript "
         f"salvo continuam com contagem inflada"
     )

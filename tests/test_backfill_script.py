@@ -93,6 +93,24 @@ def test_main_writes_backfill_state_after_a_successful_apply(tmp_path, script, m
     assert state["corrected_rows"] == 0
 
 
+def test_main_rejects_a_malformed_cutoff(script, monkeypatch, capsys):
+    # A malformed value like "2026-8-21" (missing zero-pad) would otherwise
+    # sort lexicographically wrong against timestamp_end strings, silently
+    # making every row in the file eligible regardless of the operator's
+    # real intent - argparse's type= conversion must catch this before
+    # plan_corrections ever runs.
+    monkeypatch.setattr("sys.argv", [
+        "backfill-token-dedup.py",
+        "--cutoff", "2026-8-21",
+    ])
+
+    with pytest.raises(SystemExit) as excinfo:
+        script.main()
+
+    assert excinfo.value.code == 2
+    assert "--cutoff must be YYYY-MM-DD" in capsys.readouterr().err
+
+
 def _write_transcript(path, entries):
     """entries: list of (timestamp, message_id, usage_dict). Mirrors
     tests/test_backfill.py's write_transcript/usage helpers - see that

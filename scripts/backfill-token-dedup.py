@@ -123,23 +123,33 @@ def print_summary(stats, factors, before_total, after_total, changed_lines, tota
               f"({before_total - after_total:,} tokens)")
 
 
+def _valid_cutoff(value):
+    try:
+        parsed = datetime.strptime(value, "%Y-%m-%d")
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"--cutoff must be YYYY-MM-DD, got {value!r}")
+    # strptime alone is not enough: it accepts non-zero-padded values like
+    # "2026-8-21" as valid dates, which is exactly the malformed shape that
+    # would sort wrong lexicographically against timestamp_end strings -
+    # the failure mode this validator exists to catch. Round-tripping back
+    # through the canonical format rejects anything that isn't already
+    # zero-padded YYYY-MM-DD, even though it parsed.
+    if parsed.strftime("%Y-%m-%d") != value:
+        raise argparse.ArgumentTypeError(f"--cutoff must be YYYY-MM-DD, got {value!r}")
+    return value
+
+
 def write_atomically(path, snapshot_prefix, new_lines, mode):
     """Rename a fully written file into place, carrying over live appends.
 
     The metrics file is append-only and written by every running session, so
-    between reading it and replacing it new rows may have arrived. Those
-    bytes are read again at the last moment, checked against the snapshot
-    prefix, and appended verbatim.
+    between reading it and replacing it new rows may have arrived. The body
+    below is written first since it can be slow for a large correction; the
+    live file's tail is read again right before the rename - as late as
+    possible - checked against the snapshot prefix, and appended verbatim.
+    This keeps the window in which a concurrent append could be missed to
+    that final read-verify-append-rename sequence, not the whole write.
     """
-    with open(path, "rb") as f:
-        current = f.read()
-    if current[:len(snapshot_prefix)] != snapshot_prefix:
-        raise RuntimeError(
-            "refusing to write: the file changed under us in a way that is not "
-            "a plain append (its first bytes no longer match the snapshot)"
-        )
-    tail = current[len(snapshot_prefix):]
-
     directory = os.path.dirname(path)
     handle, temporary = tempfile.mkstemp(dir=directory, prefix=".sessions.jsonl.", suffix=".new")
     try:
@@ -147,10 +157,23 @@ def write_atomically(path, snapshot_prefix, new_lines, mode):
             for line in new_lines:
                 f.write(line)
                 f.write(b"\n")
-            if tail:
-                f.write(tail)
             f.flush()
             os.fsync(f.fileno())
+
+        with open(path, "rb") as f:
+            current = f.read()
+        if current[:len(snapshot_prefix)] != snapshot_prefix:
+            raise RuntimeError(
+                "refusing to write: the file changed under us in a way that is not "
+                "a plain append (its first bytes no longer match the snapshot)"
+            )
+        tail = current[len(snapshot_prefix):]
+        if tail:
+            with open(temporary, "ab") as f:
+                f.write(tail)
+                f.flush()
+                os.fsync(f.fileno())
+
         os.chmod(temporary, mode)
         os.replace(temporary, path)
     except BaseException:
@@ -168,7 +191,7 @@ def main():
     parser.add_argument("--backup-dir", default=BACKUP_DIR)
     parser.add_argument("--state-file", default=BACKFILL_STATE_FILE,
                         help="where to record the cutoff and timestamp of a successful apply")
-    parser.add_argument("--cutoff", default=DEFAULT_CUTOFF,
+    parser.add_argument("--cutoff", default=DEFAULT_CUTOFF, type=_valid_cutoff,
                         help="rows whose timestamp_end sorts at or after this are left alone")
     parser.add_argument("--daily-days", type=int, default=15,
                         help="how many days of the per-day comparison table to print")

@@ -146,6 +146,31 @@ def test_plan_corrections_accepts_a_row_within_tolerance_of_the_raw_sum(tmp_path
     assert stats["corrected"] == 1
 
 
+def test_plan_corrections_refuses_the_whole_session_when_one_row_matches_neither_formula(tmp_path):
+    # Two sessions worth of rows would each be individually decidable in
+    # isolation - row 0 is a clean raw-sum correction (mirrors
+    # test_plan_corrections_fixes_a_session_stored_as_the_raw_sum above),
+    # row 1 matches neither formula. The all-or-nothing-per-session
+    # invariant means the refusal on row 1 must also veto row 0: plan must
+    # be empty for BOTH rows, and the refusal reason must count both, not
+    # just the row that triggered it. Single-row tests elsewhere cannot
+    # prove this propagation - a lone refused row disqualifying "the
+    # session" is indistinguishable from it disqualifying only itself.
+    path = tmp_path / "s1.jsonl"
+    write_transcript(path, [
+        ("2026-08-01T10:00:00", "msg-1", usage(input_tokens=100)),
+        ("2026-08-01T10:00:01", "msg-1", usage(input_tokens=100)),  # replay
+        ("2026-08-01T10:00:02", "msg-2", usage(input_tokens=1000)),
+    ])
+    records = [
+        record("s1", "2026-08-01T10:00:01", 200, 0),   # correctable on its own: stored = raw
+        record("s1", "2026-08-01T10:00:02", 1800, 0),  # matches neither formula (deduped=1100, raw=1200)
+    ]
+    plan, stats, factors = mr.plan_corrections(records, {"s1": str(path)}, cutoff="2026-08-13")
+    assert plan == {}
+    assert stats["untouched: session has a row matching neither formula"] == 2
+
+
 def test_plan_corrections_refuses_a_row_matching_neither_formula(tmp_path):
     path = tmp_path / "s1.jsonl"
     write_transcript(path, [("2026-08-01T10:00:00", "msg-1", usage(input_tokens=1000))])
