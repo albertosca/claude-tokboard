@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
 import argparse
 import html
-import os
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
+from pathlib import Path
+from typing import Any
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib"))
+sys.path.insert(0, str(Path(__file__).resolve().parent / "lib"))
 import metrics_core as mr
 
 
-def format_table(records):
+def format_table(records: list[dict[str, Any]]) -> str:
     header = (
         f"{'session_id':<12} {'tag':<10} {'branch':<12} {'dur(s)':>8} "
         f"{'in_tok':>8} {'out_tok':>8} {'turns':>6} {'tools':>6}"
@@ -30,7 +31,7 @@ def format_table(records):
     return "\n".join(lines)
 
 
-def format_summary(records):
+def format_summary(records: list[dict[str, Any]]) -> str:
     if not records:
         return "No sessions matched."
     n = len(records)
@@ -54,19 +55,20 @@ SERIES_NAMES = {
 }
 
 
-def render_composition_legend(totals):
+def render_composition_legend(totals: dict[str, int]) -> str:
     chips = []
     for css_class, name in SERIES_NAMES.items():
         chips.append(
             f'<span class="legend-chip" data-series="{css_class}" '
             f"onclick=\"highlightTokenType('{css_class}', event)\">"
             f'<span class="legend-swatch {css_class}"></span>{name} · '
-            f'<span class="legend-total" data-series="{css_class}">{mr.format_tokens(totals.get(css_class, 0))}</span></span>'
+            f'<span class="legend-total" data-series="{css_class}">'
+            f"{mr.format_tokens(totals.get(css_class, 0))}</span></span>"
         )
     return '<div class="comp-legend">' + "".join(chips) + "</div>"
 
 
-def render_composition_bar(record):
+def render_composition_bar(record: dict[str, Any]) -> str:
     segments = [
         ("series-1", record.get("input_tokens", 0) or 0),
         ("series-2", record.get("output_tokens", 0) or 0),
@@ -91,14 +93,14 @@ def render_composition_bar(record):
 
 
 def render_session_row(
-    record,
-    is_active,
-    group_colors,
-    group_index,
-    subagent_count=0,
-    show_tmux=True,
-    period_ids=("tudo",),
-):
+    record: dict[str, Any],
+    is_active: bool,
+    group_colors: dict[str | None, str],
+    group_index: int,
+    subagent_count: int = 0,
+    show_tmux: bool = True,
+    period_ids: tuple[str, ...] = ("tudo",),
+) -> str:
     session_id = record.get("session_id") or ""
     tag = html.escape(record.get("tag") or "-")
     branch = html.escape(record.get("git_branch") or "-")
@@ -147,7 +149,11 @@ def render_session_row(
     )
 
 
-def render_group_header(group_index, group, period_windows):
+def render_group_header(
+    group_index: int,
+    group: dict[str, Any],
+    period_windows: dict[str, tuple[datetime, datetime] | None],
+) -> str:
     # Period-aware since 2026-08-13. The header used to state one all-time
     # "N sessões · X tokens" that no period ever re-scoped, so under "ontem"
     # every project header stayed on screen quoting the whole history. Two
@@ -172,7 +178,8 @@ def render_group_header(group_index, group, period_windows):
             f"({len(scoped)} sessões · {total_tokens} tokens)</span>"
         )
     return (
-        f'<div class="group-header collapsed {group["class"]}" id="group-{group_index}"{title_attr} '
+        f'<div class="group-header collapsed {group["class"]}" '
+        f'id="group-{group_index}"{title_attr} '
         f'data-periods="{" ".join(member_periods)}" '
         f'onclick="toggleGroup({group_index})">'
         '<span class="group-icon">▸</span>'
@@ -181,7 +188,7 @@ def render_group_header(group_index, group, period_windows):
     )
 
 
-def render_session_header(show_tmux=True):
+def render_session_header(show_tmux: bool = True) -> str:
     tmux_span = '<span class="tmux-window">aba</span>' if show_tmux else ""
     return (
         '<div class="session-row session-header">'
@@ -199,7 +206,12 @@ def render_session_header(show_tmux=True):
     )
 
 
-def render_detail_panel(session_id, subagents, is_active, period_ids=("tudo",)):
+def render_detail_panel(
+    session_id: str,
+    subagents: list[dict[str, Any]],
+    is_active: bool,
+    period_ids: tuple[str, ...] = ("tudo",),
+) -> str:
     open_class = " open" if is_active else ""
     title = ""
     subagents = [s for s in subagents if mr.record_token_total(s) > 0]
@@ -210,7 +222,8 @@ def render_detail_panel(session_id, subagents, is_active, period_ids=("tudo",)):
         title = f'<h4 class="subagent-title">Subagentes despachados ({len(ordered)})</h4>'
         header = (
             '<div class="subagent-row subagent-header">'
-            "<span>data</span><span>tarefa</span><span>tokens</span><span>tools</span><span>duração</span>"
+            "<span>data</span><span>tarefa</span><span>tokens</span>"
+            "<span>tools</span><span>duração</span>"
             "</div>"
         )
         rows = [header]
@@ -259,12 +272,15 @@ def render_detail_panel(session_id, subagents, is_active, period_ids=("tudo",)):
     return (
         f'<div class="detail-panel{open_class}" id="detail-{session_id}" '
         f'data-periods="{" ".join(period_ids)}">'
-        f'<button class="detail-close" onclick="closeDetail(\'{session_id}\')" aria-label="Fechar">×</button>'
+        f'<button class="detail-close" onclick="closeDetail(\'{session_id}\')" '
+        'aria-label="Fechar">&times;</button>'
         f"<h3>{session_id}</h3>{title}{body}</div>"
     )
 
 
-def render_trend_chart(records, group_colors, period_id):
+def render_trend_chart(
+    records: list[dict[str, Any]], group_colors: dict[str | None, str], period_id: str
+) -> str:
     granularity, days = mr.aggregate_by_day(records)
     parse_fmt = mr.GRANULARITY_CONFIG[granularity]["parse_fmt"]
     tick_fmt = mr.GRANULARITY_CONFIG[granularity]["tick_fmt"]
@@ -273,7 +289,6 @@ def render_trend_chart(records, group_colors, period_id):
         return ""
 
     day_totals = [sum(mr.record_token_total(r) for r in day["records"]) for day in days]
-    day_token_totals = day_totals
     # The two tabs now decompose the SAME quantity - total tokens - one
     # split by project, the other by token type, so they deliberately
     # share one scale: a full-height bar means the same thing on both,
@@ -331,17 +346,19 @@ def render_trend_chart(records, group_colors, period_id):
 
     plot_height = height - padding_top - padding_bottom
 
-    def y_for(value, max_value):
+    def y_for(value: float, max_value: float) -> float:
         return padding_top + plot_height - (value / max_value) * plot_height
 
-    def build_y_axis(max_value):
+    def build_y_axis(max_value: float) -> str:
         parts = []
         for frac in (0, 0.25, 0.5, 0.75, 1.0):
             value = max_value * frac
             y = y_for(value, max_value)
             parts.append(
-                f'<line x1="{padding_left}" y1="{y:.1f}" x2="{width - padding_right}" y2="{y:.1f}" class="chart-gridline" />'
-                f'<text x="4" y="{y + 3:.1f}" class="chart-axis-label">{mr.format_tokens(value)}</text>'
+                f'<line x1="{padding_left}" y1="{y:.1f}" x2="{width - padding_right}" '
+                f'y2="{y:.1f}" class="chart-gridline" />'
+                f'<text x="4" y="{y + 3:.1f}" class="chart-axis-label">'
+                f"{mr.format_tokens(value)}</text>"
             )
         return "".join(parts)
 
@@ -353,7 +370,8 @@ def render_trend_chart(records, group_colors, period_id):
         bucket_dt = datetime.strptime(days[idx]["day"], parse_fmt)
         tick_date = bucket_dt.strftime(tick_fmt)
         x_axis.append(
-            f'<text x="{x:.1f}" y="{height - 4}" class="chart-axis-label" text-anchor="middle">{tick_date}</text>'
+            f'<text x="{x:.1f}" y="{height - 4}" class="chart-axis-label" '
+            f'text-anchor="middle">{tick_date}</text>'
         )
     x_axis_html = "".join(x_axis)
 
@@ -371,19 +389,19 @@ def render_trend_chart(records, group_colors, period_id):
             'class="chart-highlight-band" />'
         )
 
-    def bars_for_pane():
+    def bars_for_pane() -> str:
         bars = []
         for i, day in enumerate(days):
             x = padding_left + i * step + (step - bar_width) / 2
-            by_project = {}
-            project_order = []
+            by_project: dict[str | None, int] = {}
+            project_order: list[str | None] = []
             for r in day["records"]:
                 project = r.get("project_path")
                 if project not in by_project:
                     by_project[project] = 0
                     project_order.append(project)
                 by_project[project] += mr.record_token_total(r)
-            y_cursor = padding_top + plot_height
+            y_cursor: float = padding_top + plot_height
             for project in project_order:
                 value = by_project[project]
                 if value <= 0:
@@ -393,24 +411,26 @@ def render_trend_chart(records, group_colors, period_id):
                 group_class = group_colors.get(project, "group-color-none")
                 project_label = mr.project_display_label(project)
                 bars.append(
-                    f'<rect x="{x:.1f}" y="{y_cursor:.1f}" width="{bar_width:.1f}" height="{seg_height:.1f}" '
+                    f'<rect x="{x:.1f}" y="{y_cursor:.1f}" '
+                    f'width="{bar_width:.1f}" height="{seg_height:.1f}" '
                     f'class="chart-bar {group_class}" '
                     f"onclick=\"highlightProject('{group_class}', event)\">"
-                    f"<title>{html.escape(project_label)} · {day['day']} - {mr.format_tokens(value)} tokens</title></rect>"
+                    f"<title>{html.escape(project_label)} · {day['day']} - "
+                    f"{mr.format_tokens(value)} tokens</title></rect>"
                 )
         return "".join(bars)
 
-    def bars_for_tokens():
+    def bars_for_tokens() -> str:
         bars = []
         for i, day in enumerate(days):
             x = padding_left + i * step + (step - bar_width) / 2
-            segments = [
+            segments: list[tuple[str, int]] = [
                 ("series-1", sum(r.get("input_tokens", 0) or 0 for r in day["records"])),
                 ("series-2", sum(r.get("output_tokens", 0) or 0 for r in day["records"])),
                 ("series-3", sum(r.get("cache_read_tokens", 0) or 0 for r in day["records"])),
                 ("series-4", sum(r.get("cache_creation_tokens", 0) or 0 for r in day["records"])),
             ]
-            y_cursor = padding_top + plot_height
+            y_cursor: float = padding_top + plot_height
             for css_class, value in segments:
                 if value <= 0:
                     continue
@@ -418,10 +438,12 @@ def render_trend_chart(records, group_colors, period_id):
                 y_cursor -= seg_height
                 type_name = SERIES_NAMES[css_class]
                 bars.append(
-                    f'<rect x="{x:.1f}" y="{y_cursor:.1f}" width="{bar_width:.1f}" height="{seg_height:.1f}" '
+                    f'<rect x="{x:.1f}" y="{y_cursor:.1f}" '
+                    f'width="{bar_width:.1f}" height="{seg_height:.1f}" '
                     f'class="chart-bar {css_class}" '
                     f"onclick=\"highlightTokenType('{css_class}', event)\">"
-                    f"<title>{type_name} · {day['day']} - {mr.format_tokens(value)} tokens</title></rect>"
+                    f"<title>{type_name} · {day['day']} - "
+                    f"{mr.format_tokens(value)} tokens</title></rect>"
                 )
         return "".join(bars)
 
@@ -439,12 +461,14 @@ def render_trend_chart(records, group_colors, period_id):
     # element regardless of which one is actually visible. Duplicate ids
     # are also invalid HTML on their own.
     pane_svg = (
-        f'<svg viewBox="0 0 {width} {height}" class="trend-svg" id="chart-pane-{period_id}" preserveAspectRatio="none" '
+        f'<svg viewBox="0 0 {width} {height}" class="trend-svg" '
+        f'id="chart-pane-{period_id}" preserveAspectRatio="none" '
         f'style="width:{width}px">'
         f"{highlight_html}{build_y_axis(max_pane)}{x_axis_html}{bars_for_pane()}</svg>"
     )
     tokens_svg = (
-        f'<svg viewBox="0 0 {width} {height}" class="trend-svg" id="chart-tokens-{period_id}" preserveAspectRatio="none" '
+        f'<svg viewBox="0 0 {width} {height}" class="trend-svg" '
+        f'id="chart-tokens-{period_id}" preserveAspectRatio="none" '
         f'style="width:{width}px">'
         f"{highlight_html}{build_y_axis(max_tokens)}{x_axis_html}{bars_for_tokens()}</svg>"
     )
@@ -478,8 +502,8 @@ def render_trend_chart(records, group_colors, period_id):
     # color_group_key so a worktree stays merged into its parent's single
     # entry, and the first raw path seen for a group is what the chip
     # links to, exactly as before.
-    pane_totals = {}
-    pane_first_path = {}
+    pane_totals: dict[str | None, int] = {}
+    pane_first_path: dict[str | None, Any] = {}
     for day in days:
         for r in day["records"]:
             project = r.get("project_path")
@@ -501,7 +525,7 @@ def render_trend_chart(records, group_colors, period_id):
         # -> plain basename, so raw_name and label naturally match and
         # the ":" is dropped.
         parent = mr.color_group_key(project)
-        raw_name = html.escape(os.path.basename((parent or "").rstrip("/")) or "sem projeto")
+        raw_name = html.escape(Path((parent or "").rstrip("/")).name or "sem projeto")
         label = html.escape(mr.project_display_label(parent))
         chip_text = raw_name if raw_name == label else f"{raw_name}:{label}"
         pane_legend_chips.append(
@@ -515,8 +539,10 @@ def render_trend_chart(records, group_colors, period_id):
     return (
         '<div class="trend-container">'
         '<div class="trend-mode-tabs">'
-        f'<span class="tab-btn active" id="trend-btn-pane-{period_id}" onclick="showTrendMode(\'pane\', \'{period_id}\')">Por projeto</span>'
-        f'<span class="tab-btn" id="trend-btn-tokens-{period_id}" onclick="showTrendMode(\'tokens\', \'{period_id}\')">Por tipo de token</span>'
+        f'<span class="tab-btn active" id="trend-btn-pane-{period_id}" '
+        f"onclick=\"showTrendMode('pane', '{period_id}')\">Por projeto</span>"
+        f'<span class="tab-btn" id="trend-btn-tokens-{period_id}" '
+        f"onclick=\"showTrendMode('tokens', '{period_id}')\">Por tipo de token</span>"
         "</div>"
         f'<div class="trend-pane active" id="trend-pane-pane-{period_id}">'
         f'<div class="trend-scroll" data-floor-hit="{str(scrollable).lower()}">{pane_svg}</div>'
@@ -536,8 +562,10 @@ def render_trend_chart(records, group_colors, period_id):
     )
 
 
-def compute_project_series_totals(records):
-    per_project = {}
+def compute_project_series_totals(
+    records: list[dict[str, Any]],
+) -> tuple[dict[str | None, dict[str, int]], dict[str | None, int]]:
+    per_project: dict[str | None, dict[str, int]] = {}
     for r in records:
         project = r.get("project_path")
         bucket = per_project.setdefault(
@@ -552,8 +580,12 @@ def compute_project_series_totals(records):
 
 
 def render_project_totals_chart(
-    records, project_first_seen, project_last_seen, open_projects, period_id
-):
+    records: list[dict[str, Any]],
+    project_first_seen: dict[str, str],
+    project_last_seen: dict[str, str],
+    open_projects: set[str],
+    period_id: str,
+) -> str:
     ordered_projects, _totals, _max_total = mr.compute_project_totals(records, project_last_seen)
     # Segmented by token type (2026-07-20) instead of one flat bar, so the
     # composition legend can highlight/filter these bars the same way it
@@ -581,7 +613,7 @@ def render_project_totals_chart(
     # longer; 460-310=150 user units wasn't enough room for it.
     width = 620
 
-    def render_rows(projects):
+    def render_rows(projects: list[str | None]) -> tuple[list[str], int]:
         rows = []
         y = 14
         for project in projects:
@@ -597,7 +629,7 @@ def render_project_totals_chart(
             open_marker = " <title>aberto agora</title>●" if is_open else ""
             days_running = mr.project_days_running(project_first_seen, project)
             seg_rects = []
-            x_cursor = label_x
+            x_cursor: float = label_x
             for css_class, value in series_by_project.get(project, {}).items():
                 if value <= 0:
                     continue
@@ -607,7 +639,8 @@ def render_project_totals_chart(
                     f'<rect x="{x_cursor:.1f}" y="{y + 9}" width="{seg_width:.1f}" height="14" '
                     f'class="chart-bar {css_class}" '
                     f"onclick=\"highlightTokenType('{css_class}', event)\">"
-                    f"<title>{html.escape(label)} · {name} · {mr.format_tokens(value)}</title></rect>"
+                    f"<title>{html.escape(label)} · {name} · "
+                    f"{mr.format_tokens(value)}</title></rect>"
                 )
                 x_cursor += seg_width
             # Total label carries the grand total (always visible, 2026-07-21
@@ -620,18 +653,22 @@ def render_project_totals_chart(
             # are italic and tinted that series' color so it reads as
             # "the filtered slice," not a second real total.
             series_tspans = "".join(
-                f'<tspan class="total-only {css_class}"> · {mr.format_tokens(series_by_project.get(project, {}).get(css_class, 0))}</tspan>'
+                f'<tspan class="total-only {css_class}"> · '
+                f"{mr.format_tokens(series_by_project.get(project, {}).get(css_class, 0))}</tspan>"
                 for css_class in ("series-1", "series-2", "series-3", "series-4")
             )
             total_text = (
-                f'<text x="{label_x + bar_max_width + 6}" y="{y + 20}" class="chart-axis-label proj-total">'
+                f'<text x="{label_x + bar_max_width + 6}" y="{y + 20}" '
+                'class="chart-axis-label proj-total">'
                 f'<tspan class="total-grand">{mr.format_tokens(total)}{days_running}</tspan>'
                 f"{series_tspans}"
                 "</text>"
             )
             rows.append(
-                f'<text x="{label_x}" y="{y}" class="project-chart-label"{title_attr}>{html.escape(label)}{open_marker}</text>'
-                f'<rect x="{label_x}" y="{y + 9}" width="{bar_max_width}" height="14" class="project-chart-track" />'
+                f'<text x="{label_x}" y="{y}" class="project-chart-label"{title_attr}>'
+                f"{html.escape(label)}{open_marker}</text>"
+                f'<rect x="{label_x}" y="{y + 9}" width="{bar_max_width}" '
+                'height="14" class="project-chart-track" />'
                 f"{''.join(seg_rects)}"
                 f"{total_text}"
             )
@@ -643,7 +680,10 @@ def render_project_totals_chart(
     hidden_projects = ordered_projects[10:]
 
     visible_rows, visible_height = render_rows(visible_projects)
-    visible_svg = f'<svg viewBox="0 0 {width} {visible_height}" class="project-chart-svg">{"".join(visible_rows)}</svg>'
+    visible_svg = (
+        f'<svg viewBox="0 0 {width} {visible_height}" class="project-chart-svg">'
+        f"{''.join(visible_rows)}</svg>"
+    )
 
     more_html = ""
     if hidden_projects:
@@ -670,7 +710,8 @@ def render_project_totals_chart(
         for css_class in ("series-1", "series-2", "series-3", "series-4")
     }
     legend = render_composition_legend(overall_totals) + (
-        '<div class="project-chart-legend"><span class="legend-chip">● sessão aberta agora</span></div>'
+        '<div class="project-chart-legend"><span class="legend-chip">'
+        "● sessão aberta agora</span></div>"
     )
     return (
         '<div class="project-chart-container">'
@@ -683,7 +724,9 @@ def render_project_totals_chart(
     )
 
 
-def build_group_colors(chart_records, daily_chart_records):
+def build_group_colors(
+    chart_records: list[dict[str, Any]], daily_chart_records: list[dict[str, Any]]
+) -> dict[str | None, str]:
     # The trend chart renders daily_chart_records (raw, pre-dedup snapshots
     # expanded into per-day deltas) while colours and the legend are built
     # from chart_records (one deduped representative per session). Any
@@ -702,12 +745,12 @@ def build_group_colors(chart_records, daily_chart_records):
     return mr.assign_group_colors(list(chart_records) + list(daily_chart_records))
 
 
-def render_backfill_note():
+def render_backfill_note() -> str:
     text = mr.describe_backfill_state(mr.load_backfill_state())
     return f'<span class="backfill-note">{html.escape(text)}</span>'
 
 
-def render_period_filter():
+def render_period_filter() -> str:
     chips = []
     for period in mr.PERIODS:
         active = " active" if period.id == mr.DEFAULT_PERIOD_ID else ""
@@ -720,18 +763,18 @@ def render_period_filter():
 
 
 def render_html(
-    records,
-    subagents_by_session,
-    chart_records,
-    daily_chart_records,
-    period_windows,
-    project_first_seen,
-    project_last_seen,
-    open_projects,
-):
+    records: list[dict[str, Any]],
+    subagents_by_session: dict[Any, list[dict[str, Any]]],
+    chart_records: list[dict[str, Any]],
+    daily_chart_records: list[dict[str, Any]],
+    period_windows: dict[str, tuple[datetime, datetime] | None],
+    project_first_seen: dict[str, str],
+    project_last_seen: dict[str, str],
+    open_projects: set[str],
+) -> str:
     group_colors = build_group_colors(chart_records, daily_chart_records)
 
-    def periods_for(record):
+    def periods_for(record: dict[str, Any]) -> tuple[str, ...]:
         return tuple(
             period.id
             for period in mr.PERIODS
@@ -759,13 +802,13 @@ def render_html(
     # nothing else visible in that column they read as duplicates.
     # Numbering only kicks in for a label actually shared by 2+ distinct
     # session_ids, in first-seen order across the whole table.
-    label_counts = {}
+    label_counts: dict[str, int] = {}
     for _, group in visible_groups:
         for r in group["records"]:
             label = r.get("task_label")
             if label:
                 label_counts[label] = label_counts.get(label, 0) + 1
-    label_seen = {}
+    label_seen: dict[str, int] = {}
 
     rows_html = []
     panels_html = []
@@ -960,7 +1003,11 @@ def render_html(
           --group-none: #898781; --group-none-tint: transparent;
         }
       }
-      .trend-container { padding: 12px 16px; border-bottom: 1px solid var(--border); background: var(--surface-1); }
+      .trend-container {
+        padding: 12px 16px;
+        border-bottom: 1px solid var(--border);
+        background: var(--surface-1);
+      }
       /* The sticky offset lives on the WRAPPER, not on .trend-container
          itself (2026-08-13 fix). .trend-container's sticky containing block
          used to be its own `.period-block` wrapper, and that wrapper is
@@ -982,15 +1029,36 @@ def render_html(
       .project-chart-title { font-size: 13px; margin: 0 0 8px; color: var(--text-secondary); }
       .project-chart-sort-note { font-size: 10px; margin: -4px 0 8px; color: var(--text-muted); }
       .project-chart-svg { width: 100%; max-width: 760px; display: block; }
-      .project-chart-label { font-size: 10px; fill: var(--text-primary); font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
+      .project-chart-label {
+        font-size: 10px;
+        fill: var(--text-primary);
+        font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+      }
       .project-chart-track { fill: var(--border); }
       .trend-legend-slot { height: 52px; overflow-y: auto; }
-      .project-chart-legend { display: flex; flex-wrap: wrap; row-gap: 4px; gap: 14px; padding: 6px 0 0; font-size: 10px; color: var(--text-secondary); }
+      .project-chart-legend {
+        display: flex;
+        flex-wrap: wrap;
+        row-gap: 4px;
+        gap: 14px;
+        padding: 6px 0 0;
+        font-size: 10px;
+        color: var(--text-secondary);
+      }
       .project-chart-legend .legend-chip, .trend-legend-slot .legend-chip { cursor: pointer; }
-      .project-chart-toggle { font-size: 11px; color: var(--series-1); cursor: pointer; padding: 4px 0; }
+      .project-chart-toggle {
+        font-size: 11px;
+        color: var(--series-1);
+        cursor: pointer;
+        padding: 4px 0;
+      }
       .project-chart-toggle:hover { text-decoration: underline; }
       .chart-gridline { stroke: var(--border); stroke-width: 1; }
-      .chart-axis-label { fill: var(--text-muted); font-size: 10px; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
+      .chart-axis-label {
+        fill: var(--text-muted);
+        font-size: 10px;
+        font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+      }
       .chart-bar { cursor: pointer; }
       .chart-bar.group-color-1 { fill: var(--group-1); }
       .chart-bar.group-color-2 { fill: var(--group-2); }
@@ -1027,14 +1095,39 @@ def render_html(
       .chart-bar.series-2 { fill: var(--series-2); }
       .chart-bar.series-3 { fill: var(--series-3); }
       .chart-bar.series-4 { fill: var(--series-4); }
-      body { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; margin: 0; background: var(--surface-1); color: var(--text-primary); }
-      .tab-bar { display: flex; gap: 4px; padding: 8px 16px 0; border-bottom: 1px solid var(--border); }
-      .tab-btn { padding: 6px 14px; font-size: 12px; cursor: pointer; color: var(--text-muted); border-bottom: 2px solid transparent; }
-      .tab-btn.active { color: var(--text-primary); border-bottom-color: var(--series-1); font-weight: bold; }
+      body {
+        font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+        margin: 0;
+        background: var(--surface-1);
+        color: var(--text-primary);
+      }
+      .tab-bar {
+        display: flex;
+        gap: 4px;
+        padding: 8px 16px 0;
+        border-bottom: 1px solid var(--border);
+      }
+      .tab-btn {
+        padding: 6px 14px;
+        font-size: 12px;
+        cursor: pointer;
+        color: var(--text-muted);
+        border-bottom: 2px solid transparent;
+      }
+      .tab-btn.active {
+        color: var(--text-primary);
+        border-bottom-color: var(--series-1);
+        font-weight: bold;
+      }
       .tab-pane { display: none; }
       .tab-pane.active { display: block; }
       .main-row { display: flex; }
-      .session-list { width: 62%; border-right: 1px solid var(--border); overflow-x: auto; font-family: monospace; }
+      .session-list {
+        width: 62%;
+        border-right: 1px solid var(--border);
+        overflow-x: auto;
+        font-family: monospace;
+      }
       /* width: fit-content + min-width: 100% (2026-07-21) - a flex row
          with no explicit width stretches to fill .session-list's box
          (62% of the page) but does NOT grow past that to fit overflowing
@@ -1044,26 +1137,91 @@ def render_html(
          group-color tint stopped partway across a horizontally-scrolled
          row instead of following the content. fit-content lets the row
          grow to match its actual (wider) content when needed. */
-      .session-row { display: flex; align-items: center; gap: 8px; padding: 6px 10px; cursor: pointer; border-bottom: 1px solid var(--border); font-size: 12px; width: fit-content; min-width: 100%; }
-      .session-row > span:not(:last-child) { border-right: 1px solid var(--border); padding-right: 8px; }
+      .session-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 6px 10px;
+        cursor: pointer;
+        border-bottom: 1px solid var(--border);
+        font-size: 12px;
+        width: fit-content;
+        min-width: 100%;
+      }
+      .session-row > span:not(:last-child) {
+        border-right: 1px solid var(--border);
+        padding-right: 8px;
+      }
       .session-row:hover { background: rgba(42, 120, 214, 0.08); }
       .session-row.active { background: rgba(42, 120, 214, 0.16); font-weight: bold; }
       .session-row .sid { color: var(--text-muted); width: 90px; flex-shrink: 0; }
       .session-row .subagent-col { width: 28px; flex-shrink: 0; text-align: center; }
-      .session-row .tokens-total { color: var(--text-secondary); width: 55px; flex-shrink: 0; text-align: right; }
-      .session-row .tmux-window { width: 90px; flex-shrink: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-      .session-header { position: sticky; top: 0; z-index: 1; background: var(--surface-1); font-weight: bold; color: var(--text-muted); font-size: 10px; cursor: default; border-bottom: 2px solid var(--border); }
+      .session-row .tokens-total {
+        color: var(--text-secondary);
+        width: 55px;
+        flex-shrink: 0;
+        text-align: right;
+      }
+      .session-row .tmux-window {
+        width: 90px;
+        flex-shrink: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .session-header {
+        position: sticky;
+        top: 0;
+        z-index: 1;
+        background: var(--surface-1);
+        font-weight: bold;
+        color: var(--text-muted);
+        font-size: 10px;
+        cursor: default;
+        border-bottom: 2px solid var(--border);
+      }
       .session-header:hover { background: var(--surface-1); }
       .session-row .date-col { width: 65px; flex-shrink: 0; }
-      .session-row .label-col { width: 300px; flex-shrink: 0; white-space: normal; word-break: break-word; }
-      .session-row .tag-col { width: 50px; flex-shrink: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-      .session-row .branch-col { width: 70px; flex-shrink: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .session-row .label-col {
+        width: 300px;
+        flex-shrink: 0;
+        white-space: normal;
+        word-break: break-word;
+      }
+      .session-row .tag-col {
+        width: 50px;
+        flex-shrink: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .session-row .branch-col {
+        width: 70px;
+        flex-shrink: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
       .session-row .duration-col { width: 55px; flex-shrink: 0; text-align: right; }
       .session-row .comp-header { width: 90px; flex-shrink: 0; }
-      .comp-legend { display: flex; gap: 14px; padding: 8px 10px; font-size: 11px; color: var(--text-secondary); border-bottom: 1px solid var(--border); font-family: monospace; }
+      .comp-legend {
+        display: flex;
+        gap: 14px;
+        padding: 8px 10px;
+        font-size: 11px;
+        color: var(--text-secondary);
+        border-bottom: 1px solid var(--border);
+        font-family: monospace;
+      }
       .legend-chip { display: inline-flex; align-items: center; }
       .comp-legend .legend-chip { cursor: pointer; }
-      .legend-swatch { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 4px; }
+      .legend-swatch {
+        display: inline-block;
+        width: 8px;
+        height: 8px;
+        border-radius: 2px;
+        margin-right: 4px;
+      }
       .legend-swatch.group-color-1 { background: var(--group-1); }
       .legend-swatch.group-color-2 { background: var(--group-2); }
       .legend-swatch.group-color-3 { background: var(--group-3); }
@@ -1105,66 +1263,271 @@ def render_html(
       body[data-highlight~="series-1"] .legend-chip[data-series="series-1"],
       body[data-highlight~="series-2"] .legend-chip[data-series="series-2"],
       body[data-highlight~="series-3"] .legend-chip[data-series="series-3"],
-      body[data-highlight~="series-4"] .legend-chip[data-series="series-4"] { opacity: 1; font-weight: 700; }
+      body[data-highlight~="series-4"] .legend-chip[data-series="series-4"] {
+        opacity: 1;
+        font-weight: 700;
+      }
       body[data-highlight~="series-1"] .legend-chip[data-series="series-1"] .legend-total,
       body[data-highlight~="series-2"] .legend-chip[data-series="series-2"] .legend-total,
       body[data-highlight~="series-3"] .legend-chip[data-series="series-3"] .legend-total,
-      body[data-highlight~="series-4"] .legend-chip[data-series="series-4"] .legend-total { font-weight: 700; font-size: 13px; opacity: 1; }
+      body[data-highlight~="series-4"] .legend-chip[data-series="series-4"] .legend-total {
+        font-weight: 700;
+        font-size: 13px;
+        opacity: 1;
+      }
       /* Spotlight pattern: dim everything, then un-dim the highlighted
          series. For .comp-seg the un-dim rule outranks this one on
          specificity alone (extra .series-N class); for .chart-bar.series-N
          the two tie on specificity and the un-dim rule wins only because
          it's declared AFTER this one - keep this block before the un-dim
          rules below, do not reorder. */
-      body[data-highlight] .comp-seg, body[data-highlight] .chart-bar.series-1, body[data-highlight] .chart-bar.series-2, body[data-highlight] .chart-bar.series-3, body[data-highlight] .chart-bar.series-4 { opacity: 0.25; }
-      body[data-highlight~="series-1"] .comp-seg.series-1, body[data-highlight~="series-1"] .chart-bar.series-1 { opacity: 1; }
-      body[data-highlight~="series-2"] .comp-seg.series-2, body[data-highlight~="series-2"] .chart-bar.series-2 { opacity: 1; }
-      body[data-highlight~="series-3"] .comp-seg.series-3, body[data-highlight~="series-3"] .chart-bar.series-3 { opacity: 1; }
-      body[data-highlight~="series-4"] .comp-seg.series-4, body[data-highlight~="series-4"] .chart-bar.series-4 { opacity: 1; }
-      body[data-highlight~="series-1"] .comp-seg.series-1 { outline: 1px solid var(--series-1); outline-offset: 1px; }
-      body[data-highlight~="series-2"] .comp-seg.series-2 { outline: 1px solid var(--series-2); outline-offset: 1px; }
-      body[data-highlight~="series-3"] .comp-seg.series-3 { outline: 1px solid var(--series-3); outline-offset: 1px; }
-      body[data-highlight~="series-4"] .comp-seg.series-4 { outline: 1px solid var(--series-4); outline-offset: 1px; }
-      body[data-highlight~="series-1"] .chart-bar.series-1 { stroke: var(--series-1); stroke-width: 1.5px; }
-      body[data-highlight~="series-2"] .chart-bar.series-2 { stroke: var(--series-2); stroke-width: 1.5px; }
-      body[data-highlight~="series-3"] .chart-bar.series-3 { stroke: var(--series-3); stroke-width: 1.5px; }
-      body[data-highlight~="series-4"] .chart-bar.series-4 { stroke: var(--series-4); stroke-width: 1.5px; }
+      body[data-highlight] .comp-seg,
+      body[data-highlight] .chart-bar.series-1,
+      body[data-highlight] .chart-bar.series-2,
+      body[data-highlight] .chart-bar.series-3,
+      body[data-highlight] .chart-bar.series-4 {
+        opacity: 0.25;
+      }
+      body[data-highlight~="series-1"] .comp-seg.series-1,
+      body[data-highlight~="series-1"] .chart-bar.series-1 {
+        opacity: 1;
+      }
+      body[data-highlight~="series-2"] .comp-seg.series-2,
+      body[data-highlight~="series-2"] .chart-bar.series-2 {
+        opacity: 1;
+      }
+      body[data-highlight~="series-3"] .comp-seg.series-3,
+      body[data-highlight~="series-3"] .chart-bar.series-3 {
+        opacity: 1;
+      }
+      body[data-highlight~="series-4"] .comp-seg.series-4,
+      body[data-highlight~="series-4"] .chart-bar.series-4 {
+        opacity: 1;
+      }
+      body[data-highlight~="series-1"] .comp-seg.series-1 {
+        outline: 1px solid var(--series-1);
+        outline-offset: 1px;
+      }
+      body[data-highlight~="series-2"] .comp-seg.series-2 {
+        outline: 1px solid var(--series-2);
+        outline-offset: 1px;
+      }
+      body[data-highlight~="series-3"] .comp-seg.series-3 {
+        outline: 1px solid var(--series-3);
+        outline-offset: 1px;
+      }
+      body[data-highlight~="series-4"] .comp-seg.series-4 {
+        outline: 1px solid var(--series-4);
+        outline-offset: 1px;
+      }
+      body[data-highlight~="series-1"] .chart-bar.series-1 {
+        stroke: var(--series-1);
+        stroke-width: 1.5px;
+      }
+      body[data-highlight~="series-2"] .chart-bar.series-2 {
+        stroke: var(--series-2);
+        stroke-width: 1.5px;
+      }
+      body[data-highlight~="series-3"] .chart-bar.series-3 {
+        stroke: var(--series-3);
+        stroke-width: 1.5px;
+      }
+      body[data-highlight~="series-4"] .chart-bar.series-4 {
+        stroke: var(--series-4);
+        stroke-width: 1.5px;
+      }
       /* Same spotlight pattern as series-N above, for "por projeto"'s
          group-color-N bars/legend (2026-07-21) - the two share one
          data-highlight attribute since only one trend-mode pane is ever
          visible at once. */
-      body[data-highlight] .chart-bar.group-color-1, body[data-highlight] .chart-bar.group-color-2, body[data-highlight] .chart-bar.group-color-3, body[data-highlight] .chart-bar.group-color-4, body[data-highlight] .chart-bar.group-color-5, body[data-highlight] .chart-bar.group-color-6, body[data-highlight] .chart-bar.group-color-7, body[data-highlight] .chart-bar.group-color-8, body[data-highlight] .chart-bar.group-color-9, body[data-highlight] .chart-bar.group-color-10, body[data-highlight] .chart-bar.group-color-11, body[data-highlight] .chart-bar.group-color-12, body[data-highlight] .chart-bar.group-color-13, body[data-highlight] .chart-bar.group-color-14, body[data-highlight] .chart-bar.group-color-15, body[data-highlight] .chart-bar.group-color-16, body[data-highlight] .chart-bar.group-color-17, body[data-highlight] .chart-bar.group-color-18, body[data-highlight] .chart-bar.group-color-19, body[data-highlight] .chart-bar.group-color-20, body[data-highlight] .chart-bar.group-color-21, body[data-highlight] .chart-bar.group-color-22, body[data-highlight] .chart-bar.group-color-23, body[data-highlight] .chart-bar.group-color-24, body[data-highlight] .chart-bar.group-color-25, body[data-highlight] .chart-bar.group-color-26, body[data-highlight] .chart-bar.group-color-27, body[data-highlight] .chart-bar.group-color-28, body[data-highlight] .chart-bar.group-color-29, body[data-highlight] .chart-bar.group-color-30, body[data-highlight] .chart-bar.group-color-none { opacity: 0.25; }
-      body[data-highlight~="group-color-1"] .chart-bar.group-color-1 { opacity: 1; stroke: var(--group-1); stroke-width: 1.5px; }
-      body[data-highlight~="group-color-2"] .chart-bar.group-color-2 { opacity: 1; stroke: var(--group-2); stroke-width: 1.5px; }
-      body[data-highlight~="group-color-3"] .chart-bar.group-color-3 { opacity: 1; stroke: var(--group-3); stroke-width: 1.5px; }
-      body[data-highlight~="group-color-4"] .chart-bar.group-color-4 { opacity: 1; stroke: var(--group-4); stroke-width: 1.5px; }
-      body[data-highlight~="group-color-5"] .chart-bar.group-color-5 { opacity: 1; stroke: var(--group-5); stroke-width: 1.5px; }
-      body[data-highlight~="group-color-6"] .chart-bar.group-color-6 { opacity: 1; stroke: var(--group-6); stroke-width: 1.5px; }
-      body[data-highlight~="group-color-7"] .chart-bar.group-color-7 { opacity: 1; stroke: var(--group-7); stroke-width: 1.5px; }
-      body[data-highlight~="group-color-8"] .chart-bar.group-color-8 { opacity: 1; stroke: var(--group-8); stroke-width: 1.5px; }
-      body[data-highlight~="group-color-9"] .chart-bar.group-color-9 { opacity: 1; stroke: var(--group-9); stroke-width: 1.5px; }
-      body[data-highlight~="group-color-10"] .chart-bar.group-color-10 { opacity: 1; stroke: var(--group-10); stroke-width: 1.5px; }
-      body[data-highlight~="group-color-11"] .chart-bar.group-color-11 { opacity: 1; stroke: var(--group-11); stroke-width: 1.5px; }
-      body[data-highlight~="group-color-12"] .chart-bar.group-color-12 { opacity: 1; stroke: var(--group-12); stroke-width: 1.5px; }
-      body[data-highlight~="group-color-13"] .chart-bar.group-color-13 { opacity: 1; stroke: var(--group-13); stroke-width: 1.5px; }
-      body[data-highlight~="group-color-14"] .chart-bar.group-color-14 { opacity: 1; stroke: var(--group-14); stroke-width: 1.5px; }
-      body[data-highlight~="group-color-15"] .chart-bar.group-color-15 { opacity: 1; stroke: var(--group-15); stroke-width: 1.5px; }
-      body[data-highlight~="group-color-16"] .chart-bar.group-color-16 { opacity: 1; stroke: var(--group-16); stroke-width: 1.5px; }
-      body[data-highlight~="group-color-17"] .chart-bar.group-color-17 { opacity: 1; stroke: var(--group-17); stroke-width: 1.5px; }
-      body[data-highlight~="group-color-18"] .chart-bar.group-color-18 { opacity: 1; stroke: var(--group-18); stroke-width: 1.5px; }
-      body[data-highlight~="group-color-19"] .chart-bar.group-color-19 { opacity: 1; stroke: var(--group-19); stroke-width: 1.5px; }
-      body[data-highlight~="group-color-20"] .chart-bar.group-color-20 { opacity: 1; stroke: var(--group-20); stroke-width: 1.5px; }
-      body[data-highlight~="group-color-21"] .chart-bar.group-color-21 { opacity: 1; stroke: var(--group-21); stroke-width: 1.5px; }
-      body[data-highlight~="group-color-22"] .chart-bar.group-color-22 { opacity: 1; stroke: var(--group-22); stroke-width: 1.5px; }
-      body[data-highlight~="group-color-23"] .chart-bar.group-color-23 { opacity: 1; stroke: var(--group-23); stroke-width: 1.5px; }
-      body[data-highlight~="group-color-24"] .chart-bar.group-color-24 { opacity: 1; stroke: var(--group-24); stroke-width: 1.5px; }
-      body[data-highlight~="group-color-25"] .chart-bar.group-color-25 { opacity: 1; stroke: var(--group-25); stroke-width: 1.5px; }
-      body[data-highlight~="group-color-26"] .chart-bar.group-color-26 { opacity: 1; stroke: var(--group-26); stroke-width: 1.5px; }
-      body[data-highlight~="group-color-27"] .chart-bar.group-color-27 { opacity: 1; stroke: var(--group-27); stroke-width: 1.5px; }
-      body[data-highlight~="group-color-28"] .chart-bar.group-color-28 { opacity: 1; stroke: var(--group-28); stroke-width: 1.5px; }
-      body[data-highlight~="group-color-29"] .chart-bar.group-color-29 { opacity: 1; stroke: var(--group-29); stroke-width: 1.5px; }
-      body[data-highlight~="group-color-30"] .chart-bar.group-color-30 { opacity: 1; stroke: var(--group-30); stroke-width: 1.5px; }
-      body[data-highlight~="group-color-none"] .chart-bar.group-color-none { opacity: 1; stroke: var(--group-none); stroke-width: 1.5px; }
+      body[data-highlight] .chart-bar.group-color-1,
+      body[data-highlight] .chart-bar.group-color-2,
+      body[data-highlight] .chart-bar.group-color-3,
+      body[data-highlight] .chart-bar.group-color-4,
+      body[data-highlight] .chart-bar.group-color-5,
+      body[data-highlight] .chart-bar.group-color-6,
+      body[data-highlight] .chart-bar.group-color-7,
+      body[data-highlight] .chart-bar.group-color-8,
+      body[data-highlight] .chart-bar.group-color-9,
+      body[data-highlight] .chart-bar.group-color-10,
+      body[data-highlight] .chart-bar.group-color-11,
+      body[data-highlight] .chart-bar.group-color-12,
+      body[data-highlight] .chart-bar.group-color-13,
+      body[data-highlight] .chart-bar.group-color-14,
+      body[data-highlight] .chart-bar.group-color-15,
+      body[data-highlight] .chart-bar.group-color-16,
+      body[data-highlight] .chart-bar.group-color-17,
+      body[data-highlight] .chart-bar.group-color-18,
+      body[data-highlight] .chart-bar.group-color-19,
+      body[data-highlight] .chart-bar.group-color-20,
+      body[data-highlight] .chart-bar.group-color-21,
+      body[data-highlight] .chart-bar.group-color-22,
+      body[data-highlight] .chart-bar.group-color-23,
+      body[data-highlight] .chart-bar.group-color-24,
+      body[data-highlight] .chart-bar.group-color-25,
+      body[data-highlight] .chart-bar.group-color-26,
+      body[data-highlight] .chart-bar.group-color-27,
+      body[data-highlight] .chart-bar.group-color-28,
+      body[data-highlight] .chart-bar.group-color-29,
+      body[data-highlight] .chart-bar.group-color-30,
+      body[data-highlight] .chart-bar.group-color-none {
+        opacity: 0.25;
+      }
+      body[data-highlight~="group-color-1"] .chart-bar.group-color-1 {
+        opacity: 1;
+        stroke: var(--group-1);
+        stroke-width: 1.5px;
+      }
+      body[data-highlight~="group-color-2"] .chart-bar.group-color-2 {
+        opacity: 1;
+        stroke: var(--group-2);
+        stroke-width: 1.5px;
+      }
+      body[data-highlight~="group-color-3"] .chart-bar.group-color-3 {
+        opacity: 1;
+        stroke: var(--group-3);
+        stroke-width: 1.5px;
+      }
+      body[data-highlight~="group-color-4"] .chart-bar.group-color-4 {
+        opacity: 1;
+        stroke: var(--group-4);
+        stroke-width: 1.5px;
+      }
+      body[data-highlight~="group-color-5"] .chart-bar.group-color-5 {
+        opacity: 1;
+        stroke: var(--group-5);
+        stroke-width: 1.5px;
+      }
+      body[data-highlight~="group-color-6"] .chart-bar.group-color-6 {
+        opacity: 1;
+        stroke: var(--group-6);
+        stroke-width: 1.5px;
+      }
+      body[data-highlight~="group-color-7"] .chart-bar.group-color-7 {
+        opacity: 1;
+        stroke: var(--group-7);
+        stroke-width: 1.5px;
+      }
+      body[data-highlight~="group-color-8"] .chart-bar.group-color-8 {
+        opacity: 1;
+        stroke: var(--group-8);
+        stroke-width: 1.5px;
+      }
+      body[data-highlight~="group-color-9"] .chart-bar.group-color-9 {
+        opacity: 1;
+        stroke: var(--group-9);
+        stroke-width: 1.5px;
+      }
+      body[data-highlight~="group-color-10"] .chart-bar.group-color-10 {
+        opacity: 1;
+        stroke: var(--group-10);
+        stroke-width: 1.5px;
+      }
+      body[data-highlight~="group-color-11"] .chart-bar.group-color-11 {
+        opacity: 1;
+        stroke: var(--group-11);
+        stroke-width: 1.5px;
+      }
+      body[data-highlight~="group-color-12"] .chart-bar.group-color-12 {
+        opacity: 1;
+        stroke: var(--group-12);
+        stroke-width: 1.5px;
+      }
+      body[data-highlight~="group-color-13"] .chart-bar.group-color-13 {
+        opacity: 1;
+        stroke: var(--group-13);
+        stroke-width: 1.5px;
+      }
+      body[data-highlight~="group-color-14"] .chart-bar.group-color-14 {
+        opacity: 1;
+        stroke: var(--group-14);
+        stroke-width: 1.5px;
+      }
+      body[data-highlight~="group-color-15"] .chart-bar.group-color-15 {
+        opacity: 1;
+        stroke: var(--group-15);
+        stroke-width: 1.5px;
+      }
+      body[data-highlight~="group-color-16"] .chart-bar.group-color-16 {
+        opacity: 1;
+        stroke: var(--group-16);
+        stroke-width: 1.5px;
+      }
+      body[data-highlight~="group-color-17"] .chart-bar.group-color-17 {
+        opacity: 1;
+        stroke: var(--group-17);
+        stroke-width: 1.5px;
+      }
+      body[data-highlight~="group-color-18"] .chart-bar.group-color-18 {
+        opacity: 1;
+        stroke: var(--group-18);
+        stroke-width: 1.5px;
+      }
+      body[data-highlight~="group-color-19"] .chart-bar.group-color-19 {
+        opacity: 1;
+        stroke: var(--group-19);
+        stroke-width: 1.5px;
+      }
+      body[data-highlight~="group-color-20"] .chart-bar.group-color-20 {
+        opacity: 1;
+        stroke: var(--group-20);
+        stroke-width: 1.5px;
+      }
+      body[data-highlight~="group-color-21"] .chart-bar.group-color-21 {
+        opacity: 1;
+        stroke: var(--group-21);
+        stroke-width: 1.5px;
+      }
+      body[data-highlight~="group-color-22"] .chart-bar.group-color-22 {
+        opacity: 1;
+        stroke: var(--group-22);
+        stroke-width: 1.5px;
+      }
+      body[data-highlight~="group-color-23"] .chart-bar.group-color-23 {
+        opacity: 1;
+        stroke: var(--group-23);
+        stroke-width: 1.5px;
+      }
+      body[data-highlight~="group-color-24"] .chart-bar.group-color-24 {
+        opacity: 1;
+        stroke: var(--group-24);
+        stroke-width: 1.5px;
+      }
+      body[data-highlight~="group-color-25"] .chart-bar.group-color-25 {
+        opacity: 1;
+        stroke: var(--group-25);
+        stroke-width: 1.5px;
+      }
+      body[data-highlight~="group-color-26"] .chart-bar.group-color-26 {
+        opacity: 1;
+        stroke: var(--group-26);
+        stroke-width: 1.5px;
+      }
+      body[data-highlight~="group-color-27"] .chart-bar.group-color-27 {
+        opacity: 1;
+        stroke: var(--group-27);
+        stroke-width: 1.5px;
+      }
+      body[data-highlight~="group-color-28"] .chart-bar.group-color-28 {
+        opacity: 1;
+        stroke: var(--group-28);
+        stroke-width: 1.5px;
+      }
+      body[data-highlight~="group-color-29"] .chart-bar.group-color-29 {
+        opacity: 1;
+        stroke: var(--group-29);
+        stroke-width: 1.5px;
+      }
+      body[data-highlight~="group-color-30"] .chart-bar.group-color-30 {
+        opacity: 1;
+        stroke: var(--group-30);
+        stroke-width: 1.5px;
+      }
+      body[data-highlight~="group-color-none"] .chart-bar.group-color-none {
+        opacity: 1;
+        stroke: var(--group-none);
+        stroke-width: 1.5px;
+      }
       body[data-highlight~="group-color-1"] .legend-chip:has(.legend-swatch.group-color-1),
       body[data-highlight~="group-color-2"] .legend-chip:has(.legend-swatch.group-color-2),
       body[data-highlight~="group-color-3"] .legend-chip:has(.legend-swatch.group-color-3),
@@ -1193,50 +1556,178 @@ def render_html(
       body[data-highlight~="group-color-27"] .legend-chip:has(.legend-swatch.group-color-27),
       body[data-highlight~="group-color-28"] .legend-chip:has(.legend-swatch.group-color-28),
       body[data-highlight~="group-color-29"] .legend-chip:has(.legend-swatch.group-color-29),
-      body[data-highlight~="group-color-30"] .legend-chip:has(.legend-swatch.group-color-30) { opacity: 1; font-weight: 700; }
+      body[data-highlight~="group-color-30"] .legend-chip:has(.legend-swatch.group-color-30) {
+        opacity: 1;
+        font-weight: 700;
+      }
       .proj-total .total-only { display: none; }
-      body[data-highlight~="series-1"] .proj-total .total-only.series-1 { display: inline; font-style: italic; fill: var(--series-1); }
-      body[data-highlight~="series-2"] .proj-total .total-only.series-2 { display: inline; font-style: italic; fill: var(--series-2); }
-      body[data-highlight~="series-3"] .proj-total .total-only.series-3 { display: inline; font-style: italic; fill: var(--series-3); }
-      body[data-highlight~="series-4"] .proj-total .total-only.series-4 { display: inline; font-style: italic; fill: var(--series-4); }
-      .comp-bar { display: flex; gap: 2px; width: 90px; height: 10px; flex-shrink: 0; background: var(--border); }
+      body[data-highlight~="series-1"] .proj-total .total-only.series-1 {
+        display: inline;
+        font-style: italic;
+        fill: var(--series-1);
+      }
+      body[data-highlight~="series-2"] .proj-total .total-only.series-2 {
+        display: inline;
+        font-style: italic;
+        fill: var(--series-2);
+      }
+      body[data-highlight~="series-3"] .proj-total .total-only.series-3 {
+        display: inline;
+        font-style: italic;
+        fill: var(--series-3);
+      }
+      body[data-highlight~="series-4"] .proj-total .total-only.series-4 {
+        display: inline;
+        font-style: italic;
+        fill: var(--series-4);
+      }
+      .comp-bar {
+        display: flex;
+        gap: 2px;
+        width: 90px;
+        height: 10px;
+        flex-shrink: 0;
+        background: var(--border);
+      }
       .comp-bar-empty { background: var(--border); }
       .comp-seg.series-1 { background: var(--series-1); }
       .comp-seg.series-2 { background: var(--series-2); }
       .comp-seg.series-3 { background: var(--series-3); }
       .comp-seg.series-4 { background: var(--series-4); }
-      .session-row.group-color-1 { background: var(--group-1-tint); border-left: 3px solid var(--group-1); }
-      .session-row.group-color-2 { background: var(--group-2-tint); border-left: 3px solid var(--group-2); }
-      .session-row.group-color-3 { background: var(--group-3-tint); border-left: 3px solid var(--group-3); }
-      .session-row.group-color-4 { background: var(--group-4-tint); border-left: 3px solid var(--group-4); }
-      .session-row.group-color-5 { background: var(--group-5-tint); border-left: 3px solid var(--group-5); }
-      .session-row.group-color-6 { background: var(--group-6-tint); border-left: 3px solid var(--group-6); }
-      .session-row.group-color-7 { background: var(--group-7-tint); border-left: 3px solid var(--group-7); }
-      .session-row.group-color-8 { background: var(--group-8-tint); border-left: 3px solid var(--group-8); }
-      .session-row.group-color-9 { background: var(--group-9-tint); border-left: 3px solid var(--group-9); }
-      .session-row.group-color-10 { background: var(--group-10-tint); border-left: 3px solid var(--group-10); }
-      .session-row.group-color-11 { background: var(--group-11-tint); border-left: 3px solid var(--group-11); }
-      .session-row.group-color-12 { background: var(--group-12-tint); border-left: 3px solid var(--group-12); }
-      .session-row.group-color-13 { background: var(--group-13-tint); border-left: 3px solid var(--group-13); }
-      .session-row.group-color-14 { background: var(--group-14-tint); border-left: 3px solid var(--group-14); }
-      .session-row.group-color-15 { background: var(--group-15-tint); border-left: 3px solid var(--group-15); }
-      .session-row.group-color-16 { background: var(--group-16-tint); border-left: 3px solid var(--group-16); }
-      .session-row.group-color-17 { background: var(--group-17-tint); border-left: 3px solid var(--group-17); }
-      .session-row.group-color-18 { background: var(--group-18-tint); border-left: 3px solid var(--group-18); }
-      .session-row.group-color-19 { background: var(--group-19-tint); border-left: 3px solid var(--group-19); }
-      .session-row.group-color-20 { background: var(--group-20-tint); border-left: 3px solid var(--group-20); }
-      .session-row.group-color-21 { background: var(--group-21-tint); border-left: 3px solid var(--group-21); }
-      .session-row.group-color-22 { background: var(--group-22-tint); border-left: 3px solid var(--group-22); }
-      .session-row.group-color-23 { background: var(--group-23-tint); border-left: 3px solid var(--group-23); }
-      .session-row.group-color-24 { background: var(--group-24-tint); border-left: 3px solid var(--group-24); }
-      .session-row.group-color-25 { background: var(--group-25-tint); border-left: 3px solid var(--group-25); }
-      .session-row.group-color-26 { background: var(--group-26-tint); border-left: 3px solid var(--group-26); }
-      .session-row.group-color-27 { background: var(--group-27-tint); border-left: 3px solid var(--group-27); }
-      .session-row.group-color-28 { background: var(--group-28-tint); border-left: 3px solid var(--group-28); }
-      .session-row.group-color-29 { background: var(--group-29-tint); border-left: 3px solid var(--group-29); }
-      .session-row.group-color-30 { background: var(--group-30-tint); border-left: 3px solid var(--group-30); }
+      .session-row.group-color-1 {
+        background: var(--group-1-tint);
+        border-left: 3px solid var(--group-1);
+      }
+      .session-row.group-color-2 {
+        background: var(--group-2-tint);
+        border-left: 3px solid var(--group-2);
+      }
+      .session-row.group-color-3 {
+        background: var(--group-3-tint);
+        border-left: 3px solid var(--group-3);
+      }
+      .session-row.group-color-4 {
+        background: var(--group-4-tint);
+        border-left: 3px solid var(--group-4);
+      }
+      .session-row.group-color-5 {
+        background: var(--group-5-tint);
+        border-left: 3px solid var(--group-5);
+      }
+      .session-row.group-color-6 {
+        background: var(--group-6-tint);
+        border-left: 3px solid var(--group-6);
+      }
+      .session-row.group-color-7 {
+        background: var(--group-7-tint);
+        border-left: 3px solid var(--group-7);
+      }
+      .session-row.group-color-8 {
+        background: var(--group-8-tint);
+        border-left: 3px solid var(--group-8);
+      }
+      .session-row.group-color-9 {
+        background: var(--group-9-tint);
+        border-left: 3px solid var(--group-9);
+      }
+      .session-row.group-color-10 {
+        background: var(--group-10-tint);
+        border-left: 3px solid var(--group-10);
+      }
+      .session-row.group-color-11 {
+        background: var(--group-11-tint);
+        border-left: 3px solid var(--group-11);
+      }
+      .session-row.group-color-12 {
+        background: var(--group-12-tint);
+        border-left: 3px solid var(--group-12);
+      }
+      .session-row.group-color-13 {
+        background: var(--group-13-tint);
+        border-left: 3px solid var(--group-13);
+      }
+      .session-row.group-color-14 {
+        background: var(--group-14-tint);
+        border-left: 3px solid var(--group-14);
+      }
+      .session-row.group-color-15 {
+        background: var(--group-15-tint);
+        border-left: 3px solid var(--group-15);
+      }
+      .session-row.group-color-16 {
+        background: var(--group-16-tint);
+        border-left: 3px solid var(--group-16);
+      }
+      .session-row.group-color-17 {
+        background: var(--group-17-tint);
+        border-left: 3px solid var(--group-17);
+      }
+      .session-row.group-color-18 {
+        background: var(--group-18-tint);
+        border-left: 3px solid var(--group-18);
+      }
+      .session-row.group-color-19 {
+        background: var(--group-19-tint);
+        border-left: 3px solid var(--group-19);
+      }
+      .session-row.group-color-20 {
+        background: var(--group-20-tint);
+        border-left: 3px solid var(--group-20);
+      }
+      .session-row.group-color-21 {
+        background: var(--group-21-tint);
+        border-left: 3px solid var(--group-21);
+      }
+      .session-row.group-color-22 {
+        background: var(--group-22-tint);
+        border-left: 3px solid var(--group-22);
+      }
+      .session-row.group-color-23 {
+        background: var(--group-23-tint);
+        border-left: 3px solid var(--group-23);
+      }
+      .session-row.group-color-24 {
+        background: var(--group-24-tint);
+        border-left: 3px solid var(--group-24);
+      }
+      .session-row.group-color-25 {
+        background: var(--group-25-tint);
+        border-left: 3px solid var(--group-25);
+      }
+      .session-row.group-color-26 {
+        background: var(--group-26-tint);
+        border-left: 3px solid var(--group-26);
+      }
+      .session-row.group-color-27 {
+        background: var(--group-27-tint);
+        border-left: 3px solid var(--group-27);
+      }
+      .session-row.group-color-28 {
+        background: var(--group-28-tint);
+        border-left: 3px solid var(--group-28);
+      }
+      .session-row.group-color-29 {
+        background: var(--group-29-tint);
+        border-left: 3px solid var(--group-29);
+      }
+      .session-row.group-color-30 {
+        background: var(--group-30-tint);
+        border-left: 3px solid var(--group-30);
+      }
       .session-row.group-color-none { border-left: 3px solid var(--group-none); }
-      .group-header { display: flex; align-items: center; gap: 6px; padding: 6px 10px; font-size: 11px; font-weight: bold; cursor: pointer; border-bottom: 1px solid var(--border); background: var(--surface-1); width: fit-content; min-width: 100%; }
+      .group-header {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 6px 10px;
+        font-size: 11px;
+        font-weight: bold;
+        cursor: pointer;
+        border-bottom: 1px solid var(--border);
+        background: var(--surface-1);
+        width: fit-content;
+        min-width: 100%;
+      }
       .group-header.group-color-1 { border-left: 3px solid var(--group-1); }
       .group-header.group-color-2 { border-left: 3px solid var(--group-2); }
       .group-header.group-color-3 { border-left: 3px solid var(--group-3); }
@@ -1276,20 +1767,69 @@ def render_html(
          wins on its own, no !important needed - an open panel whose
          session just left the active period still disappears. */
       .detail-panel.open.period-hidden { display: none; }
-      .detail-close { float: right; background: none; border: none; font-size: 18px; cursor: pointer; color: var(--text-muted); line-height: 1; padding: 0; }
+      .detail-close {
+        float: right;
+        background: none;
+        border: none;
+        font-size: 18px;
+        cursor: pointer;
+        color: var(--text-muted);
+        line-height: 1;
+        padding: 0;
+      }
       .detail-close:hover { color: var(--text-primary); }
-      .subagent-row { display: grid; grid-template-columns: 0.6fr minmax(200px, 1.6fr) 0.9fr 0.6fr 0.7fr; padding: 4px 8px; border-bottom: 1px solid var(--border); }
+      .subagent-row {
+        display: grid;
+        grid-template-columns: 0.6fr minmax(200px, 1.6fr) 0.9fr 0.6fr 0.7fr;
+        padding: 4px 8px;
+        border-bottom: 1px solid var(--border);
+      }
       .subagent-tokens-cell { display: flex; align-items: center; gap: 6px; }
-      .subagent-row > span:not(:last-child) { border-right: 1px solid var(--border); padding-right: 8px; }
+      .subagent-row > span:not(:last-child) {
+        border-right: 1px solid var(--border);
+        padding-right: 8px;
+      }
       .subagent-row > span:nth-child(2) { white-space: normal; word-break: break-word; }
       .subagent-title { font-size: 12px; margin: 12px 0 6px; color: var(--text-secondary); }
-      .subagent-row.subagent-header { font-weight: bold; color: var(--text-muted); font-size: 10px; border-bottom: 2px solid var(--border); }
+      .subagent-row.subagent-header {
+        font-weight: bold;
+        color: var(--text-muted);
+        font-size: 10px;
+        border-bottom: 2px solid var(--border);
+      }
       .subagent-row-odd { background: rgba(0,0,0,0.02); }
       .empty { color: var(--text-muted); }
-      .period-filter { display: flex; align-items: center; gap: 8px; padding: 8px 16px; height: var(--period-filter-height); box-sizing: border-box; position: sticky; top: 0; z-index: 20; background: var(--surface-1); }
-      .period-chip { cursor: pointer; border: 1px solid currentColor; border-radius: 999px; padding: 4px 12px; font: inherit; background: none; color: inherit; opacity: 0.55; }
+      .period-filter {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 16px;
+        height: var(--period-filter-height);
+        box-sizing: border-box;
+        position: sticky;
+        top: 0;
+        z-index: 20;
+        background: var(--surface-1);
+      }
+      .period-chip {
+        cursor: pointer;
+        border: 1px solid currentColor;
+        border-radius: 999px;
+        padding: 4px 12px;
+        font: inherit;
+        background: none;
+        color: inherit;
+        opacity: 0.55;
+      }
       .period-chip.active { opacity: 1; font-weight: 600; }
-      .backfill-note { margin-left: auto; font-size: 11px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .backfill-note {
+        margin-left: auto;
+        font-size: 11px;
+        color: var(--text-muted);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
       .period-block[hidden] { display: none; }
       /* The only two rules that hide a session row, both class-driven and
          both display:none - no inline style competes with either, so they
@@ -1306,10 +1846,16 @@ def render_html(
       if (row) {
         var groupId = row.getAttribute('data-group');
         var header = document.getElementById('group-' + groupId);
-        if (header && header.classList.contains('collapsed')) { toggleGroup(parseInt(groupId, 10)); }
+        if (header && header.classList.contains('collapsed')) {
+          toggleGroup(parseInt(groupId, 10));
+        }
       }
-      document.querySelectorAll('.detail-panel').forEach(function(el) { el.classList.remove('open'); });
-      document.querySelectorAll('.session-row').forEach(function(el) { el.classList.remove('active'); });
+      document.querySelectorAll('.detail-panel').forEach(function(el) {
+        el.classList.remove('open');
+      });
+      document.querySelectorAll('.session-row').forEach(function(el) {
+        el.classList.remove('active');
+      });
       var panel = document.getElementById('detail-' + id);
       if (panel) { panel.classList.add('open'); }
       if (row) { row.classList.add('active'); }
@@ -1321,11 +1867,15 @@ def render_html(
       if (row) { row.classList.remove('active'); }
     }
     function showTab(name) {
-      document.querySelectorAll('.tab-pane').forEach(function(el) { el.classList.remove('active'); });
+      document.querySelectorAll('.tab-pane').forEach(function(el) {
+        el.classList.remove('active');
+      });
       // Scoped to .tab-bar's own buttons - .trend-mode-tabs reuses the
       // same .tab-btn class for its visual style and has its own
       // independent active state (showTrendMode below).
-      document.querySelectorAll('.tab-bar .tab-btn').forEach(function(el) { el.classList.remove('active'); });
+      document.querySelectorAll('.tab-bar .tab-btn').forEach(function(el) {
+        el.classList.remove('active');
+      });
       var pane = document.getElementById('tab-' + name);
       var btn = document.getElementById('tab-btn-' + name);
       if (pane) { pane.classList.add('active'); }
@@ -1350,8 +1900,12 @@ def render_html(
       // o filtro que eu tava").
       var container = (pane || btn) && (pane || btn).closest('.trend-container');
       if (!container) { return; }
-      container.querySelectorAll('.trend-pane').forEach(function(el) { el.classList.remove('active'); });
-      container.querySelectorAll('.trend-mode-tabs .tab-btn').forEach(function(el) { el.classList.remove('active'); });
+      container.querySelectorAll('.trend-pane').forEach(function(el) {
+        el.classList.remove('active');
+      });
+      container.querySelectorAll('.trend-mode-tabs .tab-btn').forEach(function(el) {
+        el.classList.remove('active');
+      });
       if (pane) { pane.classList.add('active'); }
       if (btn) { btn.classList.add('active'); }
     }
@@ -1471,14 +2025,17 @@ def render_html(
     """
     tabs_html = (
         '<div class="tab-bar">'
-        '<span class="tab-btn active" id="tab-btn-sessions" onclick="showTab(\'sessions\')">Sessões</span>'
-        '<span class="tab-btn" id="tab-btn-panorama" onclick="showTab(\'panorama\')">Panorama</span>'
+        '<span class="tab-btn active" id="tab-btn-sessions" '
+        "onclick=\"showTab('sessions')\">Sessões</span>"
+        '<span class="tab-btn" id="tab-btn-panorama" '
+        "onclick=\"showTab('panorama')\">Panorama</span>"
         "</div>"
     )
     sessions_tab_html = (
         '<div class="tab-pane active" id="tab-sessions">'
         '<div class="main-row">'
-        f'<div class="session-list">{legend_blocks_html}{render_session_header(has_tmux_data)}{"".join(rows_html)}</div>'
+        f'<div class="session-list">{legend_blocks_html}'
+        f"{render_session_header(has_tmux_data)}{''.join(rows_html)}</div>"
         f'<div class="detail-container">{"".join(panels_html)}</div>'
         "</div>"
         "</div>"
@@ -1493,7 +2050,7 @@ def render_html(
     # series-N and group-color-N never touch the same elements, and only
     # one trend-mode pane is visible at a time anyway.
     default_highlight = " ".join(
-        ["series-1", "series-2", "series-3", "series-4"] + sorted(set(group_colors.values()))
+        ["series-1", "series-2", "series-3", "series-4", *sorted(set(group_colors.values()))]
     )
     return (
         "<!DOCTYPE html><html><head><meta charset='utf-8'>"
@@ -1509,7 +2066,7 @@ def render_html(
     )
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description="Report on logged Claude Code session metrics.")
     parser.add_argument("--tag", default=None, help="Filter by session tag")
     parser.add_argument("--project", default=None, help="Filter by project path")
@@ -1520,7 +2077,11 @@ def main():
         "--label-budget",
         type=int,
         default=0,
-        help="Max NEW labels (real claude -p calls) to generate in this run; already-cached labels are free and unlimited. Use 0 for none, a negative number for unlimited.",
+        help=(
+            "Max NEW labels (real claude -p calls) to generate in this run; "
+            "already-cached labels are free and unlimited. Use 0 for none, "
+            "a negative number for unlimited."
+        ),
     )
     parser.add_argument(
         "--html", action="store_true", help="Generate an HTML dashboard instead of printing a table"
@@ -1531,7 +2092,10 @@ def main():
     parser.add_argument(
         "--all",
         action="store_true",
-        help="Accepted for compatibility and now the default: the full history is shown unless --days is given",
+        help=(
+            "Accepted for compatibility and now the default: the full "
+            "history is shown unless --days is given"
+        ),
     )
     args = parser.parse_args()
 
@@ -1612,7 +2176,7 @@ def main():
         # a label another duplicate of the same session could have
         # produced. Falls back to first-seen only when no duplicate has a
         # usable source.
-        unique_agents = {}
+        unique_agents: dict[Any, dict[str, Any]] = {}
         for subagent in subagent_records:
             key = subagent.get("agent_id")
             if key is None:
@@ -1668,7 +2232,7 @@ def main():
         mr.fold_subagent_tokens_into_sessions(all_time_records, subagent_records)
 
         label_cache = mr.load_label_cache()
-        unique_sessions = {}
+        unique_sessions: dict[Any, dict[str, Any]] = {}
         for record in records:
             key = record.get("session_id")
             if key is None:
@@ -1707,8 +2271,8 @@ def main():
             project_last_seen,
             open_projects,
         )
-        output_path = os.path.expanduser("~/.claude/metrics/dashboard.html")
-        with open(output_path, "w") as f:
+        output_path = Path("~/.claude/metrics/dashboard.html").expanduser()
+        with output_path.open("w") as f:
             f.write(html_output)
         print(output_path)
         return

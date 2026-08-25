@@ -12,6 +12,10 @@ select = ["E", "F", "I", "UP", "B", "SIM", "C4", "RET", "PTH", "RUF"]
 
 [tool.mypy]
 strict = true
+# dashboard_html.py/dashboard_tui.py reach lib/metrics_core via
+# sys.path.insert(0, ".../lib") at runtime rather than a package install;
+# mypy_path mirrors that so `import metrics_core` resolves statically too.
+mypy_path = "lib"
 # textual/textual-plotext ship no type stubs; the TUI dashboard is the
 # only consumer, isolated in its own venv (see requirements-tui.txt).
 [[tool.mypy.overrides]]
