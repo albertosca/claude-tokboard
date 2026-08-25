@@ -2,6 +2,7 @@
 for the trend charts in both dashboard entry points."""
 
 from datetime import datetime, timedelta
+from typing import Any
 
 # Trend chart granularity, chosen by the data's own span (2026-07-21) -
 # a single day of activity read as a wall of near-empty day-bars; a
@@ -25,7 +26,7 @@ GRANULARITY_CONFIG = {
 }
 
 
-def choose_granularity(timestamps):
+def choose_granularity(timestamps: list[datetime]) -> str:
     if len(timestamps) < 2:
         return "day"
     span = max(timestamps) - min(timestamps)
@@ -42,9 +43,11 @@ def choose_granularity(timestamps):
     return "year"
 
 
-def aggregate_by_day(records):
-    dated = []
-    timestamps = []
+def aggregate_by_day(
+    records: list[dict[str, Any]],
+) -> tuple[str, list[dict[str, Any]]]:
+    dated: list[tuple[datetime, dict[str, Any]]] = []
+    timestamps: list[datetime] = []
     for r in records:
         timestamp_start = r.get("timestamp_start")
         if not timestamp_start:
@@ -58,8 +61,8 @@ def aggregate_by_day(records):
 
     granularity = choose_granularity(timestamps)
     key_fmt = GRANULARITY_CONFIG[granularity]["key_fmt"]
-    buckets = {}
-    bucket_order = []
+    buckets: dict[str, list[dict[str, Any]]] = {}
+    bucket_order: list[str] = []
     for dt, r in dated:
         key = dt.strftime(key_fmt)
         if key not in buckets:

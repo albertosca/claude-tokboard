@@ -3,7 +3,7 @@
 from datetime import datetime
 
 
-def format_tokens(n):
+def format_tokens(n: int | float | None) -> str:
     if n is None:
         return "-"
     n = int(n)
@@ -18,7 +18,7 @@ def format_tokens(n):
     return str(n)
 
 
-def format_duration(seconds):
+def format_duration(seconds: int | float | None) -> str:
     if seconds is None:
         return "-"
     seconds = int(seconds)
@@ -32,7 +32,7 @@ def format_duration(seconds):
     return f"{hours}h{remaining_minutes:02d}min"
 
 
-def format_date(timestamp_start):
+def format_date(timestamp_start: str | None) -> str:
     if not timestamp_start:
         return "-"
     try:

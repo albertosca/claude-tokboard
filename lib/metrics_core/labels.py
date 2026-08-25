@@ -3,20 +3,21 @@ only part of metrics_core that shells out to `claude -p`. See
 LabelBudget for the per-run cap on real API calls this makes."""
 
 import json
-import os
 import subprocess
 import threading
+from pathlib import Path
+from typing import Any, cast
 
-TASK_LABELS_FILE = os.path.expanduser("~/.claude/metrics/task_labels.json")
-AGENT_LABELS_FILE = os.path.expanduser("~/.claude/metrics/agent_labels.json")
+TASK_LABELS_FILE = str(Path("~/.claude/metrics/task_labels.json").expanduser())
+AGENT_LABELS_FILE = str(Path("~/.claude/metrics/agent_labels.json").expanduser())
 
 
-def find_away_summary(transcript_path):
-    if not transcript_path or not os.path.exists(transcript_path):
+def find_away_summary(transcript_path: str | None) -> str | None:
+    if not transcript_path or not Path(transcript_path).exists():
         return None
     last_content = None
     try:
-        with open(transcript_path) as f:
+        with Path(transcript_path).open() as f:
             for line in f:
                 line = line.strip()
                 if not line:
@@ -32,12 +33,12 @@ def find_away_summary(transcript_path):
     return last_content
 
 
-def cold_summary_source(transcript_path, max_turns=6):
-    if not transcript_path or not os.path.exists(transcript_path):
+def cold_summary_source(transcript_path: str | None, max_turns: int = 6) -> str | None:
+    if not transcript_path or not Path(transcript_path).exists():
         return None
-    texts = []
+    texts: list[str] = []
     try:
-        with open(transcript_path) as f:
+        with Path(transcript_path).open() as f:
             for line in f:
                 if len(texts) >= max_turns:
                     break
@@ -100,7 +101,7 @@ _REFUSAL_MARKERS = (
 )
 
 
-def _looks_like_bad_label(label):
+def _looks_like_bad_label(label: str) -> bool:
     lowered = label.lower()
     if any(marker in lowered for marker in _REFUSAL_MARKERS):
         return True
@@ -110,7 +111,7 @@ def _looks_like_bad_label(label):
     return len(label) > 120
 
 
-def _run_label_prompt(prompt):
+def _run_label_prompt(prompt: str) -> str | None:
     try:
         # `nice` so the labeling subprocess never competes for CPU with
         # interactive work (Vim/tmux/LSPs/the calling session itself) - each
@@ -156,7 +157,7 @@ def _run_label_prompt(prompt):
     return label or None
 
 
-def compress_to_label(source_text):
+def compress_to_label(source_text: Any) -> str | None:
     if not source_text:
         return None
     if not isinstance(source_text, str):
@@ -207,19 +208,19 @@ def compress_to_label(source_text):
     return label or None
 
 
-def load_label_cache():
-    if not os.path.exists(TASK_LABELS_FILE):
+def load_label_cache() -> dict[str, str]:
+    if not Path(TASK_LABELS_FILE).exists():
         return {}
     try:
-        with open(TASK_LABELS_FILE) as f:
-            return json.load(f)
+        with Path(TASK_LABELS_FILE).open() as f:
+            return cast("dict[str, str]", json.load(f))
     except (json.JSONDecodeError, OSError):
         return {}
 
 
-def save_label_cache(cache):
-    os.makedirs(os.path.dirname(TASK_LABELS_FILE), exist_ok=True)
-    with open(TASK_LABELS_FILE, "w") as f:
+def save_label_cache(cache: dict[str, str]) -> None:
+    Path(TASK_LABELS_FILE).parent.mkdir(parents=True, exist_ok=True)
+    with Path(TASK_LABELS_FILE).open("w") as f:
         json.dump(cache, f, indent=2)
 
 
@@ -235,11 +236,11 @@ class LabelBudget:
     # real within one invocation instead of always being cut off, and
     # whatever's left over just waits for the next run - the cache means
     # nothing already-labeled gets redone. None = no cap (old behavior).
-    def __init__(self, limit):
+    def __init__(self, limit: int | None):
         self.remaining = limit
         self._lock = threading.Lock()
 
-    def try_consume(self):
+    def try_consume(self) -> bool:
         if self.remaining is None:
             return True
         with self._lock:
@@ -249,7 +250,9 @@ class LabelBudget:
             return False
 
 
-def get_task_label(record, cache, budget):
+def get_task_label(
+    record: dict[str, Any], cache: dict[str, str], budget: LabelBudget
+) -> str | None:
     session_id = record.get("session_id")
     if not session_id:
         return None
@@ -259,6 +262,7 @@ def get_task_label(record, cache, budget):
 
     internal_name = record.get("internal_name")
     if internal_name and len(internal_name.split()) <= 6:
+        internal_name = cast(str, internal_name)
         cache[session_id] = internal_name
         return internal_name
 
@@ -280,23 +284,25 @@ def get_task_label(record, cache, budget):
     return label
 
 
-def load_agent_label_cache():
-    if not os.path.exists(AGENT_LABELS_FILE):
+def load_agent_label_cache() -> dict[str, str]:
+    if not Path(AGENT_LABELS_FILE).exists():
         return {}
     try:
-        with open(AGENT_LABELS_FILE) as f:
-            return json.load(f)
+        with Path(AGENT_LABELS_FILE).open() as f:
+            return cast("dict[str, str]", json.load(f))
     except (json.JSONDecodeError, OSError):
         return {}
 
 
-def save_agent_label_cache(cache):
-    os.makedirs(os.path.dirname(AGENT_LABELS_FILE), exist_ok=True)
-    with open(AGENT_LABELS_FILE, "w") as f:
+def save_agent_label_cache(cache: dict[str, str]) -> None:
+    Path(AGENT_LABELS_FILE).parent.mkdir(parents=True, exist_ok=True)
+    with Path(AGENT_LABELS_FILE).open("w") as f:
         json.dump(cache, f, indent=2)
 
 
-def get_agent_label(subagent_record, cache, budget):
+def get_agent_label(
+    subagent_record: dict[str, Any], cache: dict[str, str], budget: LabelBudget
+) -> str | None:
     agent_id = subagent_record.get("agent_id")
     if not agent_id:
         return None
@@ -317,8 +323,10 @@ def get_agent_label(subagent_record, cache, budget):
     return label
 
 
-def group_subagents_by_session(subagent_records):
-    grouped = {}
+def group_subagents_by_session(
+    subagent_records: list[dict[str, Any]],
+) -> dict[Any, list[dict[str, Any]]]:
+    grouped: dict[Any, list[dict[str, Any]]] = {}
     for record in subagent_records:
         session_id = record.get("session_id")
         if session_id is None:

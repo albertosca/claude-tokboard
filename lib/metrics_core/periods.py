@@ -3,7 +3,7 @@ stretch of time. Pure date arithmetic, no record handling - the filters
 that apply these windows live in records.py."""
 
 import collections
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 Period = collections.namedtuple("Period", ("id", "label"))
 
@@ -21,11 +21,11 @@ DEFAULT_PERIOD_ID = "tudo"
 _VALID_IDS = {p.id for p in PERIODS}
 
 
-def _start_of_day(moment):
+def _start_of_day(moment: datetime) -> datetime:
     return moment.replace(hour=0, minute=0, second=0, microsecond=0)
 
 
-def resolve_period(period_id, now):
+def resolve_period(period_id: str, now: datetime) -> tuple[datetime, datetime] | None:
     # Returns (start, end) with end EXCLUSIVE, or None for "tudo" - None
     # rather than a very wide window so callers can skip filtering
     # entirely instead of comparing every record against a sentinel date.

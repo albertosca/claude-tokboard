@@ -4,18 +4,19 @@ points."""
 
 import collections
 import json
-import os
 from datetime import datetime, timedelta
+from pathlib import Path
+from typing import Any, cast
 
-METRICS_FILE = os.path.expanduser("~/.claude/metrics/sessions.jsonl")
-SUBAGENTS_FILE = os.path.expanduser("~/.claude/metrics/subagents.jsonl")
+METRICS_FILE = str(Path("~/.claude/metrics/sessions.jsonl").expanduser())
+SUBAGENTS_FILE = str(Path("~/.claude/metrics/subagents.jsonl").expanduser())
 
 
-def load_records(path):
-    records = []
-    if not os.path.exists(path):
+def load_records(path: str) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    if not Path(path).exists():
         return records
-    with open(path) as f:
+    with Path(path).open() as f:
         for line in f:
             line = line.strip()
             if not line:
@@ -27,7 +28,7 @@ def load_records(path):
     return records
 
 
-def dedupe_by_key(records, key_field):
+def dedupe_by_key(records: list[dict[str, Any]], key_field: str) -> list[dict[str, Any]]:
     # metrics-log.py / subagent-metrics-log.py append a fresh cumulative
     # snapshot on every Stop/SubagentStop event during a session or
     # subagent's life, not just once at the end - a long/busy one can log
@@ -40,9 +41,9 @@ def dedupe_by_key(records, key_field):
     # (found 2026-07-21: one session had 33 duplicate rows; 17 subagent
     # ids had up to 4). Keep the snapshot with the largest
     # duration_seconds per id, first-seen order otherwise.
-    best_by_id = {}
-    order = []
-    no_id_records = []
+    best_by_id: dict[Any, dict[str, Any]] = {}
+    order: list[Any] = []
+    no_id_records: list[dict[str, Any]] = []
     for r in records:
         key = r.get(key_field)
         if key is None:
@@ -56,7 +57,7 @@ def dedupe_by_key(records, key_field):
     return [best_by_id[key] for key in order] + no_id_records
 
 
-def normalize_project_paths(records):
+def normalize_project_paths(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
     # A session's project_path is whatever directory Claude Code's cwd
     # happened to be, not necessarily the project's real root - working
     # from a subdirectory (2026-07-21: found 45 sessions logged from
@@ -93,28 +94,30 @@ def normalize_project_paths(records):
     # own path here and merged later, by color_group_key, which
     # preserves the "parent / worktree-name" label instead of collapsing
     # to a bare parent name.
-    known_paths = {r.get("project_path") for r in records if r.get("project_path")}
+    known_paths: set[str] = {
+        cast(str, r.get("project_path")) for r in records if r.get("project_path")
+    }
     marker = "/.claude/worktrees/"
     max_children_to_collapse = 2
 
-    parent_of = {}
+    parent_of: dict[str, str] = {}
     for path in known_paths:
         if marker in path:
             continue
-        parent = os.path.dirname(path.rstrip("/"))
+        parent = str(Path(path.rstrip("/")).parent)
         if parent and parent in known_paths:
             parent_of[path] = parent
 
     children_count = collections.Counter(parent_of.values())
 
-    canonical = {}
+    canonical: dict[str, str] = {}
     for path in known_paths:
         if marker in path:
             canonical[path] = path
             continue
-        parent = parent_of.get(path)
-        if parent and children_count[parent] <= max_children_to_collapse:
-            canonical[path] = parent
+        collapse_parent = parent_of.get(path)
+        if collapse_parent and children_count[collapse_parent] <= max_children_to_collapse:
+            canonical[path] = collapse_parent
         else:
             canonical[path] = path
     for r in records:
@@ -132,7 +135,7 @@ def normalize_project_paths(records):
     return records
 
 
-def is_ephemeral_path(path):
+def is_ephemeral_path(path: str) -> bool:
     normalized = path.rstrip("/")
     return (
         normalized.startswith("/tmp/")
@@ -141,15 +144,17 @@ def is_ephemeral_path(path):
     )
 
 
-def dedupe_sessions(records):
+def dedupe_sessions(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return dedupe_by_key(records, "session_id")
 
 
-def dedupe_subagents(records):
+def dedupe_subagents(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return dedupe_by_key(records, "agent_id")
 
 
-def filter_records(records, tag=None, project=None):
+def filter_records(
+    records: list[dict[str, Any]], tag: str | None = None, project: str | None = None
+) -> list[dict[str, Any]]:
     filtered = records
     if tag is not None:
         filtered = [r for r in filtered if r.get("tag") == tag]
@@ -158,7 +163,7 @@ def filter_records(records, tag=None, project=None):
     return filtered
 
 
-def filter_by_days(records, days):
+def filter_by_days(records: list[dict[str, Any]], days: int | None) -> list[dict[str, Any]]:
     if days is None:
         return records
     cutoff = datetime.now().astimezone() - timedelta(days=days)
@@ -176,7 +181,7 @@ def filter_by_days(records, days):
     return filtered
 
 
-def _parse_moment(value):
+def _parse_moment(value: str | None) -> datetime | None:
     if not value:
         return None
     try:
@@ -185,7 +190,9 @@ def _parse_moment(value):
         return None
 
 
-def filter_sessions_by_window(records, window):
+def filter_sessions_by_window(
+    records: list[dict[str, Any]], window: tuple[datetime, datetime] | None
+) -> list[dict[str, Any]]:
     # A session belongs to a period when its ACTIVE SPAN OVERLAPS the
     # window, not when it started inside it. Alberto keeps sessions open
     # for weeks - one running since 2026-07-20 was still logging on
@@ -200,7 +207,7 @@ def filter_sessions_by_window(records, window):
     if window is None:
         return records
     window_start, window_end = window
-    kept = []
+    kept: list[dict[str, Any]] = []
     for record in records:
         start = _parse_moment(record.get("timestamp_start"))
         if start is None:
@@ -211,7 +218,9 @@ def filter_sessions_by_window(records, window):
     return kept
 
 
-def filter_deltas_by_window(records, window):
+def filter_deltas_by_window(
+    records: list[dict[str, Any]], window: tuple[datetime, datetime] | None
+) -> list[dict[str, Any]]:
     # The counterpart for expand_records_to_daily_deltas' output, where
     # each record is a single dated chunk of usage rather than a span -
     # so a plain point-in-window test is the correct one. Note the field
@@ -220,7 +229,7 @@ def filter_deltas_by_window(records, window):
     if window is None:
         return records
     window_start, window_end = window
-    kept = []
+    kept: list[dict[str, Any]] = []
     for record in records:
         moment = _parse_moment(record.get("timestamp_start"))
         if moment is not None and window_start <= moment < window_end:
@@ -228,7 +237,7 @@ def filter_deltas_by_window(records, window):
     return kept
 
 
-def record_token_total(record):
+def record_token_total(record: dict[str, Any]) -> int:
     # Every token a record consumed, all four kinds. Cache dominates real
     # usage by orders of magnitude - measured 2026-08-10 against Claude
     # Code's own session transcripts, input+output was ~0.3% of the day's
@@ -243,7 +252,7 @@ def record_token_total(record):
     )
 
 
-def compute_token_type_totals(records):
+def compute_token_type_totals(records: list[dict[str, Any]]) -> dict[str, int]:
     return {
         "series-1": sum(r.get("input_tokens", 0) or 0 for r in records),
         "series-2": sum(r.get("output_tokens", 0) or 0 for r in records),
@@ -252,7 +261,7 @@ def compute_token_type_totals(records):
     }
 
 
-def expand_records_to_daily_deltas(raw_records):
+def expand_records_to_daily_deltas(raw_records: list[dict[str, Any]]) -> list[dict[str, Any]]:
     # The Stop/SubagentStop hooks append a fresh CUMULATIVE snapshot every
     # turn, not one row per session/subagent - dedupe_sessions/
     # dedupe_subagents pick a single representative (largest
@@ -290,9 +299,9 @@ def expand_records_to_daily_deltas(raw_records):
     # this way on real data). Session records never carry agent_id at
     # all, so they always fall through to session_id correctly.
     id_fields = ("agent_id", "session_id")
-    by_id = {}
+    by_id: dict[tuple[str, Any], list[dict[str, Any]]] = {}
     for record in raw_records:
-        record_id = None
+        record_id: tuple[str, Any] | None = None
         for field in id_fields:
             value = record.get(field)
             if value is not None:
@@ -302,7 +311,7 @@ def expand_records_to_daily_deltas(raw_records):
             continue
         by_id.setdefault(record_id, []).append(record)
 
-    deltas = []
+    deltas: list[dict[str, Any]] = []
     for snapshots in by_id.values():
         snapshots.sort(key=lambda r: r.get("duration_seconds") or 0)
         previous = dict.fromkeys(token_fields, 0)
@@ -326,7 +335,9 @@ def expand_records_to_daily_deltas(raw_records):
     return deltas
 
 
-def fold_subagent_tokens_into_sessions(records, subagent_records):
+def fold_subagent_tokens_into_sessions(
+    records: list[dict[str, Any]], subagent_records: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
     # A session's own record only counts tokens spent on its own direct
     # messages - every subagent it dispatched burns real quota too, but
     # lives in a separate record (subagent_records) linked only by
@@ -340,7 +351,7 @@ def fold_subagent_tokens_into_sessions(records, subagent_records):
     # pipeline (all_time_records, chart_records, the day/limit-filtered
     # records) picks up the fold automatically.
     token_fields = ("input_tokens", "output_tokens", "cache_read_tokens", "cache_creation_tokens")
-    subagent_totals_by_session = {}
+    subagent_totals_by_session: dict[Any, dict[str, int]] = {}
     for subagent in subagent_records:
         session_id = subagent.get("session_id")
         if session_id is None:
@@ -349,9 +360,9 @@ def fold_subagent_tokens_into_sessions(records, subagent_records):
         for field in token_fields:
             totals[field] += subagent.get(field, 0) or 0
     for record in records:
-        totals = subagent_totals_by_session.get(record.get("session_id"))
-        if not totals:
+        session_totals = subagent_totals_by_session.get(record.get("session_id"))
+        if not session_totals:
             continue
         for field in token_fields:
-            record[field] = (record.get(field, 0) or 0) + totals[field]
+            record[field] = (record.get(field, 0) or 0) + session_totals[field]
     return records

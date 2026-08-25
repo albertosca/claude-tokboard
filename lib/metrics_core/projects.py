@@ -1,16 +1,16 @@
 """Project identity, grouping, and per-project aggregate helpers -
 shared by both dashboard entry points."""
 
-import glob
 import json
-import os
 from datetime import datetime
+from pathlib import Path
+from typing import Any
 
 from .records import record_token_total
 
 
-def compute_project_first_seen(records):
-    first_seen = {}
+def compute_project_first_seen(records: list[dict[str, Any]]) -> dict[str, str]:
+    first_seen: dict[str, str] = {}
     for r in records:
         project = r.get("project_path")
         timestamp_start = r.get("timestamp_start")
@@ -21,8 +21,8 @@ def compute_project_first_seen(records):
     return first_seen
 
 
-def compute_project_last_seen(records):
-    last_seen = {}
+def compute_project_last_seen(records: list[dict[str, Any]]) -> dict[str, str]:
+    last_seen: dict[str, str] = {}
     for r in records:
         project = r.get("project_path")
         timestamp_start = r.get("timestamp_start")
@@ -33,7 +33,7 @@ def compute_project_last_seen(records):
     return last_seen
 
 
-def project_display_label(project_path):
+def project_display_label(project_path: str | None) -> str:
     if not project_path:
         return "sem projeto"
     normalized = project_path.rstrip("/")
@@ -42,12 +42,12 @@ def project_display_label(project_path):
         parent_path, _, remainder = normalized.partition(marker)
         worktree_name = remainder.split("/")[0]
         if worktree_name:
-            parent_label = os.path.basename(parent_path.rstrip("/")) or parent_path
+            parent_label = Path(parent_path.rstrip("/")).name or parent_path
             return f"{parent_label} / {worktree_name}"
-    return os.path.basename(normalized) or normalized
+    return Path(normalized).name or normalized
 
 
-def color_group_key(project_path):
+def color_group_key(project_path: str | None) -> str | None:
     # A worktree's own color group is its PARENT project (2026-07-21) -
     # they're the same underlying project as far as "what color am I"
     # goes, so the trend chart's legend can show one merged entry for
@@ -62,8 +62,10 @@ def color_group_key(project_path):
     return project_path
 
 
-def compute_project_totals(records, project_last_seen):
-    totals = {}
+def compute_project_totals(
+    records: list[dict[str, Any]], project_last_seen: dict[str, str]
+) -> tuple[list[str | None], dict[str | None, int], int]:
+    totals: dict[str | None, int] = {}
     for r in records:
         project = r.get("project_path")
         # All four token kinds - this panel is titled "Total de tokens por
@@ -77,15 +79,15 @@ def compute_project_totals(records, project_last_seen):
     # survives elsewhere as a marker on the row, not as the order.
     ordered_projects = sorted(
         totals.keys(),
-        key=lambda p: (totals[p], project_last_seen.get(p, "")),
+        key=lambda p: (totals[p], project_last_seen.get(p, "") if p is not None else ""),
         reverse=True,
     )
     max_total = max(totals.values()) if totals else 0
     return ordered_projects, totals, max_total
 
 
-def project_days_running(project_first_seen, project):
-    first_seen = project_first_seen.get(project)
+def project_days_running(project_first_seen: dict[str, str], project: str | None) -> str:
+    first_seen = project_first_seen.get(project) if project is not None else None
     if not first_seen:
         return ""
     try:
@@ -95,17 +97,17 @@ def project_days_running(project_first_seen, project):
         return ""
 
 
-def get_open_projects(sessions_dir=None):
+def get_open_projects(sessions_dir: str | None = None) -> set[str]:
     if sessions_dir is None:
-        sessions_dir = os.path.expanduser("~/.claude/sessions")
-    open_projects = set()
+        sessions_dir = str(Path("~/.claude/sessions").expanduser())
+    open_projects: set[str] = set()
     try:
-        paths = glob.glob(os.path.join(sessions_dir, "*.json"))
+        paths = list(Path(sessions_dir).glob("*.json"))
     except Exception:
         return open_projects
     for path in paths:
         try:
-            with open(path) as f:
+            with path.open() as f:
                 data = json.load(f)
         except Exception:
             continue
@@ -115,13 +117,13 @@ def get_open_projects(sessions_dir=None):
     return open_projects
 
 
-def assign_group_colors(records):
+def assign_group_colors(records: list[dict[str, Any]]) -> dict[str | None, str]:
     # Keyed by raw project_path (so every existing `group_colors.get(project)`
     # call site keeps working unchanged) but the SLOT is decided by
     # color_group_key, so a worktree gets the exact same color as its
     # parent project instead of its own slot (2026-07-21).
-    assignment = {}
-    key_to_color = {}
+    assignment: dict[str | None, str] = {}
+    key_to_color: dict[str | None, str] = {}
     next_slot = 0
     for record in records:
         project = record.get("project_path")
@@ -139,7 +141,9 @@ def assign_group_colors(records):
     return assignment
 
 
-def build_project_groups(records, group_colors):
+def build_project_groups(
+    records: list[dict[str, Any]], group_colors: dict[str | None, str]
+) -> list[dict[str, Any]]:
     # Grouped by color_group_key, not the raw project_path (2026-07-22
     # fix: "grupos duplicados/fragmentados pro mesmo projeto real") - a
     # worktree's sessions were showing up as their own separate group
@@ -149,8 +153,8 @@ def build_project_groups(records, group_colors):
     # (still used for e.g. the session row's own detail panel/title) -
     # only the grouping key changes.
     ordered_desc = list(reversed(records))
-    groups = {}
-    group_order = []
+    groups: dict[str | None, dict[str, Any]] = {}
+    group_order: list[str | None] = []
     for record in ordered_desc:
         project = record.get("project_path")
         key = color_group_key(project)
