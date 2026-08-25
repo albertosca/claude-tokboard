@@ -47,12 +47,12 @@ to the real 4545-session dataset the same 1.5s ceiling would have failed on
 the shipped defect (2.19-2.82s per press), which is the calibration that
 makes the number a bound and not a decoration.
 """
+
 import json
 import os
 import subprocess
 
 import pytest
-
 from test_fixture_isolation import EXPECTED_MEMBERSHIP
 
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -91,7 +91,11 @@ def cycle_timings(dashboard_page):
     env.pop("PYTHONPATH", None)
     result = subprocess.run(
         [VENV_PYTHON, DRIVER],
-        env=env, cwd=REPO_ROOT, capture_output=True, text=True, timeout=180,
+        env=env,
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=180,
     )
     assert result.returncode == 0, (
         f"the TUI driver failed ({result.returncode})\n"

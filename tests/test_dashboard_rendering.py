@@ -2,6 +2,7 @@
 visible. The two Criticals this suite exists for both shipped past checks
 that asserted the markup CONTAINED an attribute - which is true whether
 the filter works or does nothing at all."""
+
 import json
 import os
 import re
@@ -110,7 +111,9 @@ def _drive(dashboard_page, node):
         [node, os.path.join(HERE, "js", "drive_dashboard.js"), payload],
         env=dict(os.environ, DASHBOARD=dashboard_page.html_path),
         cwd=os.path.abspath(os.path.join(HERE, "..")),
-        capture_output=True, text=True, timeout=120,
+        capture_output=True,
+        text=True,
+        timeout=120,
     )
     return result
 

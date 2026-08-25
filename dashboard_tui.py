@@ -9,6 +9,7 @@ like every HTML dashboard round was. Requires textual + textual-plotext
 own .venv (see scripts/setup-tui-venv.sh to create it):
     python3 dashboard_tui.py
 """
+
 import argparse
 import os
 import sys
@@ -26,6 +27,7 @@ from textual_plotext import PlotextPlot
 def import_metrics_report():
     sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib"))
     import metrics_core
+
     return metrics_core
 
 
@@ -92,7 +94,7 @@ def load_base_data(args, mr=None):
     # still defaults to -n=20. --limit/-n is kept as a CLI flag for anyone
     # who wants to bound it explicitly, but it's no longer applied by default.
     if args.limit is not None:
-        records = records[-args.limit:]
+        records = records[-args.limit :]
 
     # Parallelized labeling, same pattern as dashboard_html.py's --html
     # branch. subagent_records is already deduped by agent_id above the
@@ -117,9 +119,9 @@ def load_base_data(args, mr=None):
         if key is None:
             continue
         existing = unique_agents.get(key)
-        if existing is None:
-            unique_agents[key] = subagent
-        elif not existing.get("agent_transcript_path") and subagent.get("agent_transcript_path"):
+        if existing is None or (
+            not existing.get("agent_transcript_path") and subagent.get("agent_transcript_path")
+        ):
             unique_agents[key] = subagent
     # max_workers=1 (serial), matching dashboard_html.py's own fix
     # (2026-07-20/23): each worker spawns a full `claude -p` CLI
@@ -147,7 +149,10 @@ def load_base_data(args, mr=None):
     agent_keys = list(unique_agents.keys())
     with ThreadPoolExecutor(max_workers=1) as executor:
         agent_labels = list(
-            executor.map(lambda k: mr.get_agent_label(unique_agents[k], agent_label_cache, label_budget), agent_keys)
+            executor.map(
+                lambda k: mr.get_agent_label(unique_agents[k], agent_label_cache, label_budget),
+                agent_keys,
+            )
         )
     label_by_agent_id = dict(zip(agent_keys, agent_labels))
     for subagent in subagent_records:
@@ -169,16 +174,18 @@ def load_base_data(args, mr=None):
         if key is None:
             continue
         existing = unique_sessions.get(key)
-        if existing is None:
-            unique_sessions[key] = record
-        elif not (existing.get("internal_name") or existing.get("transcript_path")) and (
-            record.get("internal_name") or record.get("transcript_path")
+        if existing is None or (
+            not (existing.get("internal_name") or existing.get("transcript_path"))
+            and (record.get("internal_name") or record.get("transcript_path"))
         ):
             unique_sessions[key] = record
     session_keys = list(unique_sessions.keys())
     with ThreadPoolExecutor(max_workers=1) as executor:
         task_labels = list(
-            executor.map(lambda k: mr.get_task_label(unique_sessions[k], label_cache, label_budget), session_keys)
+            executor.map(
+                lambda k: mr.get_task_label(unique_sessions[k], label_cache, label_budget),
+                session_keys,
+            )
         )
     label_by_session_id = dict(zip(session_keys, task_labels))
     for record in records:
@@ -265,10 +272,7 @@ def build_session_tree(records, subagents_by_session, mr):
         # any input/output tokens (aborted before the first turn, etc.) is
         # dead weight in the tree. A group whose every session is zero-token
         # is skipped entirely rather than left as an empty, expandable node.
-        visible_records = [
-            r for r in group["records"]
-            if mr.record_token_total(r) > 0
-        ]
+        visible_records = [r for r in group["records"] if mr.record_token_total(r) > 0]
         if not visible_records:
             continue
         label = mr.project_display_label(project_path)
@@ -292,8 +296,7 @@ def build_session_tree(records, subagents_by_session, mr):
             # filter render_html applies to its own badge.
             session_subagents = subagents_by_session.get(session_id, [])
             visible_subagent_count = sum(
-                1 for s in session_subagents
-                if mr.record_token_total(s) > 0
+                1 for s in session_subagents if mr.record_token_total(s) > 0
             )
             subagent_badge = f" 🤖{visible_subagent_count}" if visible_subagent_count else ""
             group_node.add_leaf(
@@ -333,8 +336,8 @@ class SessionDetailPanel(VerticalScroll):
                 style = "on #202020" if i % 2 == 1 else ""
                 lines.append(
                     f"[{style}]{task:<40}{in_tok}/{out_tok:<8}{subagent.get('tool_call_count', 0):>8}{duration_str:>10}[/{style}]"
-                    if style else
-                    f"{task:<40}{in_tok}/{out_tok:<8}{subagent.get('tool_call_count', 0):>8}{duration_str:>10}"
+                    if style
+                    else f"{task:<40}{in_tok}/{out_tok:<8}{subagent.get('tool_call_count', 0):>8}{duration_str:>10}"
                 )
         self._body.update("\n".join(lines))
 
@@ -486,7 +489,7 @@ class TrendChart(PlotextPlot):
             self.pane_series_keys = series_keys
             series_data = {k: [] for k in series_keys}
             for d in days:
-                day_totals = {k: 0 for k in series_keys}
+                day_totals = dict.fromkeys(series_keys, 0)
                 for r in d["records"]:
                     r_key = self.mr.color_group_key(r.get("project_path"))
                     bucket = r_key if r_key in top_keys else PANE_OTHER_KEY
@@ -494,7 +497,9 @@ class TrendChart(PlotextPlot):
                 for k in series_keys:
                     series_data[k].append(day_totals[k])
             series_lists = [series_data[k] for k in series_keys]
-            day_totals_list = [sum(series_data[k][i] for k in series_keys) for i in range(len(days))]
+            day_totals_list = [
+                sum(series_data[k][i] for k in series_keys) for i in range(len(days))
+            ]
             if series_lists:
                 series_lists[0] = floor_stacked_bottom_series(series_lists[0], day_totals_list)
             series_labels = [pane_series_label(self.mr, k) for k in series_keys]
@@ -511,12 +516,20 @@ class TrendChart(PlotextPlot):
                 color = palette
             self.plt.stacked_bar(labels, series_lists, labels=series_labels, color=color)
             self.plt.title("Tokens por dia (por projeto)")
-            max_total = max((sum(series_data[k][i] for k in series_keys) for i in range(len(days))), default=0)
+            max_total = max(
+                (sum(series_data[k][i] for k in series_keys) for i in range(len(days))), default=0
+            )
         else:
             input_totals = [sum(r.get("input_tokens", 0) or 0 for r in d["records"]) for d in days]
-            output_totals = [sum(r.get("output_tokens", 0) or 0 for r in d["records"]) for d in days]
-            cache_read_totals = [sum(r.get("cache_read_tokens", 0) or 0 for r in d["records"]) for d in days]
-            cache_creation_totals = [sum(r.get("cache_creation_tokens", 0) or 0 for r in d["records"]) for d in days]
+            output_totals = [
+                sum(r.get("output_tokens", 0) or 0 for r in d["records"]) for d in days
+            ]
+            cache_read_totals = [
+                sum(r.get("cache_read_tokens", 0) or 0 for r in d["records"]) for d in days
+            ]
+            cache_creation_totals = [
+                sum(r.get("cache_creation_tokens", 0) or 0 for r in d["records"]) for d in days
+            ]
             day_totals_list = [
                 input_totals[i] + output_totals[i] + cache_read_totals[i] + cache_creation_totals[i]
                 for i in range(len(days))
@@ -538,7 +551,10 @@ class TrendChart(PlotextPlot):
             self.plt.title("Tokens por dia (por tipo de token)")
             max_total = max(
                 (
-                    input_totals[i] + output_totals[i] + cache_read_totals[i] + cache_creation_totals[i]
+                    input_totals[i]
+                    + output_totals[i]
+                    + cache_read_totals[i]
+                    + cache_creation_totals[i]
                     for i in range(len(days))
                 ),
                 default=0,
@@ -605,7 +621,9 @@ class ProjectLegend(Static):
 class ProjectRankingList(Static):
     expanded = reactive(False)
 
-    def __init__(self, mr, chart_records, project_first_seen, project_last_seen, open_projects, **kwargs):
+    def __init__(
+        self, mr, chart_records, project_first_seen, project_last_seen, open_projects, **kwargs
+    ):
         super().__init__(**kwargs)
         self.mr = mr
         self.chart_records = chart_records
@@ -617,7 +635,9 @@ class ProjectRankingList(Static):
         self.expanded = not self.expanded
 
     def render(self):
-        ordered, totals, max_total = self.mr.compute_project_totals(self.chart_records, self.project_last_seen)
+        ordered, totals, max_total = self.mr.compute_project_totals(
+            self.chart_records, self.project_last_seen
+        )
         # Omit zero-token projects (2026-07-21, ported from
         # dashboard_html.py's render_project_totals_chart) - a project with
         # nothing to show is just dead weight in this ranking.
@@ -638,7 +658,9 @@ class ProjectRankingList(Static):
             is_open = project in self.open_projects
             bar_char = "█" if is_open else "▓"
             days_running = self.mr.project_days_running(self.project_first_seen, project)
-            lines.append(f"{label[:24]:<26}{bar_char * bar_len:<32}{self.mr.format_tokens(total)}{days_running}")
+            lines.append(
+                f"{label[:24]:<26}{bar_char * bar_len:<32}{self.mr.format_tokens(total)}{days_running}"
+            )
 
         if hidden:
             toggle_label = "▾ menos" if self.expanded else f"▸ + {len(hidden)} projetos históricos"
@@ -651,18 +673,34 @@ class ProjectRankingList(Static):
 
 
 def build_arg_parser():
-    parser = argparse.ArgumentParser(description="Terminal (TUI) dashboard for Claude Code session metrics.")
+    parser = argparse.ArgumentParser(
+        description="Terminal (TUI) dashboard for Claude Code session metrics."
+    )
     parser.add_argument("--tag", default=None, help="Filter by session tag")
     parser.add_argument("--project", default=None, help="Filter by project path")
     # No default cap (2026-07-21): the Tree widget scrolls natively, so unlike
     # dashboard_html.py's plain terminal-table mode there's no overflow
     # problem a default -n=20 would be solving here. Pass -n explicitly to
     # bound it anyway.
-    parser.add_argument("-n", "--limit", type=int, default=None, help="Number of most recent sessions to show (unbounded by default)")
-    parser.add_argument("--days", type=int, default=None, help="Only include sessions from the last N days")
-    parser.add_argument("--all", action="store_true", help="Accepted for compatibility and now the default: the full history is shown unless --days is given")
     parser.add_argument(
-        "--label-budget", type=int, default=0,
+        "-n",
+        "--limit",
+        type=int,
+        default=None,
+        help="Number of most recent sessions to show (unbounded by default)",
+    )
+    parser.add_argument(
+        "--days", type=int, default=None, help="Only include sessions from the last N days"
+    )
+    parser.add_argument(
+        "--all",
+        action="store_true",
+        help="Accepted for compatibility and now the default: the full history is shown unless --days is given",
+    )
+    parser.add_argument(
+        "--label-budget",
+        type=int,
+        default=0,
         help="Max NEW labels (real claude -p calls) to generate this run; already-cached labels are free and unlimited. Use 0 for none, a negative number for unlimited.",
     )
     return parser
@@ -714,10 +752,11 @@ class MetricsTUIApp(App):
             classes="backfill-note",
         )
         with TabbedContent(initial=self.active_tab_id):
-            with TabPane("Sessões", id="tab-sessions"):
-                with Horizontal():
-                    yield build_session_tree(self.data["records"], self.data["subagents_by_session"], self.mr)
-                    yield SessionDetailPanel(self.mr)
+            with TabPane("Sessões", id="tab-sessions"), Horizontal():
+                yield build_session_tree(
+                    self.data["records"], self.data["subagents_by_session"], self.mr
+                )
+                yield SessionDetailPanel(self.mr)
             with TabPane("Panorama", id="tab-panorama"):
                 totals = self.mr.compute_token_type_totals(self.data["records"])
                 yield CompositionLegend(totals, self.mr)

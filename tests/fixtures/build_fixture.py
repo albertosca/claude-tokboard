@@ -33,21 +33,24 @@ Two properties this dataset has to keep, both learned the hard way:
        days21-1           21 days back        15-dias | mes
        old-1              ~50 days back       mes | tudo
 """
+
 import json
 import os
 import sys
 from datetime import timedelta
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../lib"))
-import metrics_core as mr  # noqa: E402
+import metrics_core as mr
 
 TOKEN_FIELDS = ("input_tokens", "output_tokens", "cache_read_tokens", "cache_creation_tokens")
 
 
 def _at(now, days_ago, hour):
-    return (now - timedelta(days=days_ago)).replace(
-        hour=hour, minute=0, second=0, microsecond=0
-    ).isoformat()
+    return (
+        (now - timedelta(days=days_ago))
+        .replace(hour=hour, minute=0, second=0, microsecond=0)
+        .isoformat()
+    )
 
 
 def _today_at(now, fraction):
@@ -100,8 +103,16 @@ def build_fixture(home_dir, now):
         # the harness's "names at least one project" guard unsatisfiable.
         # Distinct projects from every other record, so a chart pointed at
         # the wrong window is caught by the project NAMES alone.
-        _record("today-a", "/projects/delta", _today_at(now, 0.05), _today_at(now, 0.25), (2, 3, 120, 9)),
-        _record("today-b", "/projects/epsilon", _today_at(now, 0.5), _today_at(now, 0.9), (4, 6, 150, 11)),
+        _record(
+            "today-a", "/projects/delta", _today_at(now, 0.05), _today_at(now, 0.25), (2, 3, 120, 9)
+        ),
+        _record(
+            "today-b",
+            "/projects/epsilon",
+            _today_at(now, 0.5),
+            _today_at(now, 0.9),
+            (4, 6, 150, 11),
+        ),
         # Four days back: inside "desde-segunda" from Friday on, and the
         # nearest thing outside "ontem". Widening "ontem" by even a couple
         # of days pulls this in and changes the visible session ids, which

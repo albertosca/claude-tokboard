@@ -19,6 +19,7 @@ points are driven below so a regression in either branch of the fix (the
 Sessões case restores Tree focus, the Panorama case restores TrendChart
 focus) is caught.
 """
+
 import json
 import os
 import subprocess
@@ -35,7 +36,7 @@ _INSTALL_HINT = (
     "The TUI tests need the dashboard's own virtualenv (textual is not, and "
     "should not be, installed on the interpreter running pytest).\n"
     "  Create it:  scripts/setup-tui-venv.sh\n"
-    "  Skip explicitly (this is not free - nothing checks that \"p\" leaves the "
+    '  Skip explicitly (this is not free - nothing checks that "p" leaves the '
     f"footer and the active tab alone):  {TUI_SKIP_ENV}=1 pytest\n"
 )
 
@@ -56,7 +57,11 @@ def state_after_p(dashboard_page):
     env.pop("PYTHONPATH", None)
     result = subprocess.run(
         [VENV_PYTHON, DRIVER],
-        env=env, cwd=REPO_ROOT, capture_output=True, text=True, timeout=180,
+        env=env,
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=180,
     )
     assert result.returncode == 0, (
         f"the TUI state driver failed ({result.returncode})\n"

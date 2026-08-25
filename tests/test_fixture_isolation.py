@@ -2,20 +2,32 @@
 read the user's real data would be worse than no test - it would pass on
 a machine with no data at all only by accident, and its numbers would
 drift daily."""
+
 import json
 import os
 
-
 FIXTURE_SESSION_IDS = {
-    "long-1", "yest-1", "today-a", "today-b", "days4-1", "week-1", "days21-1", "old-1",
+    "long-1",
+    "yest-1",
+    "today-a",
+    "today-b",
+    "days4-1",
+    "week-1",
+    "days21-1",
+    "old-1",
 }
 
 # Full paths, not bare names: the page prints the path in each group
 # header's title attribute, and a bare "beta" would also match the word
 # inside any unrelated prose the page happens to carry.
 FIXTURE_PROJECTS = (
-    "/projects/alpha", "/projects/beta", "/projects/gamma", "/projects/delta",
-    "/projects/epsilon", "/projects/zeta", "/projects/eta",
+    "/projects/alpha",
+    "/projects/beta",
+    "/projects/gamma",
+    "/projects/delta",
+    "/projects/epsilon",
+    "/projects/zeta",
+    "/projects/eta",
 )
 
 # Exactly who belongs where. Four of the five windows are anchored to
@@ -64,8 +76,15 @@ def test_expected_periods_are_nested_as_the_windows_are(dashboard_page):
     # definition one day in seven, and no fixture could have fixed it.
     # ontem's real container is 15-dias, which always reaches back
     # fourteen days whatever the weekday.
-    for narrow, wide in (("ontem", "15-dias"), ("desde-segunda", "15-dias"), ("15-dias", "mes"), ("mes", "tudo")):
-        assert exp[narrow]["session_ids"] <= exp[wide]["session_ids"], f"{narrow} not contained in {wide}"
+    for narrow, wide in (
+        ("ontem", "15-dias"),
+        ("desde-segunda", "15-dias"),
+        ("15-dias", "mes"),
+        ("mes", "tudo"),
+    ):
+        assert exp[narrow]["session_ids"] <= exp[wide]["session_ids"], (
+            f"{narrow} not contained in {wide}"
+        )
     assert exp["tudo"]["session_ids"] == FIXTURE_SESSION_IDS
     assert "old-1" not in exp["mes"]["session_ids"]
     assert "long-1" in exp["ontem"]["session_ids"], "the span-overlap case must survive into ontem"
@@ -109,8 +128,10 @@ def test_every_period_holds_a_different_set_of_sessions(dashboard_page):
     per-weekday proof is in the fix report (every weekday simulated by
     forcing periods.resolve_period's now.weekday() term)."""
     exp = dashboard_page.expected
-    by_period = {p: frozenset(exp[p]["session_ids"]) for p in
-                 ("ontem", "desde-segunda", "15-dias", "mes", "tudo")}
+    by_period = {
+        p: frozenset(exp[p]["session_ids"])
+        for p in ("ontem", "desde-segunda", "15-dias", "mes", "tudo")
+    }
     for period, ids in by_period.items():
         assert ids, (
             f"{period} holds no session at all - every non-vacuity guard in the "

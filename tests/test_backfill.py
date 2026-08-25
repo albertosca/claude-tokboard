@@ -1,7 +1,4 @@
 import json
-import os
-
-import pytest
 
 import metrics_core as mr
 
@@ -13,11 +10,16 @@ def write_transcript(path, entries):
             message = {"usage": usage}
             if message_id is not None:
                 message["id"] = message_id
-            f.write(json.dumps({
-                "type": "assistant",
-                "timestamp": timestamp,
-                "message": message,
-            }) + "\n")
+            f.write(
+                json.dumps(
+                    {
+                        "type": "assistant",
+                        "timestamp": timestamp,
+                        "message": message,
+                    }
+                )
+                + "\n"
+            )
 
 
 def usage(input_tokens=0, output_tokens=0, cache_read=0, cache_creation=0):
@@ -42,24 +44,31 @@ def record(session_id, timestamp_end, input_tokens, output_tokens, cache_read=0,
 
 # --- scan_transcript / build_prefix_sums / as_of ---------------------------
 
+
 def test_scan_transcript_flags_a_repeated_message_id_in_file_order(tmp_path):
     path = tmp_path / "t.jsonl"
-    write_transcript(path, [
-        ("2026-08-01T10:00:00", "msg-1", usage(input_tokens=100)),
-        ("2026-08-01T10:00:01", "msg-1", usage(input_tokens=100)),  # replay
-        ("2026-08-01T10:00:02", "msg-2", usage(input_tokens=50)),
-    ])
+    write_transcript(
+        path,
+        [
+            ("2026-08-01T10:00:00", "msg-1", usage(input_tokens=100)),
+            ("2026-08-01T10:00:01", "msg-1", usage(input_tokens=100)),  # replay
+            ("2026-08-01T10:00:02", "msg-2", usage(input_tokens=50)),
+        ],
+    )
     timeline = mr.scan_transcript(str(path))
     assert [is_dup for _, is_dup, _ in timeline] == [False, True, False]
 
 
 def test_as_of_returns_deduped_and_raw_cumulative_totals_at_a_moment(tmp_path):
     path = tmp_path / "t.jsonl"
-    write_transcript(path, [
-        ("2026-08-01T10:00:00", "msg-1", usage(input_tokens=100)),
-        ("2026-08-01T10:00:01", "msg-1", usage(input_tokens=100)),  # replay
-        ("2026-08-01T10:00:02", "msg-2", usage(input_tokens=50)),
-    ])
+    write_transcript(
+        path,
+        [
+            ("2026-08-01T10:00:00", "msg-1", usage(input_tokens=100)),
+            ("2026-08-01T10:00:01", "msg-1", usage(input_tokens=100)),  # replay
+            ("2026-08-01T10:00:02", "msg-2", usage(input_tokens=50)),
+        ],
+    )
     stamps, deduped, raw = mr.build_prefix_sums(mr.scan_transcript(str(path)))
     deduped_now, raw_now = mr.as_of(stamps, deduped, raw, "2026-08-01T10:00:01")
     assert deduped_now == [100, 0, 0, 0]
@@ -71,12 +80,16 @@ def test_as_of_returns_deduped_and_raw_cumulative_totals_at_a_moment(tmp_path):
 
 # --- plan_corrections --------------------------------------------------
 
+
 def test_plan_corrections_fixes_a_session_stored_as_the_raw_sum(tmp_path):
     path = tmp_path / "s1.jsonl"
-    write_transcript(path, [
-        ("2026-08-01T10:00:00", "msg-1", usage(input_tokens=100)),
-        ("2026-08-01T10:00:01", "msg-1", usage(input_tokens=100)),  # replay
-    ])
+    write_transcript(
+        path,
+        [
+            ("2026-08-01T10:00:00", "msg-1", usage(input_tokens=100)),
+            ("2026-08-01T10:00:01", "msg-1", usage(input_tokens=100)),  # replay
+        ],
+    )
     records = [record("s1", "2026-08-01T10:00:01", 200, 0)]  # stored = raw
     plan, stats, factors = mr.plan_corrections(records, {"s1": str(path)}, cutoff="2026-08-13")
     assert plan == {0: [100, 0, 0, 0]}
@@ -102,13 +115,16 @@ def test_plan_corrections_skips_a_session_with_no_transcript():
 
 def test_plan_corrections_skips_the_whole_session_when_any_row_spans_the_cutoff(tmp_path):
     path = tmp_path / "s1.jsonl"
-    write_transcript(path, [
-        ("2026-08-01T10:00:00", "msg-1", usage(input_tokens=100)),
-        ("2026-08-01T10:00:01", "msg-1", usage(input_tokens=100)),
-    ])
+    write_transcript(
+        path,
+        [
+            ("2026-08-01T10:00:00", "msg-1", usage(input_tokens=100)),
+            ("2026-08-01T10:00:01", "msg-1", usage(input_tokens=100)),
+        ],
+    )
     records = [
-        record("s1", "2026-08-01T10:00:01", 200, 0),   # correctable on its own
-        record("s1", "2026-08-14T00:00:00", 200, 0),   # past the cutoff
+        record("s1", "2026-08-01T10:00:01", 200, 0),  # correctable on its own
+        record("s1", "2026-08-14T00:00:00", 200, 0),  # past the cutoff
     ]
     plan, stats, factors = mr.plan_corrections(records, {"s1": str(path)}, cutoff="2026-08-13")
     assert plan == {}
@@ -117,10 +133,13 @@ def test_plan_corrections_skips_the_whole_session_when_any_row_spans_the_cutoff(
 
 def test_plan_corrections_refuses_a_row_that_would_increase_a_field(tmp_path):
     path = tmp_path / "s1.jsonl"
-    write_transcript(path, [
-        ("2026-08-01T10:00:00", "msg-1", usage(input_tokens=100)),
-        ("2026-08-01T10:00:01", "msg-1", usage(input_tokens=100)),  # replay
-    ])
+    write_transcript(
+        path,
+        [
+            ("2026-08-01T10:00:00", "msg-1", usage(input_tokens=100)),
+            ("2026-08-01T10:00:01", "msg-1", usage(input_tokens=100)),  # replay
+        ],
+    )
     # deduped_now=[100,0,0,0], raw_now=[200,0,0,0]. stored's TOTAL (200)
     # matches raw_now's total exactly (drift 0, so the "neither formula"
     # check does not refuse it first) but its PER-FIELD split does not:
@@ -135,10 +154,13 @@ def test_plan_corrections_refuses_a_row_that_would_increase_a_field(tmp_path):
 
 def test_plan_corrections_accepts_a_row_within_tolerance_of_the_raw_sum(tmp_path):
     path = tmp_path / "s1.jsonl"
-    write_transcript(path, [
-        ("2026-08-01T10:00:00", "msg-1", usage(input_tokens=1000)),
-        ("2026-08-01T10:00:01", "msg-1", usage(input_tokens=1000)),  # replay
-    ])
+    write_transcript(
+        path,
+        [
+            ("2026-08-01T10:00:00", "msg-1", usage(input_tokens=1000)),
+            ("2026-08-01T10:00:01", "msg-1", usage(input_tokens=1000)),  # replay
+        ],
+    )
     # raw_now is 2000; 1990 is 0.5% off, inside NEITHER_TOLERANCE (2%).
     records = [record("s1", "2026-08-01T10:00:01", 1990, 0)]
     plan, stats, factors = mr.plan_corrections(records, {"s1": str(path)}, cutoff="2026-08-13")
@@ -157,14 +179,19 @@ def test_plan_corrections_refuses_the_whole_session_when_one_row_matches_neither
     # prove this propagation - a lone refused row disqualifying "the
     # session" is indistinguishable from it disqualifying only itself.
     path = tmp_path / "s1.jsonl"
-    write_transcript(path, [
-        ("2026-08-01T10:00:00", "msg-1", usage(input_tokens=100)),
-        ("2026-08-01T10:00:01", "msg-1", usage(input_tokens=100)),  # replay
-        ("2026-08-01T10:00:02", "msg-2", usage(input_tokens=1000)),
-    ])
+    write_transcript(
+        path,
+        [
+            ("2026-08-01T10:00:00", "msg-1", usage(input_tokens=100)),
+            ("2026-08-01T10:00:01", "msg-1", usage(input_tokens=100)),  # replay
+            ("2026-08-01T10:00:02", "msg-2", usage(input_tokens=1000)),
+        ],
+    )
     records = [
-        record("s1", "2026-08-01T10:00:01", 200, 0),   # correctable on its own: stored = raw
-        record("s1", "2026-08-01T10:00:02", 1800, 0),  # matches neither formula (deduped=1100, raw=1200)
+        record("s1", "2026-08-01T10:00:01", 200, 0),  # correctable on its own: stored = raw
+        record(
+            "s1", "2026-08-01T10:00:02", 1800, 0
+        ),  # matches neither formula (deduped=1100, raw=1200)
     ]
     plan, stats, factors = mr.plan_corrections(records, {"s1": str(path)}, cutoff="2026-08-13")
     assert plan == {}
@@ -182,6 +209,7 @@ def test_plan_corrections_refuses_a_row_matching_neither_formula(tmp_path):
 
 
 # --- find_nonmonotonic_sessions -----------------------------------------
+
 
 def test_find_nonmonotonic_sessions_flags_a_decreasing_series():
     records = [
@@ -201,11 +229,18 @@ def test_find_nonmonotonic_sessions_ignores_a_non_decreasing_series():
 
 # --- apply_plan / verify_fields -----------------------------------------
 
+
 def test_apply_plan_only_touches_planned_indexes_and_only_token_fields():
     records = [
         record("s1", "x", 200, 0),
-        {"session_id": "s2", "extra_field": "keep-me", "input_tokens": 10, "output_tokens": 0,
-         "cache_read_tokens": 0, "cache_creation_tokens": 0},
+        {
+            "session_id": "s2",
+            "extra_field": "keep-me",
+            "input_tokens": 10,
+            "output_tokens": 0,
+            "cache_read_tokens": 0,
+            "cache_creation_tokens": 0,
+        },
     ]
     corrected = mr.apply_plan(records, {0: [100, 0, 0, 0]})
     assert corrected[0]["input_tokens"] == 100
@@ -235,6 +270,7 @@ def test_verify_fields_catches_a_non_token_field_change():
 
 
 # --- backfill state file ------------------------------------------------
+
 
 def test_load_backfill_state_returns_none_when_no_file_exists(tmp_path):
     assert mr.load_backfill_state(str(tmp_path / "missing.json")) is None

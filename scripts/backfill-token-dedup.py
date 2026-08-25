@@ -54,6 +54,7 @@ Safety
 - only the four token fields may change, and only downwards; every other
   field is compared byte-for-byte before the rename.
 """
+
 import argparse
 import collections
 import json
@@ -67,10 +68,19 @@ from datetime import datetime
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "lib"))
 
 from metrics_core.backfill import (
-    TOKEN_FIELDS, DEFAULT_CUTOFF, BACKFILL_STATE_FILE, sha256_of, sha256_bytes,
-    index_transcripts, plan_corrections, apply_plan, daily_totals, verify_fields,
-    find_nonmonotonic_sessions, token_sum, write_backfill_state,
-)  # noqa: E402
+    BACKFILL_STATE_FILE,
+    DEFAULT_CUTOFF,
+    apply_plan,
+    daily_totals,
+    find_nonmonotonic_sessions,
+    index_transcripts,
+    plan_corrections,
+    sha256_bytes,
+    sha256_of,
+    token_sum,
+    verify_fields,
+    write_backfill_state,
+)
 
 METRICS_FILE = os.path.expanduser("~/.claude/metrics/sessions.jsonl")
 BACKUP_DIR = os.path.expanduser("~/.claude/metrics/backups")
@@ -98,11 +108,15 @@ def print_summary(stats, factors, before_total, after_total, changed_lines, tota
     print(f"\nLines: {total_lines} read, {changed_lines} would change")
     if factors:
         factors = sorted(factors)
+
         def pct(p):
             return factors[min(len(factors) - 1, int(len(factors) * p))]
+
         print("Correction factor (stored / recomputed) over corrected rows:")
-        print(f"  min {factors[0]:.3f}x  p25 {pct(.25):.3f}x  median {pct(.5):.3f}x  "
-              f"p75 {pct(.75):.3f}x  max {factors[-1]:.3f}x")
+        print(
+            f"  min {factors[0]:.3f}x  p25 {pct(0.25):.3f}x  median {pct(0.5):.3f}x  "
+            f"p75 {pct(0.75):.3f}x  max {factors[-1]:.3f}x"
+        )
         buckets = collections.Counter()
         for factor in factors:
             if factor < 1.001:
@@ -119,8 +133,10 @@ def print_summary(stats, factors, before_total, after_total, changed_lines, tota
             print(f"    {count:>6}  {bucket}")
     print(f"\nGrand total tokens: before {before_total:,}  after {after_total:,}")
     if after_total:
-        print(f"  overall inflation removed: {before_total / after_total:.3f}x "
-              f"({before_total - after_total:,} tokens)")
+        print(
+            f"  overall inflation removed: {before_total / after_total:.3f}x "
+            f"({before_total - after_total:,} tokens)"
+        )
 
 
 def _valid_cutoff(value):
@@ -162,12 +178,12 @@ def write_atomically(path, snapshot_prefix, new_lines, mode):
 
         with open(path, "rb") as f:
             current = f.read()
-        if current[:len(snapshot_prefix)] != snapshot_prefix:
+        if current[: len(snapshot_prefix)] != snapshot_prefix:
             raise RuntimeError(
                 "refusing to write: the file changed under us in a way that is not "
                 "a plain append (its first bytes no longer match the snapshot)"
             )
-        tail = current[len(snapshot_prefix):]
+        tail = current[len(snapshot_prefix) :]
         if tail:
             with open(temporary, "ab") as f:
                 f.write(tail)
@@ -184,19 +200,32 @@ def write_atomically(path, snapshot_prefix, new_lines, mode):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__,
-                                     formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     parser.add_argument("--metrics-file", default=METRICS_FILE)
     parser.add_argument("--projects-dir", default=PROJECTS_DIR)
     parser.add_argument("--backup-dir", default=BACKUP_DIR)
-    parser.add_argument("--state-file", default=BACKFILL_STATE_FILE,
-                        help="where to record the cutoff and timestamp of a successful apply")
-    parser.add_argument("--cutoff", default=DEFAULT_CUTOFF, type=_valid_cutoff,
-                        help="rows whose timestamp_end sorts at or after this are left alone")
-    parser.add_argument("--daily-days", type=int, default=15,
-                        help="how many days of the per-day comparison table to print")
-    parser.add_argument("--apply", action="store_true",
-                        help="write the result; without it this is a dry run")
+    parser.add_argument(
+        "--state-file",
+        default=BACKFILL_STATE_FILE,
+        help="where to record the cutoff and timestamp of a successful apply",
+    )
+    parser.add_argument(
+        "--cutoff",
+        default=DEFAULT_CUTOFF,
+        type=_valid_cutoff,
+        help="rows whose timestamp_end sorts at or after this are left alone",
+    )
+    parser.add_argument(
+        "--daily-days",
+        type=int,
+        default=15,
+        help="how many days of the per-day comparison table to print",
+    )
+    parser.add_argument(
+        "--apply", action="store_true", help="write the result; without it this is a dry run"
+    )
     args = parser.parse_args()
 
     path = args.metrics_file
@@ -244,8 +273,10 @@ def main():
     before_offenders = find_nonmonotonic_sessions(records)
     after_offenders = find_nonmonotonic_sessions(corrected)
     introduced = after_offenders - before_offenders
-    print(f"non-monotonic snapshot series: {len(before_offenders)} before, "
-          f"{len(after_offenders)} after, {len(introduced)} introduced")
+    print(
+        f"non-monotonic snapshot series: {len(before_offenders)} before, "
+        f"{len(after_offenders)} after, {len(introduced)} introduced"
+    )
     if introduced:
         print(f"MONOTONICITY REGRESSION in {sorted(introduced)[:5]}", file=sys.stderr)
         return 1
@@ -266,8 +297,10 @@ def main():
         if source_sha != backup_sha:
             # Can legitimately differ if a hook appended between the copy and the
             # re-read; either way an unverified backup is not a backup.
-            print(f"BACKUP VERIFICATION FAILED\n  source {source_sha}\n  backup {backup_sha}",
-                  file=sys.stderr)
+            print(
+                f"BACKUP VERIFICATION FAILED\n  source {source_sha}\n  backup {backup_sha}",
+                file=sys.stderr,
+            )
             return 1
         print(f"\nbackup verified: {backup}\n  sha256 {backup_sha}")
 
@@ -279,8 +312,10 @@ def main():
             written = f.read()
         written_count = written.count(b"\n")
         expected = len(raw_lines) + appended
-        print(f"wrote {path}: {written_count} lines "
-              f"({len(raw_lines)} rewritten + {appended} appended while running)")
+        print(
+            f"wrote {path}: {written_count} lines "
+            f"({len(raw_lines)} rewritten + {appended} appended while running)"
+        )
         if written_count != expected:
             print(f"LINE COUNT MISMATCH: expected {expected}, got {written_count}", file=sys.stderr)
             return 1

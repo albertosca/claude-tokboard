@@ -51,6 +51,7 @@ success from failure is not a verification.
 Usage:
     PYTHONPATH=lib:tests python3 scripts/verify-detectors.py
 """
+
 import hashlib
 import os
 import re
@@ -94,7 +95,11 @@ def run_suite() -> subprocess.CompletedProcess:
     # Under -v they are replaced by "...Full output truncated".
     return subprocess.run(
         [sys.executable, "-m", "pytest", "tests/", "-vv"],
-        cwd=REPO_ROOT, env=env, capture_output=True, text=True, timeout=300,
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=300,
     )
 
 
@@ -103,8 +108,7 @@ def failed_test_names(output: str):
 
 
 class Defect:
-    def __init__(self, name, description, anchor, replacement,
-                 expected_tests, expected_labels):
+    def __init__(self, name, description, anchor, replacement, expected_tests, expected_labels):
         self.name = name
         self.description = description
         self.anchor = anchor
@@ -153,10 +157,7 @@ DEFECTS = [
             "which period is active - the original defect made 11 sessions "
             "on the chart coexist with 4530 rows in the list under 'ontem'."
         ),
-        anchor=(
-            "rows.forEach(function(el) { el.classList.toggle('collapsed', "
-            "!collapsed); });"
-        ),
+        anchor=("rows.forEach(function(el) { el.classList.toggle('collapsed', !collapsed); });"),
         replacement=(
             "rows.forEach(function(el) { el.classList.toggle('collapsed', "
             "!collapsed); el.style.display = collapsed ? 'flex' : 'none'; });"
@@ -277,12 +278,13 @@ def main() -> int:
     # left behind - even if every sha256 check above already passed.
     git_check = subprocess.run(
         ["git", "diff", "--exit-code", "--", str(TARGET)],
-        cwd=REPO_ROOT, capture_output=True, text=True,
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
     )
     if git_check.returncode != 0:
         print(
-            "\ngit diff --exit-code disagrees: dashboard_html.py is NOT "
-            "clean after restore.",
+            "\ngit diff --exit-code disagrees: dashboard_html.py is NOT clean after restore.",
             file=sys.stderr,
         )
         print(git_check.stdout, file=sys.stderr)
@@ -306,10 +308,7 @@ def main() -> int:
         )
         return 1
 
-    print(
-        "\nBoth defects DETECTED; dashboard_html.py restored byte-identical; "
-        "git status clean."
-    )
+    print("\nBoth defects DETECTED; dashboard_html.py restored byte-identical; git status clean.")
     return 0
 
 

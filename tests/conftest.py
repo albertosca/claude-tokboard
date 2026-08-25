@@ -4,6 +4,7 @@ HOME is overridden so every expanduser() inside the dashboard - the metrics
 files, the label caches, get_open_projects, and the output path itself -
 resolves inside a throwaway directory.
 """
+
 import os
 import subprocess
 import sys
@@ -13,7 +14,7 @@ from datetime import datetime
 import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "lib"))
-from fixtures.build_fixture import build_fixture  # noqa: E402
+from fixtures.build_fixture import build_fixture
 
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
@@ -37,8 +38,18 @@ def dashboard_page():
         # is overridden. This cost real debugging time - do not "simplify"
         # it back to a bare python3.
         result = subprocess.run(
-            [sys.executable, os.path.join(REPO_ROOT, "dashboard_html.py"), "--html", "--label-budget", "0"],
-            env=env, cwd=REPO_ROOT, capture_output=True, text=True, timeout=120,
+            [
+                sys.executable,
+                os.path.join(REPO_ROOT, "dashboard_html.py"),
+                "--html",
+                "--label-budget",
+                "0",
+            ],
+            env=env,
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+            timeout=120,
         )
         assert result.returncode == 0, (
             f"dashboard generation failed ({result.returncode})\n"

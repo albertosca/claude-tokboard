@@ -1,6 +1,7 @@
 """AI-generated session/subagent label caching and generation - the
 only part of metrics_core that shells out to `claude -p`. See
 LabelBudget for the per-run cap on real API calls this makes."""
+
 import json
 import os
 import subprocess
@@ -15,7 +16,7 @@ def find_away_summary(transcript_path):
         return None
     last_content = None
     try:
-        with open(transcript_path, "r") as f:
+        with open(transcript_path) as f:
             for line in f:
                 line = line.strip()
                 if not line:
@@ -36,7 +37,7 @@ def cold_summary_source(transcript_path, max_turns=6):
         return None
     texts = []
     try:
-        with open(transcript_path, "r") as f:
+        with open(transcript_path) as f:
             for line in f:
                 if len(texts) >= max_turns:
                     break
@@ -71,13 +72,31 @@ def cold_summary_source(transcript_path, max_turns=6):
 # worse than having no label at all - they read as a real (if odd) label
 # to anyone looking at the table, not as an error.
 _REFUSAL_MARKERS = (
-    "não há texto", "nao ha texto", "no text", "nenhum texto",
-    "sem texto", "não foi fornecido", "nao foi fornecido",
-    "not provided", "no content", "cannot complete",
-    "i cannot", "i'm sorry", "im sorry", "desculpe", "please provide",
-    "forneça o texto", "forneca o texto", "not enough information",
-    "não tenho informações suficientes", "as an ai", "i don't have",
-    "não consigo", "nao consigo", "i need more", "preciso de mais",
+    "não há texto",
+    "nao ha texto",
+    "no text",
+    "nenhum texto",
+    "sem texto",
+    "não foi fornecido",
+    "nao foi fornecido",
+    "not provided",
+    "no content",
+    "cannot complete",
+    "i cannot",
+    "i'm sorry",
+    "im sorry",
+    "desculpe",
+    "please provide",
+    "forneça o texto",
+    "forneca o texto",
+    "not enough information",
+    "não tenho informações suficientes",
+    "as an ai",
+    "i don't have",
+    "não consigo",
+    "nao consigo",
+    "i need more",
+    "preciso de mais",
 )
 
 
@@ -110,11 +129,20 @@ def _run_label_prompt(prompt):
         # session in the backfill.
         result = subprocess.run(
             [
-                "nice", "-n", "15", "claude", "-p", prompt,
-                "--model", "haiku",
-                "--setting-sources", "",
-                "--tools", "",
-                "--system-prompt", "You are a concise text summarizer.",
+                "nice",
+                "-n",
+                "15",
+                "claude",
+                "-p",
+                prompt,
+                "--model",
+                "haiku",
+                "--setting-sources",
+                "",
+                "--tools",
+                "",
+                "--system-prompt",
+                "You are a concise text summarizer.",
             ],
             capture_output=True,
             text=True,
@@ -135,8 +163,7 @@ def compress_to_label(source_text):
         return None
     prompt = (
         "Resuma o texto abaixo em um rotulo curto de 3 a 5 palavras, "
-        "em portugues, sem pontuacao final, responda so com o rotulo:\n\n"
-        + source_text[:2000]
+        "em portugues, sem pontuacao final, responda so com o rotulo:\n\n" + source_text[:2000]
     )
     label = _run_label_prompt(prompt)
 
@@ -154,8 +181,7 @@ def compress_to_label(source_text):
             "mesmo assim, gere um rotulo curto de 3 a 5 palavras em "
             "portugues descrevendo do que se trata. NUNCA recuse, NUNCA "
             "peca mais contexto, NUNCA explique - responda apenas com o "
-            "rotulo, mesmo que o texto pareca incompleto:\n\n"
-            + source_text[:2000]
+            "rotulo, mesmo que o texto pareca incompleto:\n\n" + source_text[:2000]
         )
         retry_label = _run_label_prompt(retry_prompt)
         if retry_label and not _looks_like_bad_label(retry_label):
@@ -185,7 +211,7 @@ def load_label_cache():
     if not os.path.exists(TASK_LABELS_FILE):
         return {}
     try:
-        with open(TASK_LABELS_FILE, "r") as f:
+        with open(TASK_LABELS_FILE) as f:
             return json.load(f)
     except (json.JSONDecodeError, OSError):
         return {}
@@ -258,7 +284,7 @@ def load_agent_label_cache():
     if not os.path.exists(AGENT_LABELS_FILE):
         return {}
     try:
-        with open(AGENT_LABELS_FILE, "r") as f:
+        with open(AGENT_LABELS_FILE) as f:
             return json.load(f)
     except (json.JSONDecodeError, OSError):
         return {}

@@ -1,8 +1,8 @@
 """The guard around the JS tests is itself a place a false green can hide:
 a silent skip when node is missing reports success for a suite that never
 ran. This pins the guard's behaviour in both directions."""
-import pytest
 
+import pytest
 from js_runtime import NODE_SKIP_ENV, require_node_with_jsdom
 
 
@@ -10,7 +10,9 @@ def test_opting_out_explicitly_skips(monkeypatch):
     monkeypatch.setenv(NODE_SKIP_ENV, "1")
     with pytest.raises(BaseException) as excinfo:
         require_node_with_jsdom()
-    assert "Skipped" in type(excinfo.value).__name__ or excinfo.value.__class__.__name__ == "Skipped"
+    assert (
+        "Skipped" in type(excinfo.value).__name__ or excinfo.value.__class__.__name__ == "Skipped"
+    )
 
 
 def test_a_missing_runtime_fails_loudly_rather_than_skipping(monkeypatch):

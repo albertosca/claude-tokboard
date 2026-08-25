@@ -30,6 +30,7 @@ Each case reports:
 
 Prints one JSON object on stdout. Never launch the app interactively.
 """
+
 import asyncio
 import json
 import os
@@ -40,8 +41,9 @@ sys.path.insert(0, os.path.join(REPO, "lib"))
 sys.path.insert(0, REPO)
 
 import metrics_core as mr  # noqa: E402
-import dashboard_tui as tui  # noqa: E402
 from textual.widgets import Footer, TabbedContent  # noqa: E402
+
+import dashboard_tui as tui  # noqa: E402
 
 
 def _state(app):
@@ -52,7 +54,9 @@ def _state(app):
     return {
         "active": active,
         "focused_type": type(focused).__name__ if focused is not None else None,
-        "focused_inside_active_pane": (focused in pane.walk_children()) if focused is not None else False,
+        "focused_inside_active_pane": (focused in pane.walk_children())
+        if focused is not None
+        else False,
         "footer_keys": len(footer.query("FooterKey")),
     }
 
@@ -61,7 +65,9 @@ async def main():
     args = tui.build_arg_parser().parse_args(["--label-budget", "0"])
 
     results = {}
-    async with tui.MetricsTUIApp(mr, tui.load_data(args, mr=mr), args=args).run_test(size=(140, 45)) as pilot:
+    async with tui.MetricsTUIApp(mr, tui.load_data(args, mr=mr), args=args).run_test(
+        size=(140, 45)
+    ) as pilot:
         app = pilot.app
         await pilot.pause()
         before = _state(app)
@@ -70,7 +76,9 @@ async def main():
         after = _state(app)
         results["sessions_case"] = {"active_before": before["active"], **after}
 
-    async with tui.MetricsTUIApp(mr, tui.load_data(args, mr=mr), args=args).run_test(size=(140, 45)) as pilot:
+    async with tui.MetricsTUIApp(mr, tui.load_data(args, mr=mr), args=args).run_test(
+        size=(140, 45)
+    ) as pilot:
         app = pilot.app
         await pilot.pause()
         await pilot.press("g")

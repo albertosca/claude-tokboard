@@ -1,0 +1,22 @@
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+# ruff 0.16+ lints/formats *.md by default (fenced Python code blocks).
+# docs/superpowers holds historical plan/spec records - mechanically
+# reformatting the code samples quoted inside them would rewrite history
+# that has nothing to do with this project's actual source tree.
+extend-exclude = ["docs"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "C4", "RET", "PTH", "RUF"]
+
+[tool.mypy]
+strict = true
+# textual/textual-plotext ship no type stubs; the TUI dashboard is the
+# only consumer, isolated in its own venv (see requirements-tui.txt).
+[[tool.mypy.overrides]]
+module = ["textual.*", "textual_plotext.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+addopts = "--cov=lib/metrics_core --cov=dashboard_html --cov=dashboard_tui --cov=scripts --cov-branch"

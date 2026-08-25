@@ -1,8 +1,7 @@
 from datetime import datetime
 
-import pytest
-
 import metrics_core as mr
+import pytest
 
 # A Thursday, mid-afternoon. Chosen so "since Monday" spans several days
 # and never collapses to a single one.

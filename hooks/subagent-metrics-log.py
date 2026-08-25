@@ -19,7 +19,7 @@ def parse_transcript(path):
     first_timestamp = None
     last_timestamp = None
 
-    with open(path, "r") as f:
+    with open(path) as f:
         for line in f:
             line = line.strip()
             if not line:

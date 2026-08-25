@@ -5,9 +5,7 @@ import stat
 
 import pytest
 
-SCRIPT_PATH = os.path.join(
-    os.path.dirname(__file__), "..", "scripts", "backfill-token-dedup.py"
-)
+SCRIPT_PATH = os.path.join(os.path.dirname(__file__), "..", "scripts", "backfill-token-dedup.py")
 
 
 @pytest.fixture(scope="module")
@@ -71,18 +69,27 @@ def test_main_writes_backfill_state_after_a_successful_apply(tmp_path, script, m
     projects_dir.mkdir()
     backup_dir = tmp_path / "backups"
     state_path = tmp_path / "backfill_state.json"
-    metrics_file.write_text('{"session_id": "s1", "timestamp_end": "2026-08-01T00:00:00", '
-                             '"input_tokens": 0, "output_tokens": 0, '
-                             '"cache_read_tokens": 0, "cache_creation_tokens": 0}\n')
+    metrics_file.write_text(
+        '{"session_id": "s1", "timestamp_end": "2026-08-01T00:00:00", '
+        '"input_tokens": 0, "output_tokens": 0, '
+        '"cache_read_tokens": 0, "cache_creation_tokens": 0}\n'
+    )
 
-    monkeypatch.setattr("sys.argv", [
-        "backfill-token-dedup.py",
-        "--metrics-file", str(metrics_file),
-        "--projects-dir", str(projects_dir),
-        "--backup-dir", str(backup_dir),
-        "--apply",
-        "--state-file", str(state_path),
-    ])
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "backfill-token-dedup.py",
+            "--metrics-file",
+            str(metrics_file),
+            "--projects-dir",
+            str(projects_dir),
+            "--backup-dir",
+            str(backup_dir),
+            "--apply",
+            "--state-file",
+            str(state_path),
+        ],
+    )
     exit_code = script.main()
 
     assert exit_code == 0
@@ -99,10 +106,14 @@ def test_main_rejects_a_malformed_cutoff(script, monkeypatch, capsys):
     # making every row in the file eligible regardless of the operator's
     # real intent - argparse's type= conversion must catch this before
     # plan_corrections ever runs.
-    monkeypatch.setattr("sys.argv", [
-        "backfill-token-dedup.py",
-        "--cutoff", "2026-8-21",
-    ])
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "backfill-token-dedup.py",
+            "--cutoff",
+            "2026-8-21",
+        ],
+    )
 
     with pytest.raises(SystemExit) as excinfo:
         script.main()
@@ -117,11 +128,16 @@ def _write_transcript(path, entries):
     file for the JSON shape index_transcripts/scan_transcript expect."""
     with open(path, "w") as f:
         for timestamp, message_id, usage in entries:
-            f.write(json.dumps({
-                "type": "assistant",
-                "timestamp": timestamp,
-                "message": {"id": message_id, "usage": usage},
-            }) + "\n")
+            f.write(
+                json.dumps(
+                    {
+                        "type": "assistant",
+                        "timestamp": timestamp,
+                        "message": {"id": message_id, "usage": usage},
+                    }
+                )
+                + "\n"
+            )
 
 
 def test_main_rewrites_the_file_through_the_real_backup_and_write_path(
@@ -141,29 +157,49 @@ def test_main_rewrites_the_file_through_the_real_backup_and_write_path(
     state_path = tmp_path / "backfill_state.json"
 
     usage = {
-        "input_tokens": 100, "output_tokens": 0,
-        "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0,
+        "input_tokens": 100,
+        "output_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "cache_creation_input_tokens": 0,
     }
-    _write_transcript(slug_dir / "s1.jsonl", [
-        ("2026-08-01T10:00:00", "msg-1", usage),
-        ("2026-08-01T10:00:01", "msg-1", usage),  # replay: the broken hook's bug
-    ])
+    _write_transcript(
+        slug_dir / "s1.jsonl",
+        [
+            ("2026-08-01T10:00:00", "msg-1", usage),
+            ("2026-08-01T10:00:01", "msg-1", usage),  # replay: the broken hook's bug
+        ],
+    )
     # deduped as-of sum is 100 (one real message); the broken hook summed
     # both copies and stored the raw sum, 200.
-    metrics_file.write_text(json.dumps({
-        "session_id": "s1", "timestamp_end": "2026-08-01T10:00:01",
-        "input_tokens": 200, "output_tokens": 0,
-        "cache_read_tokens": 0, "cache_creation_tokens": 0,
-    }) + "\n")
+    metrics_file.write_text(
+        json.dumps(
+            {
+                "session_id": "s1",
+                "timestamp_end": "2026-08-01T10:00:01",
+                "input_tokens": 200,
+                "output_tokens": 0,
+                "cache_read_tokens": 0,
+                "cache_creation_tokens": 0,
+            }
+        )
+        + "\n"
+    )
 
-    monkeypatch.setattr("sys.argv", [
-        "backfill-token-dedup.py",
-        "--metrics-file", str(metrics_file),
-        "--projects-dir", str(projects_dir),
-        "--backup-dir", str(backup_dir),
-        "--apply",
-        "--state-file", str(state_path),
-    ])
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "backfill-token-dedup.py",
+            "--metrics-file",
+            str(metrics_file),
+            "--projects-dir",
+            str(projects_dir),
+            "--backup-dir",
+            str(backup_dir),
+            "--apply",
+            "--state-file",
+            str(state_path),
+        ],
+    )
     exit_code = script.main()
 
     assert exit_code == 0
@@ -171,9 +207,11 @@ def test_main_rewrites_the_file_through_the_real_backup_and_write_path(
     # the backup block ran and left exactly one verified backup behind
     backups = list(backup_dir.glob("sessions.jsonl.backfill-*.bak"))
     assert len(backups) == 1
-    assert backups[0].read_bytes() == b'{"session_id": "s1", "timestamp_end": ' \
-        b'"2026-08-01T10:00:01", "input_tokens": 200, "output_tokens": 0, ' \
+    assert (
+        backups[0].read_bytes() == b'{"session_id": "s1", "timestamp_end": '
+        b'"2026-08-01T10:00:01", "input_tokens": 200, "output_tokens": 0, '
         b'"cache_read_tokens": 0, "cache_creation_tokens": 0}\n'
+    )
 
     # write_atomically actually ran, through main(): the live file now
     # holds the corrected (deduped) value, not the original raw one.

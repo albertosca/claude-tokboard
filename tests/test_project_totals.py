@@ -30,9 +30,7 @@ def test_equal_spend_falls_back_to_most_recent():
         record("/p/older", 500, "2026-08-01T10:00:00Z"),
         record("/p/newer", 500, "2026-08-12T10:00:00Z"),
     ]
-    ordered, _, _ = mr.compute_project_totals(
-        records, mr.compute_project_last_seen(records)
-    )
+    ordered, _, _ = mr.compute_project_totals(records, mr.compute_project_last_seen(records))
     assert ordered == ["/p/newer", "/p/older"]
 
 

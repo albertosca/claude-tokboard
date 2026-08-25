@@ -59,7 +59,7 @@ def render_composition_legend(totals):
     for css_class, name in SERIES_NAMES.items():
         chips.append(
             f'<span class="legend-chip" data-series="{css_class}" '
-            f'onclick="highlightTokenType(\'{css_class}\', event)">'
+            f"onclick=\"highlightTokenType('{css_class}', event)\">"
             f'<span class="legend-swatch {css_class}"></span>{name} · '
             f'<span class="legend-total" data-series="{css_class}">{mr.format_tokens(totals.get(css_class, 0))}</span></span>'
         )
@@ -85,12 +85,20 @@ def render_composition_bar(record):
         parts.append(
             f'<span class="comp-seg {css_class}" style="width:{pct:.2f}%" '
             f'title="{name} · {mr.format_tokens(value)} ({pct:.0f}%)" '
-            f'onclick="highlightTokenType(\'{css_class}\', event)"></span>'
+            f"onclick=\"highlightTokenType('{css_class}', event)\"></span>"
         )
     return f'<div class="comp-bar">{"".join(parts)}</div>'
 
 
-def render_session_row(record, is_active, group_colors, group_index, subagent_count=0, show_tmux=True, period_ids=("tudo",)):
+def render_session_row(
+    record,
+    is_active,
+    group_colors,
+    group_index,
+    subagent_count=0,
+    show_tmux=True,
+    period_ids=("tudo",),
+):
     session_id = record.get("session_id") or ""
     tag = html.escape(record.get("tag") or "-")
     branch = html.escape(record.get("git_branch") or "-")
@@ -166,9 +174,9 @@ def render_group_header(group_index, group, period_windows):
     return (
         f'<div class="group-header collapsed {group["class"]}" id="group-{group_index}"{title_attr} '
         f'data-periods="{" ".join(member_periods)}" '
-        f"onclick=\"toggleGroup({group_index})\">"
+        f'onclick="toggleGroup({group_index})">'
         '<span class="group-icon">▸</span>'
-        f'<span>{html.escape(label)} {"".join(counts)}</span>'
+        f"<span>{html.escape(label)} {''.join(counts)}</span>"
         "</div>"
     )
 
@@ -194,10 +202,7 @@ def render_session_header(show_tmux=True):
 def render_detail_panel(session_id, subagents, is_active, period_ids=("tudo",)):
     open_class = " open" if is_active else ""
     title = ""
-    subagents = [
-        s for s in subagents
-        if mr.record_token_total(s) > 0
-    ]
+    subagents = [s for s in subagents if mr.record_token_total(s) > 0]
     if not subagents:
         body = '<p class="empty">Nenhum subagente nesta sessão.</p>'
     else:
@@ -236,7 +241,7 @@ def render_detail_panel(session_id, subagents, is_active, period_ids=("tudo",)):
                 f"<span>{date_str}</span>"
                 f"<span>{task_text}</span>"
                 f'<span class="subagent-tokens-cell">{subagent_total_tokens} {comp_bar}</span>'
-                f'<span>{subagent.get("tool_call_count", 0)} tools</span>'
+                f"<span>{subagent.get('tool_call_count', 0)} tools</span>"
                 f"<span>{duration_str}</span>"
                 "</div>"
             )
@@ -257,8 +262,6 @@ def render_detail_panel(session_id, subagents, is_active, period_ids=("tudo",)):
         f'<button class="detail-close" onclick="closeDetail(\'{session_id}\')" aria-label="Fechar">×</button>'
         f"<h3>{session_id}</h3>{title}{body}</div>"
     )
-
-
 
 
 def render_trend_chart(records, group_colors, period_id):
@@ -392,7 +395,7 @@ def render_trend_chart(records, group_colors, period_id):
                 bars.append(
                     f'<rect x="{x:.1f}" y="{y_cursor:.1f}" width="{bar_width:.1f}" height="{seg_height:.1f}" '
                     f'class="chart-bar {group_class}" '
-                    f'onclick="highlightProject(\'{group_class}\', event)">'
+                    f"onclick=\"highlightProject('{group_class}', event)\">"
                     f"<title>{html.escape(project_label)} · {day['day']} - {mr.format_tokens(value)} tokens</title></rect>"
                 )
         return "".join(bars)
@@ -417,7 +420,7 @@ def render_trend_chart(records, group_colors, period_id):
                 bars.append(
                     f'<rect x="{x:.1f}" y="{y_cursor:.1f}" width="{bar_width:.1f}" height="{seg_height:.1f}" '
                     f'class="chart-bar {css_class}" '
-                    f'onclick="highlightTokenType(\'{css_class}\', event)">'
+                    f"onclick=\"highlightTokenType('{css_class}', event)\">"
                     f"<title>{type_name} · {day['day']} - {mr.format_tokens(value)} tokens</title></rect>"
                 )
         return "".join(bars)
@@ -503,7 +506,7 @@ def render_trend_chart(records, group_colors, period_id):
         chip_text = raw_name if raw_name == label else f"{raw_name}:{label}"
         pane_legend_chips.append(
             f'<span class="legend-chip" '
-            f'onclick="highlightProject(\'{group_class}\', event)">'
+            f"onclick=\"highlightProject('{group_class}', event)\">"
             f'<span class="legend-swatch {group_class}"></span>{chip_text}</span>'
         )
     pane_legend = "".join(pane_legend_chips)
@@ -537,7 +540,9 @@ def compute_project_series_totals(records):
     per_project = {}
     for r in records:
         project = r.get("project_path")
-        bucket = per_project.setdefault(project, {"series-1": 0, "series-2": 0, "series-3": 0, "series-4": 0})
+        bucket = per_project.setdefault(
+            project, {"series-1": 0, "series-2": 0, "series-3": 0, "series-4": 0}
+        )
         bucket["series-1"] += r.get("input_tokens", 0) or 0
         bucket["series-2"] += r.get("output_tokens", 0) or 0
         bucket["series-3"] += r.get("cache_read_tokens", 0) or 0
@@ -546,7 +551,9 @@ def compute_project_series_totals(records):
     return per_project, grand_totals
 
 
-def render_project_totals_chart(records, project_first_seen, project_last_seen, open_projects, period_id):
+def render_project_totals_chart(
+    records, project_first_seen, project_last_seen, open_projects, period_id
+):
     ordered_projects, _totals, _max_total = mr.compute_project_totals(records, project_last_seen)
     # Segmented by token type (2026-07-20) instead of one flat bar, so the
     # composition legend can highlight/filter these bars the same way it
@@ -587,7 +594,7 @@ def render_project_totals_chart(records, project_first_seen, project_last_seen, 
             # to the label instead of being lost. An SVG <title> element
             # explains what the marker means to readers who might think it
             # is scoped to the period filter.
-            open_marker = ' <title>aberto agora</title>●' if is_open else ""
+            open_marker = " <title>aberto agora</title>●" if is_open else ""
             days_running = mr.project_days_running(project_first_seen, project)
             seg_rects = []
             x_cursor = label_x
@@ -599,7 +606,7 @@ def render_project_totals_chart(records, project_first_seen, project_last_seen, 
                 seg_rects.append(
                     f'<rect x="{x_cursor:.1f}" y="{y + 9}" width="{seg_width:.1f}" height="14" '
                     f'class="chart-bar {css_class}" '
-                    f'onclick="highlightTokenType(\'{css_class}\', event)">'
+                    f"onclick=\"highlightTokenType('{css_class}', event)\">"
                     f"<title>{html.escape(label)} · {name} · {mr.format_tokens(value)}</title></rect>"
                 )
                 x_cursor += seg_width
@@ -649,7 +656,7 @@ def render_project_totals_chart(records, project_first_seen, project_last_seen, 
         )
         more_html = (
             f'<div class="project-chart-toggle" id="project-chart-toggle-{period_id}" '
-            f'onclick="toggleProjectsMore(\'{period_id}\')">'
+            f"onclick=\"toggleProjectsMore('{period_id}')\">"
             f"+ {len(hidden_projects)} projetos históricos</div>"
             f"{hidden_svg}"
         )
@@ -712,7 +719,16 @@ def render_period_filter():
     return f'<div class="period-filter">{"".join(chips)}{render_backfill_note()}</div>'
 
 
-def render_html(records, subagents_by_session, chart_records, daily_chart_records, period_windows, project_first_seen, project_last_seen, open_projects):
+def render_html(
+    records,
+    subagents_by_session,
+    chart_records,
+    daily_chart_records,
+    period_windows,
+    project_first_seen,
+    project_last_seen,
+    open_projects,
+):
     group_colors = build_group_colors(chart_records, daily_chart_records)
 
     def periods_for(record):
@@ -733,10 +749,7 @@ def render_html(records, subagents_by_session, chart_records, daily_chart_record
     # a header with no rows under it.
     visible_groups = []
     for group_index, group in enumerate(groups):
-        visible_records = [
-            r for r in group["records"]
-            if mr.record_token_total(r) > 0
-        ]
+        visible_records = [r for r in group["records"] if mr.record_token_total(r) > 0]
         if visible_records:
             visible_groups.append((group_index, {**group, "records": visible_records}))
 
@@ -766,17 +779,23 @@ def render_html(records, subagents_by_session, chart_records, daily_chart_record
                 record = {**record, "task_label": f"{label} ({label_seen[label]})"}
             session_subagents = subagents_by_session.get(session_id, [])
             visible_subagent_count = sum(
-                1 for s in session_subagents
-                if mr.record_token_total(s) > 0
+                1 for s in session_subagents if mr.record_token_total(s) > 0
             )
             rows_html.append(
                 render_session_row(
-                    record, False, group_colors, group_index, visible_subagent_count,
-                    show_tmux=has_tmux_data, period_ids=periods_for(record),
+                    record,
+                    False,
+                    group_colors,
+                    group_index,
+                    visible_subagent_count,
+                    show_tmux=has_tmux_data,
+                    period_ids=periods_for(record),
                 )
             )
             panels_html.append(
-                render_detail_panel(session_id, session_subagents, False, period_ids=periods_for(record))
+                render_detail_panel(
+                    session_id, session_subagents, False, period_ids=periods_for(record)
+                )
             )
 
     # INDEPENDENT sets of period blocks, not one combined set - ruling from
@@ -1464,11 +1483,7 @@ def render_html(records, subagents_by_session, chart_records, daily_chart_record
         "</div>"
         "</div>"
     )
-    panorama_tab_html = (
-        '<div class="tab-pane" id="tab-panorama">'
-        f"{panorama_blocks_html}"
-        "</div>"
-    )
+    panorama_tab_html = f'<div class="tab-pane" id="tab-panorama">{panorama_blocks_html}</div>'
     # Opens with every token type AND every project color already
     # selected (2026-07-21: "tanto lá quanto na legenda... precisa
     # começar com todos selecionados") - the dashboard shows everything
@@ -1498,15 +1513,24 @@ def main():
     parser = argparse.ArgumentParser(description="Report on logged Claude Code session metrics.")
     parser.add_argument("--tag", default=None, help="Filter by session tag")
     parser.add_argument("--project", default=None, help="Filter by project path")
-    parser.add_argument("-n", "--limit", type=int, default=20, help="Number of most recent sessions to show")
     parser.add_argument(
-        "--label-budget", type=int, default=0,
+        "-n", "--limit", type=int, default=20, help="Number of most recent sessions to show"
+    )
+    parser.add_argument(
+        "--label-budget",
+        type=int,
+        default=0,
         help="Max NEW labels (real claude -p calls) to generate in this run; already-cached labels are free and unlimited. Use 0 for none, a negative number for unlimited.",
     )
-    parser.add_argument("--html", action="store_true", help="Generate an HTML dashboard instead of printing a table")
-    parser.add_argument("--days", type=int, default=None, help="Only include sessions from the last N days")
     parser.add_argument(
-        "--all", action="store_true",
+        "--html", action="store_true", help="Generate an HTML dashboard instead of printing a table"
+    )
+    parser.add_argument(
+        "--days", type=int, default=None, help="Only include sessions from the last N days"
+    )
+    parser.add_argument(
+        "--all",
+        action="store_true",
         help="Accepted for compatibility and now the default: the full history is shown unless --days is given",
     )
     args = parser.parse_args()
@@ -1548,7 +1572,7 @@ def main():
     # "sem limite (mostra as 2401)") - only the terminal-table mode still
     # defaults to the last 20, unchanged.
     if not args.html:
-        records = records[-args.limit:]
+        records = records[-args.limit :]
 
     if args.html:
         raw_subagent_records = mr.load_records(mr.SUBAGENTS_FILE)
@@ -1567,8 +1591,7 @@ def main():
         # different days.
         render_now = datetime.now().astimezone()
         period_windows = {
-            period.id: mr.resolve_period(period.id, render_now)
-            for period in mr.PERIODS
+            period.id: mr.resolve_period(period.id, render_now) for period in mr.PERIODS
         }
         agent_label_cache = mr.load_agent_label_cache()
         # Real data has duplicate agent_id/session_id records (the metrics
@@ -1595,9 +1618,9 @@ def main():
             if key is None:
                 continue
             existing = unique_agents.get(key)
-            if existing is None:
-                unique_agents[key] = subagent
-            elif not existing.get("agent_transcript_path") and subagent.get("agent_transcript_path"):
+            if existing is None or (
+                not existing.get("agent_transcript_path") and subagent.get("agent_transcript_path")
+            ):
                 unique_agents[key] = subagent
         # max_workers=1 (fully serial): each worker spawns a full
         # `claude -p ... --model haiku` CLI subprocess (a whole Node
@@ -1622,7 +1645,9 @@ def main():
         label_by_agent_id = {}
         with ThreadPoolExecutor(max_workers=1) as executor:
             futures = {
-                executor.submit(mr.get_agent_label, unique_agents[k], agent_label_cache, label_budget): k
+                executor.submit(
+                    mr.get_agent_label, unique_agents[k], agent_label_cache, label_budget
+                ): k
                 for k in agent_keys
             }
             for i, future in enumerate(as_completed(futures), 1):
@@ -1649,10 +1674,9 @@ def main():
             if key is None:
                 continue
             existing = unique_sessions.get(key)
-            if existing is None:
-                unique_sessions[key] = record
-            elif not (existing.get("internal_name") or existing.get("transcript_path")) and (
-                record.get("internal_name") or record.get("transcript_path")
+            if existing is None or (
+                not (existing.get("internal_name") or existing.get("transcript_path"))
+                and (record.get("internal_name") or record.get("transcript_path"))
             ):
                 unique_sessions[key] = record
         session_keys = list(unique_sessions.keys())
@@ -1673,7 +1697,16 @@ def main():
         project_first_seen = mr.compute_project_first_seen(all_time_records)
         project_last_seen = mr.compute_project_last_seen(all_time_records)
         open_projects = mr.get_open_projects()
-        html_output = render_html(records, subagents_by_session, chart_records, daily_chart_records, period_windows, project_first_seen, project_last_seen, open_projects)
+        html_output = render_html(
+            records,
+            subagents_by_session,
+            chart_records,
+            daily_chart_records,
+            period_windows,
+            project_first_seen,
+            project_last_seen,
+            open_projects,
+        )
         output_path = os.path.expanduser("~/.claude/metrics/dashboard.html")
         with open(output_path, "w") as f:
             f.write(html_output)

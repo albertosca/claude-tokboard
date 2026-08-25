@@ -1,5 +1,6 @@
 """Project identity, grouping, and per-project aggregate helpers -
 shared by both dashboard entry points."""
+
 import glob
 import json
 import os
@@ -104,7 +105,7 @@ def get_open_projects(sessions_dir=None):
         return open_projects
     for path in paths:
         try:
-            with open(path, "r") as f:
+            with open(path) as f:
                 data = json.load(f)
         except Exception:
             continue

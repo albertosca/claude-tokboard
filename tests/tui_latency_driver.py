@@ -16,6 +16,7 @@ so the numbers are comparable to each other even when the machine is busy:
 
 Prints one JSON object on stdout. Never launch the app interactively.
 """
+
 import asyncio
 import json
 import os
@@ -27,6 +28,7 @@ sys.path.insert(0, os.path.join(REPO, "lib"))
 sys.path.insert(0, REPO)
 
 import metrics_core as mr  # noqa: E402
+
 import dashboard_tui as tui  # noqa: E402
 
 
@@ -62,12 +64,16 @@ async def main():
         finally:
             mr.load_records = real_load_records
 
-    print(json.dumps({
-        "presses": presses,
-        "periods": periods,
-        "load_records_calls_during_presses": reload_count["n"],
-        "records_per_period": dict(zip(periods, records_seen)),
-    }))
+    print(
+        json.dumps(
+            {
+                "presses": presses,
+                "periods": periods,
+                "load_records_calls_during_presses": reload_count["n"],
+                "records_per_period": dict(zip(periods, records_seen)),
+            }
+        )
+    )
 
 
 asyncio.run(main())

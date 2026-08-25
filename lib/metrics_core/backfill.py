@@ -4,6 +4,7 @@ scripts/backfill-token-dedup.py (which does the live file rewrite) and
 both dashboards (which read the state this module's functions record,
 to show the correction boundary honestly instead of a hardcoded date).
 """
+
 import bisect
 import collections
 import glob
@@ -60,7 +61,7 @@ def index_transcripts(projects_dir):
     """
     index = {}
     for path in glob.glob(os.path.join(projects_dir, "*", "*.jsonl")):
-        session_id = os.path.basename(path)[:-len(".jsonl")]
+        session_id = os.path.basename(path)[: -len(".jsonl")]
         current = index.get(session_id)
         if current is None or os.path.getsize(path) > os.path.getsize(current):
             index[session_id] = path
@@ -77,7 +78,7 @@ def scan_transcript(path):
     """
     timeline = []
     seen_ids = set()
-    with open(path, "r") as f:
+    with open(path) as f:
         for line in f:
             line = line.strip()
             if not line:
@@ -157,8 +158,7 @@ def plan_corrections(records, transcripts, cutoff):
             stats["untouched: no transcript on disk"] += len(indexes)
             continue
         if any(
-            not records[index].get("timestamp_end")
-            or records[index]["timestamp_end"] >= cutoff
+            not records[index].get("timestamp_end") or records[index]["timestamp_end"] >= cutoff
             for index in indexes
         ):
             # One row past the cutoff disqualifies the whole session, so the
@@ -289,7 +289,7 @@ def load_backfill_state(path=None):
     if not os.path.exists(path):
         return None
     try:
-        with open(path, "r") as f:
+        with open(path) as f:
             return json.load(f)
     except (json.JSONDecodeError, OSError):
         return None

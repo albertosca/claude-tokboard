@@ -1,5 +1,6 @@
 """Adaptive time-bucket granularity (minute/hour/day/week/month/year)
 for the trend charts in both dashboard entry points."""
+
 from datetime import datetime, timedelta
 
 # Trend chart granularity, chosen by the data's own span (2026-07-21) -

@@ -6,6 +6,7 @@ a quietly-skipped rendering test is the same mistake wearing a different
 hat. Opting out is possible but has to be said out loud, by setting
 METRICS_SKIP_JS_TESTS=1.
 """
+
 import os
 import shutil
 import subprocess
@@ -31,7 +32,9 @@ def require_node_with_jsdom():
     repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
     probe = subprocess.run(
         [node, "-e", "require.resolve('jsdom')"],
-        cwd=repo_root, capture_output=True, text=True,
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
     )
     if probe.returncode != 0:
         pytest.fail(f"node is present but jsdom is not installed.\n{_INSTALL_HINT}")

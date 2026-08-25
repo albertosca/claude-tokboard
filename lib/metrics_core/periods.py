@@ -1,6 +1,7 @@
 """Named period windows for scoping every dashboard surface to the same
 stretch of time. Pure date arithmetic, no record handling - the filters
 that apply these windows live in records.py."""
+
 import collections
 from datetime import timedelta
 

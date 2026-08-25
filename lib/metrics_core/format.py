@@ -1,4 +1,5 @@
 """Number/date formatting helpers shared by both dashboard entry points."""
+
 from datetime import datetime
 
 

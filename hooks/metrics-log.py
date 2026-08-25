@@ -43,7 +43,7 @@ def get_internal_name(session_id, sessions_dir=None):
             continue
         seen.add(path)
         try:
-            with open(path, "r") as f:
+            with open(path) as f:
                 data = json.load(f)
         except Exception:
             continue
@@ -64,7 +64,7 @@ def parse_transcript(path):
     last_timestamp = None
     git_branch = None
 
-    with open(path, "r") as f:
+    with open(path) as f:
         for line in f:
             line = line.strip()
             if not line:

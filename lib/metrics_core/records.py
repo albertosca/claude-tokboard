@@ -1,6 +1,7 @@
 """Loading, deduping, normalizing, and filtering raw session/subagent
 records - the data-ingestion layer shared by both dashboard entry
 points."""
+
 import collections
 import json
 import os
@@ -14,7 +15,7 @@ def load_records(path):
     records = []
     if not os.path.exists(path):
         return records
-    with open(path, "r") as f:
+    with open(path) as f:
         for line in f:
             line = line.strip()
             if not line:
@@ -318,7 +319,9 @@ def expand_records_to_daily_deltas(raw_records):
             # Dated by THIS snapshot's own timestamp_end (when this chunk
             # of usage was actually recorded), not the session's fixed
             # timestamp_start - that's the entire point of this function.
-            delta_record["timestamp_start"] = snapshot.get("timestamp_end") or snapshot.get("timestamp_start")
+            delta_record["timestamp_start"] = snapshot.get("timestamp_end") or snapshot.get(
+                "timestamp_start"
+            )
             deltas.append(delta_record)
     return deltas
 
