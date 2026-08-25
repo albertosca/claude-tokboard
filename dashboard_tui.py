@@ -49,14 +49,14 @@ def load_base_data(args, mr=None):
     """
     mr = mr or import_metrics_report()
 
-    # Dedupe + normalize the same way metrics-report.py's main() does
+    # Dedupe + normalize the same way dashboard_html.py's main() does
     # before ANYTHING else touches records (2026-07-21) - the Stop hook
     # appends a fresh cumulative snapshot every turn, so one session_id can
     # have dozens of duplicate rows with growing token counts (found up to
     # ~50x inflation upstream). normalize_project_paths then rolls a
     # subdirectory cwd up to its real project root and folds scratchpad/tmp
     # cwds into "sem projeto" - see that function's docstring in
-    # metrics-report.py for the fan-out safeguard that keeps it from
+    # dashboard_html.py for the fan-out safeguard that keeps it from
     # collapsing unrelated projects into a shared container directory.
     records = mr.load_records(mr.METRICS_FILE)
     # Captured before dedupe_sessions discards every snapshot but one per
@@ -85,16 +85,16 @@ def load_base_data(args, mr=None):
 
     records = mr.filter_by_days(records, effective_days)
     chart_records = records
-    # No -n cap on the session list (2026-07-21, mirrors metrics-report.py's
+    # No -n cap on the session list (2026-07-21, mirrors dashboard_html.py's
     # --html branch): a Textual Tree already scrolls natively, so there's no
     # "table overflows the terminal" problem an artificial cap would be
-    # solving here - only the plain terminal-table mode in metrics-report.py
+    # solving here - only the plain terminal-table mode in dashboard_html.py
     # still defaults to -n=20. --limit/-n is kept as a CLI flag for anyone
     # who wants to bound it explicitly, but it's no longer applied by default.
     if args.limit is not None:
         records = records[-args.limit:]
 
-    # Parallelized labeling, same pattern as metrics-report.py's --html
+    # Parallelized labeling, same pattern as dashboard_html.py's --html
     # branch. subagent_records is already deduped by agent_id above the
     # growing-snapshot problem dedupe_subagents fixes - preferring a
     # source-bearing duplicate as representative here is a separate, smaller
@@ -121,13 +121,13 @@ def load_base_data(args, mr=None):
             unique_agents[key] = subagent
         elif not existing.get("agent_transcript_path") and subagent.get("agent_transcript_path"):
             unique_agents[key] = subagent
-    # max_workers=1 (serial), matching metrics-report.py's own fix
+    # max_workers=1 (serial), matching dashboard_html.py's own fix
     # (2026-07-20/23): each worker spawns a full `claude -p` CLI
     # subprocess, not a lightweight thread task - 8 concurrent ones
     # spiked load average past 50 and froze the machine during a
     # cold-cache backfill. label_budget caps how many brand-new labels
     # (real API calls) this run generates before it stops (2026-07-23,
-    # same reasoning as metrics-report.py's --label-budget: unbounded
+    # same reasoning as dashboard_html.py's --label-budget: unbounded
     # backfills burn real quota and kept getting killed mid-run anyway).
     #
     # Kept rather than replaced by a plain loop, measured not assumed
@@ -261,7 +261,7 @@ def build_session_tree(records, subagents_by_session, mr):
     for group in groups:
         project_path = group["project"]
         # Omit zero-token sessions (2026-07-21, ported from
-        # metrics-report.py's render_html) - a session that never recorded
+        # dashboard_html.py's render_html) - a session that never recorded
         # any input/output tokens (aborted before the first turn, etc.) is
         # dead weight in the tree. A group whose every session is zero-token
         # is skipped entirely rather than left as an empty, expandable node.
@@ -285,7 +285,7 @@ def build_session_tree(records, subagents_by_session, mr):
             duration = record.get("duration_seconds")
             duration_str = f"{duration:.0f}s" if duration is not None else "-"
             # Subagent count badge (2026-07-21, ported from
-            # metrics-report.py's render_session_row/subagent_badge) - lets
+            # dashboard_html.py's render_session_row/subagent_badge) - lets
             # you tell which sessions dispatched subagents right in the
             # tree, without expanding every single one's detail panel.
             # Counts only subagents that actually recorded tokens, same
@@ -465,7 +465,7 @@ class TrendChart(PlotextPlot):
 
     def render_chart(self):
         # aggregate_by_day returns (granularity, days) since
-        # metrics-report.py's adaptive-granularity feature (2026-07-21) -
+        # dashboard_html.py's adaptive-granularity feature (2026-07-21) -
         # this file wasn't updated when that landed, so it was treating
         # the whole tuple as the days list. Bucket keys are also
         # granularity-specific now ("YYYY-MM-DDTHH" for hour, "YYYY-MM"
@@ -619,7 +619,7 @@ class ProjectRankingList(Static):
     def render(self):
         ordered, totals, max_total = self.mr.compute_project_totals(self.chart_records, self.project_last_seen)
         # Omit zero-token projects (2026-07-21, ported from
-        # metrics-report.py's render_project_totals_chart) - a project with
+        # dashboard_html.py's render_project_totals_chart) - a project with
         # nothing to show is just dead weight in this ranking.
         ordered = [p for p in ordered if totals.get(p, 0) > 0]
         if not ordered:
@@ -655,7 +655,7 @@ def build_arg_parser():
     parser.add_argument("--tag", default=None, help="Filter by session tag")
     parser.add_argument("--project", default=None, help="Filter by project path")
     # No default cap (2026-07-21): the Tree widget scrolls natively, so unlike
-    # metrics-report.py's plain terminal-table mode there's no overflow
+    # dashboard_html.py's plain terminal-table mode there's no overflow
     # problem a default -n=20 would be solving here. Pass -n explicitly to
     # bound it anyway.
     parser.add_argument("-n", "--limit", type=int, default=None, help="Number of most recent sessions to show (unbounded by default)")
