@@ -11,10 +11,12 @@ own .venv (see scripts/setup-tui-venv.sh to create it):
 """
 
 import argparse
-import os
 import sys
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
+from pathlib import Path
+from types import ModuleType
+from typing import Any, ClassVar
 
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, VerticalScroll
@@ -24,14 +26,14 @@ from textual.widgets import Footer, Static, TabbedContent, TabPane, Tree
 from textual_plotext import PlotextPlot
 
 
-def import_metrics_report():
-    sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib"))
+def import_metrics_report() -> ModuleType:
+    sys.path.insert(0, str(Path(__file__).resolve().parent / "lib"))
     import metrics_core
 
     return metrics_core
 
 
-def load_base_data(args, mr=None):
+def load_base_data(args: argparse.Namespace, mr: ModuleType | None = None) -> dict[str, Any]:
     """The expensive half of the load: everything that does NOT depend on
     the period.
 
@@ -113,7 +115,7 @@ def load_base_data(args, mr=None):
         raw_session_records
     ) + mr.expand_records_to_daily_deltas(raw_subagent_records)
     agent_label_cache = mr.load_agent_label_cache()
-    unique_agents = {}
+    unique_agents: dict[str, dict[str, Any]] = {}
     for subagent in subagent_records:
         key = subagent.get("agent_id")
         if key is None:
@@ -154,7 +156,7 @@ def load_base_data(args, mr=None):
                 agent_keys,
             )
         )
-    label_by_agent_id = dict(zip(agent_keys, agent_labels))
+    label_by_agent_id = dict(zip(agent_keys, agent_labels, strict=True))
     for subagent in subagent_records:
         subagent["agent_label"] = label_by_agent_id.get(subagent.get("agent_id"))
     mr.save_agent_label_cache(agent_label_cache)
@@ -168,7 +170,7 @@ def load_base_data(args, mr=None):
     mr.fold_subagent_tokens_into_sessions(all_time_records, subagent_records)
 
     label_cache = mr.load_label_cache()
-    unique_sessions = {}
+    unique_sessions: dict[str, dict[str, Any]] = {}
     for record in records:
         key = record.get("session_id")
         if key is None:
@@ -187,7 +189,7 @@ def load_base_data(args, mr=None):
                 session_keys,
             )
         )
-    label_by_session_id = dict(zip(session_keys, task_labels))
+    label_by_session_id = dict(zip(session_keys, task_labels, strict=True))
     for record in records:
         record["task_label"] = label_by_session_id.get(record.get("session_id"))
     mr.save_label_cache(label_cache)
@@ -207,7 +209,9 @@ def load_base_data(args, mr=None):
     }
 
 
-def apply_period(base, period_id, mr, now=None):
+def apply_period(
+    base: dict[str, Any], period_id: str, mr: ModuleType, now: datetime | None = None
+) -> dict[str, Any]:
     """The cheap half: narrows already-loaded data to one period's window.
 
     Pure list filtering over records that are already in memory, so this is
@@ -247,7 +251,9 @@ def apply_period(base, period_id, mr, now=None):
     }
 
 
-def load_data(args, mr=None, period_id=None):
+def load_data(
+    args: argparse.Namespace, mr: ModuleType | None = None, period_id: str | None = None
+) -> dict[str, Any]:
     """Loads and windows in one call - the original signature, unchanged.
 
     Kept for callers that just want data for one period (main(), the
@@ -260,7 +266,11 @@ def load_data(args, mr=None, period_id=None):
     return apply_period(load_base_data(args, mr=mr), period_id, mr)
 
 
-def build_session_tree(records, subagents_by_session, mr):
+def build_session_tree(
+    records: list[dict[str, Any]],
+    subagents_by_session: dict[str, list[dict[str, Any]]],
+    mr: ModuleType,
+) -> Tree:
     group_colors = mr.assign_group_colors(records)
     groups = mr.build_project_groups(records, group_colors)
     tree = Tree("Sessões")
@@ -299,26 +309,27 @@ def build_session_tree(records, subagents_by_session, mr):
                 1 for s in session_subagents if mr.record_token_total(s) > 0
             )
             subagent_badge = f" 🤖{visible_subagent_count}" if visible_subagent_count else ""
-            group_node.add_leaf(
-                f"{session_id[:12]:<14}{date_str:<14}{task_label[:28]:<30}{tokens:>8}   {duration_str:>7}{subagent_badge}",
-                data={"session_id": session_id},
+            row = (
+                f"{session_id[:12]:<14}{date_str:<14}{task_label[:28]:<30}"
+                f"{tokens:>8}   {duration_str:>7}{subagent_badge}"
             )
+            group_node.add_leaf(row, data={"session_id": session_id})
     return tree
 
 
-class SessionDetailPanel(VerticalScroll):
-    def __init__(self, mr, **kwargs):
+class SessionDetailPanel(VerticalScroll):  # type: ignore[misc]  # textual: base is Any (no stubs)
+    def __init__(self, mr: ModuleType, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.mr = mr
         self._body = Static("")
 
-    def compose(self):
+    def compose(self) -> ComposeResult:
         yield self._body
 
-    def clear(self):
+    def clear(self) -> None:
         self._body.update("")
 
-    def show_session(self, session_id, subagents):
+    def show_session(self, session_id: str, subagents: list[dict[str, Any]]) -> None:
         lines = [f"[bold]{session_id}[/bold]", ""]
         if not subagents:
             lines.append("[dim]Nenhum subagente nesta sessão.[/dim]")
@@ -334,35 +345,35 @@ class SessionDetailPanel(VerticalScroll):
                 duration_str = f"{duration:.0f}s" if duration is not None else "-"
                 task = f"{agent_type} — {agent_label}"[:38]
                 style = "on #202020" if i % 2 == 1 else ""
-                lines.append(
-                    f"[{style}]{task:<40}{in_tok}/{out_tok:<8}{subagent.get('tool_call_count', 0):>8}{duration_str:>10}[/{style}]"
-                    if style
-                    else f"{task:<40}{in_tok}/{out_tok:<8}{subagent.get('tool_call_count', 0):>8}{duration_str:>10}"
+                row = (
+                    f"{task:<40}{in_tok}/{out_tok:<8}"
+                    f"{subagent.get('tool_call_count', 0):>8}{duration_str:>10}"
                 )
+                lines.append(f"[{style}]{row}[/{style}]" if style else row)
         self._body.update("\n".join(lines))
 
 
-class CompositionLegend(Static):
+class CompositionLegend(Static):  # type: ignore[misc]  # textual: base is Any (no stubs)
     highlighted = reactive(None)
 
-    class Highlight(Message):
-        def __init__(self, series):
+    class Highlight(Message):  # type: ignore[misc]  # textual: base is Any (no stubs)
+        def __init__(self, series: set[str] | None) -> None:
             self.series = series
             super().__init__()
 
-    SERIES = [
+    SERIES: ClassVar[list[tuple[str, str]]] = [
         ("series-1", "input"),
         ("series-2", "output"),
         ("series-3", "cache read"),
         ("series-4", "cache creation"),
     ]
 
-    def __init__(self, totals, mr, **kwargs):
+    def __init__(self, totals: dict[str, int], mr: ModuleType, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.totals = totals
         self.mr = mr
 
-    def render(self):
+    def render(self) -> str:
         chips = []
         for series, name in self.SERIES:
             total = self.totals.get(series, 0)
@@ -373,7 +384,7 @@ class CompositionLegend(Static):
             chips.append(chip)
         return "   ".join(chips)
 
-    def on_click(self, event):
+    def on_click(self, event: Any) -> None:
         x = event.x
         chip_width = self.size.width // 4 if self.size.width else 0
         index = min(x // max(chip_width, 1), 3) if chip_width else 0
@@ -395,7 +406,9 @@ PANE_OTHER_COLOR = "gray"
 PANE_OTHER_KEY = "__outros__"
 
 
-def compute_pane_projects(mr, chart_records):
+def compute_pane_projects(
+    mr: ModuleType, chart_records: list[dict[str, Any]]
+) -> tuple[list[str | None], bool]:
     """Rank projects by total tokens in chart_records, grouped by color_group_key.
 
     Returns (top_keys, has_other): top_keys is the ordered list of the
@@ -403,7 +416,7 @@ def compute_pane_projects(mr, chart_records):
     there are more distinct projects than that, meaning callers should
     add one more "outros" bucket for everything not in top_keys.
     """
-    totals = {}
+    totals: dict[str | None, int] = {}
     for r in chart_records:
         key = mr.color_group_key(r.get("project_path"))
         totals[key] = totals.get(key, 0) + mr.record_token_total(r)
@@ -413,11 +426,11 @@ def compute_pane_projects(mr, chart_records):
     return top_keys, has_other
 
 
-def pane_series_label(mr, key):
+def pane_series_label(mr: ModuleType, key: str | None) -> str:
     return "outros" if key == PANE_OTHER_KEY else mr.project_display_label(key)
 
 
-def floor_stacked_bottom_series(bottom_series, day_totals):
+def floor_stacked_bottom_series(bottom_series: list[int], day_totals: list[int]) -> list[int]:
     """Work around a plotext stacked_bar rendering bug: when the FIRST
     (bottom) series in the stack is exactly 0 for a bar that otherwise has
     data, the visible segment above it renders one row too high, making the
@@ -431,42 +444,42 @@ def floor_stacked_bottom_series(bottom_series, day_totals):
     return [1 if v == 0 and day_totals[i] > 0 else v for i, v in enumerate(bottom_series)]
 
 
-class TrendChart(PlotextPlot):
+class TrendChart(PlotextPlot):  # type: ignore[misc]  # textual: base is Any (no stubs)
     # PlotextPlot is not focusable by default (2026-08-18): it needs to be
     # so action_cycle_period has something inside the Panorama pane to land
     # focus on after "p", the same way Tree already anchors the Sessões
     # pane. It is the widget the user actually meant by "o gráfico".
     can_focus = True
 
-    SERIES_KEYS = ["series-1", "series-2", "series-3", "series-4"]
-    SERIES_COLORS = ["green", "blue", "magenta", "orange"]
+    SERIES_KEYS: ClassVar[list[str]] = ["series-1", "series-2", "series-3", "series-4"]
+    SERIES_COLORS: ClassVar[list[str]] = ["green", "blue", "magenta", "orange"]
 
-    def __init__(self, mr, chart_records, **kwargs):
+    def __init__(self, mr: ModuleType, chart_records: list[dict[str, Any]], **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.mr = mr
         self.chart_records = chart_records
         self.mode = "pane"
-        self.highlighted = None
-        self.project_highlighted = None
+        self.highlighted: set[str] | None = None
+        self.project_highlighted: set[str | None] | None = None
 
-    def on_mount(self):
+    def on_mount(self) -> None:
         self.render_chart()
 
-    def toggle_mode(self):
+    def toggle_mode(self) -> None:
         self.mode = "tokens" if self.mode == "pane" else "pane"
         self.render_chart()
 
-    def set_highlight(self, series):
+    def set_highlight(self, series: set[str] | None) -> None:
         self.highlighted = series
         if self.mode == "tokens":
             self.render_chart()
 
-    def set_project_highlight(self, projects):
+    def set_project_highlight(self, projects: set[str | None] | None) -> None:
         self.project_highlighted = projects
         if self.mode == "pane":
             self.render_chart()
 
-    def render_chart(self):
+    def render_chart(self) -> None:
         # aggregate_by_day returns (granularity, days) since
         # dashboard_html.py's adaptive-granularity feature (2026-07-21) -
         # this file wasn't updated when that landed, so it was treating
@@ -487,7 +500,7 @@ class TrendChart(PlotextPlot):
             top_keys, has_other = compute_pane_projects(self.mr, self.chart_records)
             series_keys = list(top_keys) + ([PANE_OTHER_KEY] if has_other else [])
             self.pane_series_keys = series_keys
-            series_data = {k: [] for k in series_keys}
+            series_data: dict[str | None, list[int]] = {k: [] for k in series_keys}
             for d in days:
                 day_totals = dict.fromkeys(series_keys, 0)
                 for r in d["records"]:
@@ -570,24 +583,24 @@ class TrendChart(PlotextPlot):
         self.refresh()
 
 
-class ProjectLegend(Static):
+class ProjectLegend(Static):  # type: ignore[misc]  # textual: base is Any (no stubs)
     highlighted = reactive(None)
 
-    class Highlight(Message):
-        def __init__(self, projects):
+    class Highlight(Message):  # type: ignore[misc]  # textual: base is Any (no stubs)
+        def __init__(self, projects: set[str | None] | None) -> None:
             self.projects = projects
             super().__init__()
 
-    def __init__(self, mr, chart_records, **kwargs):
+    def __init__(self, mr: ModuleType, chart_records: list[dict[str, Any]], **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.mr = mr
         self.chart_records = chart_records
 
-    def _series_keys(self):
+    def _series_keys(self) -> list[str | None]:
         top_keys, has_other = compute_pane_projects(self.mr, self.chart_records)
         return list(top_keys) + ([PANE_OTHER_KEY] if has_other else [])
 
-    def render(self):
+    def render(self) -> str:
         series_keys = self._series_keys()
         if not series_keys:
             return "[dim]Sem dados.[/dim]"
@@ -600,7 +613,7 @@ class ProjectLegend(Static):
             chips.append(chip)
         return "   ".join(chips)
 
-    def on_click(self, event):
+    def on_click(self, event: Any) -> None:
         series_keys = self._series_keys()
         if not series_keys:
             return
@@ -618,12 +631,18 @@ class ProjectLegend(Static):
         self.post_message(self.Highlight(self.highlighted))
 
 
-class ProjectRankingList(Static):
+class ProjectRankingList(Static):  # type: ignore[misc]  # textual: base is Any (no stubs)
     expanded = reactive(False)
 
     def __init__(
-        self, mr, chart_records, project_first_seen, project_last_seen, open_projects, **kwargs
-    ):
+        self,
+        mr: ModuleType,
+        chart_records: list[dict[str, Any]],
+        project_first_seen: dict[str, str],
+        project_last_seen: dict[str, str],
+        open_projects: set[str],
+        **kwargs: Any,
+    ) -> None:
         super().__init__(**kwargs)
         self.mr = mr
         self.chart_records = chart_records
@@ -631,10 +650,10 @@ class ProjectRankingList(Static):
         self.project_last_seen = project_last_seen
         self.open_projects = open_projects
 
-    def toggle_more(self):
+    def toggle_more(self) -> None:
         self.expanded = not self.expanded
 
-    def render(self):
+    def render(self) -> str:
         ordered, totals, max_total = self.mr.compute_project_totals(
             self.chart_records, self.project_last_seen
         )
@@ -658,9 +677,8 @@ class ProjectRankingList(Static):
             is_open = project in self.open_projects
             bar_char = "█" if is_open else "▓"
             days_running = self.mr.project_days_running(self.project_first_seen, project)
-            lines.append(
-                f"{label[:24]:<26}{bar_char * bar_len:<32}{self.mr.format_tokens(total)}{days_running}"
-            )
+            formatted_total = self.mr.format_tokens(total)
+            lines.append(f"{label[:24]:<26}{bar_char * bar_len:<32}{formatted_total}{days_running}")
 
         if hidden:
             toggle_label = "▾ menos" if self.expanded else f"▸ + {len(hidden)} projetos históricos"
@@ -672,7 +690,7 @@ class ProjectRankingList(Static):
         return "\n".join(lines)
 
 
-def build_arg_parser():
+def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Terminal (TUI) dashboard for Claude Code session metrics."
     )
@@ -695,25 +713,31 @@ def build_arg_parser():
     parser.add_argument(
         "--all",
         action="store_true",
-        help="Accepted for compatibility and now the default: the full history is shown unless --days is given",
+        help=(
+            "Accepted for compatibility and now the default: the full history is shown "
+            "unless --days is given"
+        ),
     )
     parser.add_argument(
         "--label-budget",
         type=int,
         default=0,
-        help="Max NEW labels (real claude -p calls) to generate this run; already-cached labels are free and unlimited. Use 0 for none, a negative number for unlimited.",
+        help=(
+            "Max NEW labels (real claude -p calls) to generate this run; already-cached "
+            "labels are free and unlimited. Use 0 for none, a negative number for unlimited."
+        ),
     )
     return parser
 
 
-class MetricsTUIApp(App):
+class MetricsTUIApp(App):  # type: ignore[misc]  # textual: base is Any (no stubs)
     CSS = """
     Horizontal { height: 1fr; }
     Tree { width: 62%; }
     SessionDetailPanel { width: 1fr; border-left: solid $panel; padding: 1; }
     .backfill-note { color: $text-muted; height: auto; padding: 0 1; }
     """
-    BINDINGS = [
+    BINDINGS: ClassVar[list[tuple[str, str, str]]] = [
         ("q", "quit", "Sair"),
         ("t", "toggle_chart_mode", "Alterna modo do gráfico"),
         ("m", "toggle_more_projects", "Mais/menos projetos"),
@@ -725,7 +749,9 @@ class MetricsTUIApp(App):
     # hands it straight to load_data on every period cycle, so a None here
     # does not fail at construction - it raises AttributeError deep inside
     # load_data the first time someone presses "p".
-    def __init__(self, mr, data, args, **kwargs):
+    def __init__(
+        self, mr: ModuleType, data: dict[str, Any], args: argparse.Namespace, **kwargs: Any
+    ) -> None:
         super().__init__(**kwargs)
         self.mr = mr
         self.data = data
@@ -771,16 +797,16 @@ class MetricsTUIApp(App):
                 )
         yield Footer()
 
-    def on_mount(self):
+    def on_mount(self) -> None:
         self.query_one(Tree).focus()
         self._sync_legend_visibility()
 
-    def _sync_legend_visibility(self):
+    def _sync_legend_visibility(self) -> None:
         mode = self.query_one(TrendChart).mode
         self.query_one(CompositionLegend).display = mode == "tokens"
         self.query_one(ProjectLegend).display = mode == "pane"
 
-    def on_tree_node_selected(self, event):
+    def on_tree_node_selected(self, event: Any) -> None:
         session_data = event.node.data
         if not session_data:
             return
@@ -788,14 +814,14 @@ class MetricsTUIApp(App):
         subagents = self.data["subagents_by_session"].get(session_id, [])
         self.query_one(SessionDetailPanel).show_session(session_id, subagents)
 
-    def action_toggle_chart_mode(self):
+    def action_toggle_chart_mode(self) -> None:
         self.query_one(TrendChart).toggle_mode()
         self._sync_legend_visibility()
 
-    def action_toggle_more_projects(self):
+    def action_toggle_more_projects(self) -> None:
         self.query_one(ProjectRankingList).toggle_more()
 
-    def action_toggle_tab(self):
+    def action_toggle_tab(self) -> None:
         tabbed = self.query_one(TabbedContent)
         # Setting TabbedContent.active reverts within one event-loop tick
         # if the currently-focused widget (the Tree, focused since
@@ -814,13 +840,13 @@ class MetricsTUIApp(App):
         # to reopen on, instead of always defaulting to the first one.
         self.active_tab_id = tabbed.active
 
-    def on_composition_legend_highlight(self, event):
+    def on_composition_legend_highlight(self, event: CompositionLegend.Highlight) -> None:
         self.query_one(TrendChart).set_highlight(event.series)
 
-    def on_project_legend_highlight(self, event):
+    def on_project_legend_highlight(self, event: ProjectLegend.Highlight) -> None:
         self.query_one(TrendChart).set_project_highlight(event.projects)
 
-    def action_cycle_period(self):
+    def action_cycle_period(self) -> None:
         ids = [p.id for p in self.mr.PERIODS]
         current = self.data.get("period_id", self.mr.DEFAULT_PERIOD_ID)
         next_id = ids[(ids.index(current) + 1) % len(ids)]
@@ -857,9 +883,10 @@ class MetricsTUIApp(App):
         # the time this runs, query_one(Tree) already returns the NEW tree,
         # not the one about to be torn down.
         self.call_next(self._restore_focus_after_period_cycle)
-        self.notify(f"período: {dict((p.id, p.label) for p in self.mr.PERIODS)[next_id]}")
+        period_labels = {p.id: p.label for p in self.mr.PERIODS}
+        self.notify(f"período: {period_labels[next_id]}")
 
-    def _restore_focus_after_period_cycle(self):
+    def _restore_focus_after_period_cycle(self) -> None:
         """Focus a widget that actually belongs to the pane recompose
         reopened on (self.active_tab_id), mirroring the pattern
         action_toggle_tab already uses for the sessions tab."""
@@ -869,7 +896,7 @@ class MetricsTUIApp(App):
             self.query_one(TrendChart).focus()
 
 
-def main():
+def main() -> None:
     args = build_arg_parser().parse_args()
     mr = import_metrics_report()
     data = load_data(args, mr=mr)
