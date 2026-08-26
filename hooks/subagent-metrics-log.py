@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
 import json
-import os
 import stat
 import sys
 from datetime import datetime
+from pathlib import Path
+from typing import Any
 
-METRICS_DIR = os.path.expanduser("~/.claude/metrics")
-METRICS_FILE = os.path.join(METRICS_DIR, "subagents.jsonl")
+METRICS_DIR = Path("~/.claude/metrics").expanduser()
+METRICS_FILE = METRICS_DIR / "subagents.jsonl"
 
 
-def parse_transcript(path):
+def parse_transcript(path: str) -> dict[str, Any]:
     input_tokens = 0
     output_tokens = 0
     cache_read_tokens = 0
@@ -19,7 +20,7 @@ def parse_transcript(path):
     first_timestamp = None
     last_timestamp = None
 
-    with open(path) as f:
+    with Path(path).open() as f:
         for line in f:
             line = line.strip()
             if not line:
@@ -80,7 +81,7 @@ def parse_transcript(path):
     }
 
 
-def build_record(hook_input, parsed):
+def build_record(hook_input: dict[str, Any], parsed: dict[str, Any]) -> dict[str, Any]:
     return {
         "session_id": hook_input.get("session_id"),
         "agent_id": hook_input.get("agent_id"),
@@ -98,20 +99,20 @@ def build_record(hook_input, parsed):
     }
 
 
-def append_record(record):
-    os.makedirs(METRICS_DIR, exist_ok=True)
-    is_new = not os.path.exists(METRICS_FILE)
-    with open(METRICS_FILE, "a") as f:
+def append_record(record: dict[str, Any]) -> None:
+    METRICS_DIR.mkdir(parents=True, exist_ok=True)
+    is_new = not METRICS_FILE.exists()
+    with METRICS_FILE.open("a") as f:
         f.write(json.dumps(record) + "\n")
     if is_new:
-        os.chmod(METRICS_FILE, stat.S_IRUSR | stat.S_IWUSR)
+        METRICS_FILE.chmod(stat.S_IRUSR | stat.S_IWUSR)
 
 
-def main():
+def main() -> None:
     try:
         hook_input = json.load(sys.stdin)
         transcript_path = hook_input.get("agent_transcript_path")
-        if not transcript_path or not os.path.exists(transcript_path):
+        if not transcript_path or not Path(transcript_path).exists():
             return
         parsed = parse_transcript(transcript_path)
         record = build_record(hook_input, parsed)

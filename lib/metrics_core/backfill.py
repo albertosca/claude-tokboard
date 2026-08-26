@@ -233,9 +233,7 @@ def find_nonmonotonic_sessions(records: list[dict[str, Any]]) -> set[Any]:
     return offenders
 
 
-def apply_plan(
-    records: list[dict[str, Any]], plan: dict[int, list[int]]
-) -> list[dict[str, Any]]:
+def apply_plan(records: list[dict[str, Any]], plan: dict[int, list[int]]) -> list[dict[str, Any]]:
     corrected = []
     for index, record in enumerate(records):
         if index in plan:

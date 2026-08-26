@@ -1,17 +1,19 @@
 #!/usr/bin/env python3
-import glob
+import contextlib
 import json
 import os
 import stat
 import subprocess
 import sys
 from datetime import datetime
+from pathlib import Path
+from typing import Any
 
-METRICS_DIR = os.path.expanduser("~/.claude/metrics")
-METRICS_FILE = os.path.join(METRICS_DIR, "sessions.jsonl")
+METRICS_DIR = Path("~/.claude/metrics").expanduser()
+METRICS_FILE = METRICS_DIR / "sessions.jsonl"
 
 
-def get_tmux_window():
+def get_tmux_window() -> str | None:
     if not os.environ.get("TMUX"):
         return None
     try:
@@ -27,32 +29,31 @@ def get_tmux_window():
         return None
 
 
-def get_internal_name(session_id, sessions_dir=None):
+def get_internal_name(session_id: str | None, sessions_dir: Path | None = None) -> str | None:
     if not session_id:
         return None
     if sessions_dir is None:
-        sessions_dir = os.path.expanduser("~/.claude/sessions")
-    candidates = [os.path.join(sessions_dir, f"{os.getppid()}.json")]
-    try:
-        candidates += glob.glob(os.path.join(sessions_dir, "*.json"))
-    except Exception:
-        pass
-    seen = set()
+        sessions_dir = Path("~/.claude/sessions").expanduser()
+    candidates = [sessions_dir / f"{os.getppid()}.json"]
+    with contextlib.suppress(Exception):
+        candidates += list(sessions_dir.glob("*.json"))
+    seen: set[Path] = set()
     for path in candidates:
-        if path in seen or not os.path.exists(path):
+        if path in seen or not path.exists():
             continue
         seen.add(path)
         try:
-            with open(path) as f:
+            with path.open() as f:
                 data = json.load(f)
         except Exception:
             continue
         if data.get("sessionId") == session_id and data.get("nameSource") is None:
-            return data.get("name")
+            name = data.get("name")
+            return name if isinstance(name, str) else None
     return None
 
 
-def parse_transcript(path):
+def parse_transcript(path: str) -> dict[str, Any]:
     input_tokens = 0
     output_tokens = 0
     cache_read_tokens = 0
@@ -64,7 +65,7 @@ def parse_transcript(path):
     last_timestamp = None
     git_branch = None
 
-    with open(path) as f:
+    with Path(path).open() as f:
         for line in f:
             line = line.strip()
             if not line:
@@ -135,7 +136,7 @@ def parse_transcript(path):
     }
 
 
-def build_record(hook_input, parsed):
+def build_record(hook_input: dict[str, Any], parsed: dict[str, Any]) -> dict[str, Any]:
     session_id = hook_input.get("session_id")
     return {
         "session_id": session_id,
@@ -157,20 +158,20 @@ def build_record(hook_input, parsed):
     }
 
 
-def append_record(record):
-    os.makedirs(METRICS_DIR, exist_ok=True)
-    is_new = not os.path.exists(METRICS_FILE)
-    with open(METRICS_FILE, "a") as f:
+def append_record(record: dict[str, Any]) -> None:
+    METRICS_DIR.mkdir(parents=True, exist_ok=True)
+    is_new = not METRICS_FILE.exists()
+    with METRICS_FILE.open("a") as f:
         f.write(json.dumps(record) + "\n")
     if is_new:
-        os.chmod(METRICS_FILE, stat.S_IRUSR | stat.S_IWUSR)
+        METRICS_FILE.chmod(stat.S_IRUSR | stat.S_IWUSR)
 
 
-def main():
+def main() -> None:
     try:
         hook_input = json.load(sys.stdin)
         transcript_path = hook_input.get("transcript_path")
-        if not transcript_path or not os.path.exists(transcript_path):
+        if not transcript_path or not Path(transcript_path).exists():
             return
         parsed = parse_transcript(transcript_path)
         record = build_record(hook_input, parsed)
