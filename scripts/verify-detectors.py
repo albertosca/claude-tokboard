@@ -61,8 +61,6 @@ import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-TARGET = REPO_ROOT / "dashboard_html.py"
-BACKUP = REPO_ROOT / "dashboard_html.py.verify-detectors.bak"
 
 # Matches pytest's own "short test summary info" lines ("FAILED <nodeid>",
 # and, in case a patch ever breaks collection instead of an assertion,
@@ -111,6 +109,7 @@ class Defect:
     def __init__(
         self,
         name: str,
+        target: Path,
         description: str,
         anchor: str,
         replacement: str,
@@ -118,6 +117,7 @@ class Defect:
         expected_labels: list[str],
     ) -> None:
         self.name = name
+        self.target = target
         self.description = description
         self.anchor = anchor
         self.replacement = replacement
@@ -146,7 +146,7 @@ class Defect:
         if count != 1:
             raise RuntimeError(
                 f"anchor for defect {self.name!r} matched {count} time(s) in "
-                "dashboard_html.py (expected exactly 1) - refusing to patch. "
+                f"{self.target.name} (expected exactly 1) - refusing to patch. "
                 "The file has drifted from what this script expects; update "
                 "the anchor rather than let this pass silently."
             )
@@ -156,6 +156,7 @@ class Defect:
 DEFECTS = [
     Defect(
         name="the inert row filter",
+        target=REPO_ROOT / "dashboard_html_assets.py",
         description=(
             "Reproduces the shipped bug's shape: toggleGroup starts writing "
             "an inline style.display again on expand/collapse. An inline "
@@ -179,6 +180,7 @@ DEFECTS = [
     ),
     Defect(
         name="the unscoped totals",
+        target=REPO_ROOT / "dashboard_html.py",
         description=(
             "render_composition_legend goes back to being fed the full, "
             "unfiltered `records` instead of the period-scoped window, so "
@@ -198,27 +200,28 @@ DEFECTS = [
 ]
 
 
-def restore(original_hash: str) -> bool:
+def restore(target: Path, backup: Path, original_hash: str) -> bool:
     """Copies the backup's bytes back over the target - never `git checkout
     --`. Returns whether the restore verified byte-identical to the
     original."""
-    shutil.copy2(BACKUP, TARGET)
+    shutil.copy2(backup, target)
     clear_pycache()
-    ok = sha256(TARGET) == original_hash
-    BACKUP.unlink()
+    ok = sha256(target) == original_hash
+    backup.unlink()
     return ok
 
 
 def main() -> int:
-    if BACKUP.exists():
-        print(
-            f"stale backup already at {BACKUP} - a previous run did not "
-            "clean up. Resolve that by hand before running this script.",
-            file=sys.stderr,
-        )
-        return 2
+    for defect in DEFECTS:
+        stale_backup = defect.target.with_suffix(defect.target.suffix + ".verify-detectors.bak")
+        if stale_backup.exists():
+            print(
+                f"stale backup already at {stale_backup} - a previous run did "
+                "not clean up. Resolve that by hand before running this script.",
+                file=sys.stderr,
+            )
+            return 2
 
-    original_hash = sha256(TARGET)
     results: list[tuple[Defect, str, list[str], str | None]] = []
     overall_ok = True
 
@@ -226,19 +229,21 @@ def main() -> int:
         print(f"\n=== {defect.name} ===")
         print(defect.description)
 
-        shutil.copy2(TARGET, BACKUP)
-        assert sha256(BACKUP) == original_hash  # the backup itself is trustworthy
+        original_hash = sha256(defect.target)
+        backup_path = defect.target.with_suffix(defect.target.suffix + ".verify-detectors.bak")
+        shutil.copy2(defect.target, backup_path)
+        assert sha256(backup_path) == original_hash  # the backup itself is trustworthy
 
         try:
-            patched_text = defect.patch(TARGET.read_text())
+            patched_text = defect.patch(defect.target.read_text())
         except RuntimeError as exc:
             print(f"INJECTION FAILED: {exc}", file=sys.stderr)
-            BACKUP.unlink()
+            backup_path.unlink()
             results.append((defect, "INJECTION FAILED", [], str(exc)))
             overall_ok = False
             continue
 
-        TARGET.write_text(patched_text)
+        defect.target.write_text(patched_text)
         print(f"patch applied:\n  - {defect.anchor}\n  + {defect.replacement}")
 
         clear_pycache()
@@ -248,7 +253,7 @@ def main() -> int:
         caught = failed_test_names(output)
         missing = defect.missing_evidence(caught, output)
 
-        restore_ok = restore(original_hash)
+        restore_ok = restore(defect.target, backup_path, original_hash)
         if not restore_ok:
             print(
                 "RESTORE FAILED: the restored file is not byte-identical to "
@@ -281,22 +286,25 @@ def main() -> int:
 
         results.append((defect, status, caught, "; ".join(missing) or None))
 
-    # Final, independent confirmation: the file is tracked by git and was
-    # clean before this script ran, so git itself should agree nothing is
-    # left behind - even if every sha256 check above already passed.
-    git_check = subprocess.run(
-        ["git", "diff", "--exit-code", "--", str(TARGET)],
-        cwd=REPO_ROOT,
-        capture_output=True,
-        text=True,
-    )
-    if git_check.returncode != 0:
-        print(
-            "\ngit diff --exit-code disagrees: dashboard_html.py is NOT clean after restore.",
-            file=sys.stderr,
+    # Final, independent confirmation: every file this script touched is
+    # tracked by git and was clean before this script ran, so git itself
+    # should agree nothing is left behind - even if every sha256 check
+    # above already passed.
+    distinct_targets = sorted({defect.target for defect in DEFECTS})
+    for target in distinct_targets:
+        git_check = subprocess.run(
+            ["git", "diff", "--exit-code", "--", str(target)],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
         )
-        print(git_check.stdout, file=sys.stderr)
-        overall_ok = False
+        if git_check.returncode != 0:
+            print(
+                f"\ngit diff --exit-code disagrees: {target.name} is NOT clean after restore.",
+                file=sys.stderr,
+            )
+            print(git_check.stdout, file=sys.stderr)
+            overall_ok = False
 
     print("\n" + "=" * 70)
     print("SUMMARY")
@@ -316,7 +324,7 @@ def main() -> int:
         )
         return 1
 
-    print("\nBoth defects DETECTED; dashboard_html.py restored byte-identical; git status clean.")
+    print("\nBoth defects DETECTED; all patched files restored byte-identical; git status clean.")
     return 0
 
 
