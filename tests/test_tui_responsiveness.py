@@ -51,13 +51,16 @@ makes the number a bound and not a decoration.
 import json
 import os
 import subprocess
+from pathlib import Path
+from typing import Any
 
 import pytest
+from conftest import DashboardPage
 from test_fixture_isolation import EXPECTED_MEMBERSHIP
 
-REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-VENV_PYTHON = os.path.join(REPO_ROOT, ".venv", "bin", "python3")
-DRIVER = os.path.join(os.path.dirname(__file__), "tui_latency_driver.py")
+REPO_ROOT = Path(__file__).resolve().parent.parent
+VENV_PYTHON = REPO_ROOT / ".venv" / "bin" / "python3"
+DRIVER = Path(__file__).resolve().parent / "tui_latency_driver.py"
 
 TUI_SKIP_ENV = "METRICS_SKIP_TUI_TESTS"
 
@@ -76,13 +79,13 @@ MAX_PRESS_SECONDS = 1.5
 
 
 @pytest.fixture(scope="session")
-def cycle_timings(dashboard_page):
+def cycle_timings(dashboard_page: DashboardPage) -> dict[str, Any]:
     """Runs the headless driver against the same throwaway HOME the rest of
     the suite uses, so this measures the committed fixture and never the
     real ~/.claude/metrics."""
     if os.environ.get(TUI_SKIP_ENV):
         pytest.skip(f"{TUI_SKIP_ENV} is set - the TUI is NOT being checked")
-    if not os.path.exists(VENV_PYTHON):
+    if not VENV_PYTHON.exists():
         pytest.fail(f"no TUI virtualenv at {VENV_PYTHON}.\n{_INSTALL_HINT}")
 
     env = dict(os.environ, HOME=dashboard_page.home)
@@ -90,7 +93,7 @@ def cycle_timings(dashboard_page):
     # ahead of the venv's own; the driver adds what it needs to sys.path.
     env.pop("PYTHONPATH", None)
     result = subprocess.run(
-        [VENV_PYTHON, DRIVER],
+        [str(VENV_PYTHON), str(DRIVER)],
         env=env,
         cwd=REPO_ROOT,
         capture_output=True,
@@ -101,7 +104,7 @@ def cycle_timings(dashboard_page):
         f"the TUI driver failed ({result.returncode})\n"
         f"stdout: {result.stdout}\nstderr: {result.stderr}"
     )
-    return json.loads(result.stdout.strip().splitlines()[-1])
+    return json.loads(result.stdout.strip().splitlines()[-1])  # type: ignore[no-any-return]  # subprocess stdout parses to Any; the fixture's dict[str, Any] is the documented contract
 
 
 def test_the_period_actually_cycles(cycle_timings):

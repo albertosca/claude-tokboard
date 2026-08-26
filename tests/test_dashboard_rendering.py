@@ -8,11 +8,14 @@ import os
 import re
 import subprocess
 from datetime import datetime
+from pathlib import Path
+from typing import Any
 
 import metrics_core as mr
+from conftest import DashboardPage
 from js_runtime import require_node_with_jsdom
 
-HERE = os.path.dirname(__file__)
+HERE = Path(__file__).resolve().parent
 
 # A ratchet, not a guess: the harness currently makes exactly this many
 # assertions, and the Python side has no other way to notice a section
@@ -30,23 +33,23 @@ HERE = os.path.dirname(__file__)
 MIN_ASSERTIONS = 238
 
 
-def _fixture_records(home):
-    path = os.path.join(home, ".claude", "metrics", "sessions.jsonl")
-    with open(path) as f:
+def _fixture_records(home: str) -> list[dict[str, Any]]:
+    path = Path(home) / ".claude" / "metrics" / "sessions.jsonl"
+    with path.open() as f:
         return [json.loads(line) for line in f if line.strip()]
 
 
-def _trend_chip(project_path):
+def _trend_chip(project_path: str | None) -> str:
     # Mirrors the trend legend's own labelling rule: a worktree collapses
     # into its parent, and the chip reads "<basename>" unless the display
     # label disagrees with it, in which case it reads "<basename>:<label>".
     parent = mr.color_group_key(project_path)
-    raw_name = os.path.basename((parent or "").rstrip("/")) or "sem projeto"
+    raw_name = Path((parent or "").rstrip("/")).name or "sem projeto"
     label = mr.project_display_label(parent)
     return raw_name if raw_name == label else f"{raw_name}:{label}"
 
 
-def _expectations(dashboard_page):
+def _expectations(dashboard_page: DashboardPage) -> dict[str, Any]:
     # Every expected value below comes from metrics_core, over the records
     # the fixture wrote, scoped by the session ids metrics_core itself
     # decided belong to the period. No part of the rendering layer gets a
@@ -66,7 +69,7 @@ def _expectations(dashboard_page):
     # second one here is acceptable as long as that window is known.
     now = datetime.now().astimezone()
     deltas = mr.expand_records_to_daily_deltas(records)
-    periods = {}
+    periods: dict[str, dict[str, Any]] = {}
     for period, data in dashboard_page.expected.items():
         scoped = [r for r in records if r["session_id"] in data["session_ids"]]
         totals = mr.compute_token_type_totals(scoped)
@@ -76,7 +79,7 @@ def _expectations(dashboard_page):
         # happen to hold the same projects. The two figures below are what
         # give the charts the teeth the composition legend and the group
         # headers already had: a magnitude, not just a name.
-        panorama_totals = {}
+        panorama_totals: dict[str, int] = {}
         for record in scoped:
             label = mr.project_display_label(record.get("project_path"))
             panorama_totals[label] = panorama_totals.get(label, 0) + mr.record_token_total(record)
@@ -103,19 +106,18 @@ def _expectations(dashboard_page):
     }
 
 
-def _drive(dashboard_page, node):
-    payload = os.path.join(dashboard_page.home, "expected.json")
-    with open(payload, "w") as f:
+def _drive(dashboard_page: DashboardPage, node: str) -> subprocess.CompletedProcess[str]:
+    payload = Path(dashboard_page.home) / "expected.json"
+    with payload.open("w") as f:
         json.dump(_expectations(dashboard_page), f)
-    result = subprocess.run(
-        [node, os.path.join(HERE, "js", "drive_dashboard.js"), payload],
+    return subprocess.run(
+        [node, str(HERE / "js" / "drive_dashboard.js"), str(payload)],
         env=dict(os.environ, DASHBOARD=dashboard_page.html_path),
-        cwd=os.path.abspath(os.path.join(HERE, "..")),
+        cwd=str((HERE / "..").resolve()),
         capture_output=True,
         text=True,
         timeout=120,
     )
-    return result
 
 
 def test_every_period_shows_exactly_the_sessions_that_belong(dashboard_page):

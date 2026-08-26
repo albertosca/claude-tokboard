@@ -19,27 +19,28 @@ Prints one JSON object on stdout. Never launch the app interactively.
 
 import asyncio
 import json
-import os
 import sys
 import time
+from pathlib import Path
+from typing import Any
 
-REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-sys.path.insert(0, os.path.join(REPO, "lib"))
-sys.path.insert(0, REPO)
+REPO = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO / "lib"))
+sys.path.insert(0, str(REPO))
 
 import metrics_core as mr  # noqa: E402
 
 import dashboard_tui as tui  # noqa: E402
 
 
-async def main():
+async def main() -> None:
     args = tui.build_arg_parser().parse_args(["--label-budget", "0"])
     data = tui.load_data(args, mr=mr)
     app = tui.MetricsTUIApp(mr, data, args=args)
 
-    presses = []
-    periods = []
-    records_seen = []
+    presses: list[float] = []
+    periods: list[Any] = []
+    records_seen: list[int] = []
     async with app.run_test(size=(140, 45)) as pilot:
         await pilot.pause()
 
@@ -48,7 +49,7 @@ async def main():
         real_load_records = mr.load_records
         reload_count = {"n": 0}
 
-        def counting_load_records(path):
+        def counting_load_records(path: str) -> list[dict[str, Any]]:
             reload_count["n"] += 1
             return real_load_records(path)
 
@@ -70,7 +71,7 @@ async def main():
                 "presses": presses,
                 "periods": periods,
                 "load_records_calls_during_presses": reload_count["n"],
-                "records_per_period": dict(zip(periods, records_seen)),
+                "records_per_period": dict(zip(periods, records_seen, strict=True)),
             }
         )
     )

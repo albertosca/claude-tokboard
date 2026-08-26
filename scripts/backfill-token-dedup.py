@@ -64,8 +64,10 @@ import stat
 import sys
 import tempfile
 from datetime import datetime
+from pathlib import Path
+from typing import Any
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "lib"))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
 from metrics_core.backfill import (
     BACKFILL_STATE_FILE,
@@ -82,12 +84,14 @@ from metrics_core.backfill import (
     write_backfill_state,
 )
 
-METRICS_FILE = os.path.expanduser("~/.claude/metrics/sessions.jsonl")
-BACKUP_DIR = os.path.expanduser("~/.claude/metrics/backups")
-PROJECTS_DIR = os.path.expanduser("~/.claude/projects")
+METRICS_FILE = str(Path("~/.claude/metrics/sessions.jsonl").expanduser())
+BACKUP_DIR = str(Path("~/.claude/metrics/backups").expanduser())
+PROJECTS_DIR = str(Path("~/.claude/projects").expanduser())
 
 
-def print_daily_comparison(before, after, days):
+def print_daily_comparison(
+    before: list[dict[str, Any]], after: list[dict[str, Any]], days: int | None
+) -> None:
     before_map = dict(daily_totals(before, days))
     after_map = dict(daily_totals(after, days))
     print(f"\nPer-day token totals via expand_records_to_daily_deltas (last {days} days)")
@@ -101,7 +105,14 @@ def print_daily_comparison(before, after, days):
     print(f"  days that collapsed to zero: {len(collapsed)} {collapsed if collapsed else ''}")
 
 
-def print_summary(stats, factors, before_total, after_total, changed_lines, total_lines):
+def print_summary(
+    stats: "collections.Counter[str]",
+    factors: list[float],
+    before_total: int,
+    after_total: int,
+    changed_lines: int,
+    total_lines: int,
+) -> None:
     print("\nRow disposition")
     for reason, count in sorted(stats.items(), key=lambda kv: -kv[1]):
         print(f"  {count:>6}  {reason}")
@@ -109,7 +120,7 @@ def print_summary(stats, factors, before_total, after_total, changed_lines, tota
     if factors:
         factors = sorted(factors)
 
-        def pct(p):
+        def pct(p: float) -> float:
             return factors[min(len(factors) - 1, int(len(factors) * p))]
 
         print("Correction factor (stored / recomputed) over corrected rows:")
@@ -117,7 +128,7 @@ def print_summary(stats, factors, before_total, after_total, changed_lines, tota
             f"  min {factors[0]:.3f}x  p25 {pct(0.25):.3f}x  median {pct(0.5):.3f}x  "
             f"p75 {pct(0.75):.3f}x  max {factors[-1]:.3f}x"
         )
-        buckets = collections.Counter()
+        buckets: collections.Counter[str] = collections.Counter()
         for factor in factors:
             if factor < 1.001:
                 buckets["1.00x (no duplicates)"] += 1
@@ -139,11 +150,11 @@ def print_summary(stats, factors, before_total, after_total, changed_lines, tota
         )
 
 
-def _valid_cutoff(value):
+def _valid_cutoff(value: str) -> str:
     try:
         parsed = datetime.strptime(value, "%Y-%m-%d")
-    except ValueError:
-        raise argparse.ArgumentTypeError(f"--cutoff must be YYYY-MM-DD, got {value!r}")
+    except ValueError as error:
+        raise argparse.ArgumentTypeError(f"--cutoff must be YYYY-MM-DD, got {value!r}") from error
     # strptime alone is not enough: it accepts non-zero-padded values like
     # "2026-8-21" as valid dates, which is exactly the malformed shape that
     # would sort wrong lexicographically against timestamp_end strings -
@@ -155,7 +166,7 @@ def _valid_cutoff(value):
     return value
 
 
-def write_atomically(path, snapshot_prefix, new_lines, mode):
+def write_atomically(path: str, snapshot_prefix: bytes, new_lines: list[bytes], mode: int) -> int:
     """Rename a fully written file into place, carrying over live appends.
 
     The metrics file is append-only and written by every running session, so
@@ -166,8 +177,13 @@ def write_atomically(path, snapshot_prefix, new_lines, mode):
     This keeps the window in which a concurrent append could be missed to
     that final read-verify-append-rename sequence, not the whole write.
     """
-    directory = os.path.dirname(path)
-    handle, temporary = tempfile.mkstemp(dir=directory, prefix=".sessions.jsonl.", suffix=".new")
+    target = Path(path)
+    directory = target.parent
+    handle, temporary_name = tempfile.mkstemp(
+        dir=directory, prefix=".sessions.jsonl.", suffix=".new"
+    )
+    temporary = Path(temporary_name)
+    tail = b""
     try:
         with os.fdopen(handle, "wb") as f:
             for line in new_lines:
@@ -176,8 +192,7 @@ def write_atomically(path, snapshot_prefix, new_lines, mode):
             f.flush()
             os.fsync(f.fileno())
 
-        with open(path, "rb") as f:
-            current = f.read()
+        current = target.read_bytes()
         if current[: len(snapshot_prefix)] != snapshot_prefix:
             raise RuntimeError(
                 "refusing to write: the file changed under us in a way that is not "
@@ -185,21 +200,21 @@ def write_atomically(path, snapshot_prefix, new_lines, mode):
             )
         tail = current[len(snapshot_prefix) :]
         if tail:
-            with open(temporary, "ab") as f:
+            with temporary.open("ab") as f:
                 f.write(tail)
                 f.flush()
                 os.fsync(f.fileno())
 
-        os.chmod(temporary, mode)
-        os.replace(temporary, path)
+        temporary.chmod(mode)
+        temporary.replace(target)
     except BaseException:
-        if os.path.exists(temporary):
-            os.unlink(temporary)
+        if temporary.exists():
+            temporary.unlink()
         raise
     return len(tail.split(b"\n")) - 1 if tail else 0
 
 
-def main():
+def main() -> int:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
@@ -229,12 +244,12 @@ def main():
     args = parser.parse_args()
 
     path = args.metrics_file
-    if not os.path.exists(path):
+    metrics_path = Path(path)
+    if not metrics_path.exists():
         print(f"no metrics file at {path}", file=sys.stderr)
         return 1
 
-    with open(path, "rb") as f:
-        data = f.read()
+    data = metrics_path.read_bytes()
     # Ignore a partially written trailing line: a concurrent hook may be
     # mid-append. Everything from there on is treated as live tail.
     usable = data.rfind(b"\n") + 1
@@ -243,7 +258,7 @@ def main():
     print(f"read {len(raw_lines)} lines from {path}")
     print(f"  sha256 {sha256_bytes(data)}")
 
-    records = []
+    records: list[dict[str, Any]] = []
     for number, raw in enumerate(raw_lines, 1):
         try:
             records.append(json.loads(raw.decode("utf-8")))
@@ -288,12 +303,13 @@ def main():
     if not plan:
         print("\nnothing to correct; leaving the file untouched")
     else:
-        os.makedirs(args.backup_dir, exist_ok=True)
+        backup_dir = Path(args.backup_dir)
+        backup_dir.mkdir(parents=True, exist_ok=True)
         stamp = datetime.now().strftime("%Y-%m-%d-%H%M%S")
-        backup = os.path.join(args.backup_dir, f"sessions.jsonl.backfill-{stamp}.bak")
+        backup = backup_dir / f"sessions.jsonl.backfill-{stamp}.bak"
         shutil.copy2(path, backup)
         source_sha = sha256_of(path)
-        backup_sha = sha256_of(backup)
+        backup_sha = sha256_of(str(backup))
         if source_sha != backup_sha:
             # Can legitimately differ if a hook appended between the copy and the
             # re-read; either way an unverified backup is not a backup.
@@ -304,12 +320,11 @@ def main():
             return 1
         print(f"\nbackup verified: {backup}\n  sha256 {backup_sha}")
 
-        mode = stat.S_IMODE(os.stat(path).st_mode)
+        mode = stat.S_IMODE(metrics_path.stat().st_mode)
         new_lines = [json.dumps(record).encode("utf-8") for record in corrected]
         appended = write_atomically(path, snapshot, new_lines, mode)
 
-        with open(path, "rb") as f:
-            written = f.read()
+        written = metrics_path.read_bytes()
         written_count = written.count(b"\n")
         expected = len(raw_lines) + appended
         print(
@@ -319,7 +334,7 @@ def main():
         if written_count != expected:
             print(f"LINE COUNT MISMATCH: expected {expected}, got {written_count}", file=sys.stderr)
             return 1
-        print(f"  mode {oct(stat.S_IMODE(os.stat(path).st_mode))}")
+        print(f"  mode {oct(stat.S_IMODE(metrics_path.stat().st_mode))}")
         print(f"  sha256 {sha256_bytes(written)}")
 
     write_backfill_state(args.cutoff, datetime.now().isoformat(), len(plan), path=args.state_file)

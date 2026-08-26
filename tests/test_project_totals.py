@@ -1,7 +1,9 @@
+from typing import Any
+
 import metrics_core as mr
 
 
-def record(project, tokens, start):
+def record(project: str, tokens: int, start: str) -> dict[str, Any]:
     return {
         "project_path": project,
         "timestamp_start": start,

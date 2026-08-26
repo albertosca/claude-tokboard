@@ -1,18 +1,21 @@
 import importlib.util
 import json
-import os
 import stat
+import types
+from pathlib import Path
 
 import pytest
 
-SCRIPT_PATH = os.path.join(os.path.dirname(__file__), "..", "scripts", "backfill-token-dedup.py")
+SCRIPT_PATH = Path(__file__).resolve().parent.parent / "scripts" / "backfill-token-dedup.py"
 
 
 @pytest.fixture(scope="module")
-def script():
+def script() -> types.ModuleType:
     # The filename has a hyphen, so it cannot be imported with a normal
     # `import` statement - load it as a module by path instead.
     spec = importlib.util.spec_from_file_location("backfill_token_dedup", SCRIPT_PATH)
+    assert spec is not None
+    assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -21,14 +24,14 @@ def script():
 def test_write_atomically_writes_new_lines_and_preserves_mode(tmp_path, script):
     path = tmp_path / "sessions.jsonl"
     path.write_bytes(b'{"a": 1}\n')
-    os.chmod(path, 0o600)
+    path.chmod(0o600)
     snapshot = path.read_bytes()
 
     appended = script.write_atomically(str(path), snapshot, [b'{"a": 2}'], 0o600)
 
     assert appended == 0
     assert path.read_bytes() == b'{"a": 2}\n'
-    assert stat.S_IMODE(os.stat(path).st_mode) == 0o600
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
 
 
 def test_write_atomically_preserves_a_concurrent_append_verbatim(tmp_path, script):
@@ -36,7 +39,7 @@ def test_write_atomically_preserves_a_concurrent_append_verbatim(tmp_path, scrip
     path.write_bytes(b'{"a": 1}\n')
     snapshot = path.read_bytes()
     # Simulate a live Stop hook appending a row after the snapshot was read.
-    with open(path, "ab") as f:
+    with path.open("ab") as f:
         f.write(b'{"a": "live-append"}\n')
 
     appended = script.write_atomically(str(path), snapshot, [b'{"a": "corrected"}'], 0o644)
@@ -122,11 +125,11 @@ def test_main_rejects_a_malformed_cutoff(script, monkeypatch, capsys):
     assert "--cutoff must be YYYY-MM-DD" in capsys.readouterr().err
 
 
-def _write_transcript(path, entries):
+def _write_transcript(path: Path, entries: list[tuple[str, str, dict[str, int]]]) -> None:
     """entries: list of (timestamp, message_id, usage_dict). Mirrors
     tests/test_backfill.py's write_transcript/usage helpers - see that
     file for the JSON shape index_transcripts/scan_transcript expect."""
-    with open(path, "w") as f:
+    with path.open("w") as f:
         for timestamp, message_id, usage in entries:
             f.write(
                 json.dumps(

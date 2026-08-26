@@ -8,8 +8,17 @@ import pytest
 NOW = datetime(2026, 8, 13, 15, 30, tzinfo=None).astimezone()
 
 
-def at(year, month, day, hour=0):
+def at(year: int, month: int, day: int, hour: int = 0) -> datetime:
     return datetime(year, month, day, hour, tzinfo=None).astimezone()
+
+
+def _resolve(period_id: str, now: datetime) -> tuple[datetime, datetime]:
+    """Unwraps resolve_period's Optional for the periods here that always
+    have a window - "tudo" (the only one that returns None) has its own
+    dedicated test and never goes through this helper."""
+    window = mr.resolve_period(period_id, now)
+    assert window is not None
+    return window
 
 
 def test_tudo_has_no_window():
@@ -17,32 +26,32 @@ def test_tudo_has_no_window():
 
 
 def test_ontem_is_a_closed_day():
-    start, end = mr.resolve_period("ontem", NOW)
+    start, end = _resolve("ontem", NOW)
     assert start == at(2026, 8, 12)
     assert end == at(2026, 8, 13)
 
 
 def test_desde_segunda_anchors_to_the_calendar_week():
-    start, end = mr.resolve_period("desde-segunda", NOW)
+    start, end = _resolve("desde-segunda", NOW)
     assert start == at(2026, 8, 10)
     assert end == NOW
 
 
 def test_desde_segunda_on_a_monday_starts_that_same_morning():
     monday = at(2026, 8, 10, 9)
-    start, end = mr.resolve_period("desde-segunda", monday)
+    start, end = _resolve("desde-segunda", monday)
     assert start == at(2026, 8, 10)
     assert end == monday
 
 
 def test_quinze_dias_counts_today_as_one_of_the_fifteen():
-    start, end = mr.resolve_period("15-dias", NOW)
+    start, end = _resolve("15-dias", NOW)
     assert start == at(2026, 7, 30)
     assert end == NOW
 
 
 def test_mes_is_thirty_days_including_today():
-    start, end = mr.resolve_period("mes", NOW)
+    start, end = _resolve("mes", NOW)
     assert start == at(2026, 7, 15)
     assert end == NOW
 

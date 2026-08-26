@@ -35,17 +35,18 @@ Two properties this dataset has to keep, both learned the hard way:
 """
 
 import json
-import os
 import sys
-from datetime import timedelta
+from datetime import datetime, timedelta
+from pathlib import Path
+from typing import Any
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../lib"))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "lib"))
 import metrics_core as mr
 
 TOKEN_FIELDS = ("input_tokens", "output_tokens", "cache_read_tokens", "cache_creation_tokens")
 
 
-def _at(now, days_ago, hour):
+def _at(now: datetime, days_ago: int, hour: int) -> str:
     return (
         (now - timedelta(days=days_ago))
         .replace(hour=hour, minute=0, second=0, microsecond=0)
@@ -53,7 +54,7 @@ def _at(now, days_ago, hour):
     )
 
 
-def _today_at(now, fraction):
+def _today_at(now: datetime, fraction: float) -> str:
     """A moment `fraction` of the way from this midnight to `now`.
 
     Anything built from this is inside today by construction, at any hour
@@ -73,8 +74,14 @@ def _today_at(now, fraction):
     return moment.replace(microsecond=0).isoformat()
 
 
-def _record(session_id, project, start, end, tokens):
-    record = {
+def _record(
+    session_id: str,
+    project: str,
+    start: str,
+    end: str,
+    tokens: tuple[int, int, int, int],
+) -> dict[str, Any]:
+    record: dict[str, Any] = {
         "session_id": session_id,
         "project_path": project,
         "timestamp_start": start,
@@ -83,11 +90,11 @@ def _record(session_id, project, start, end, tokens):
         "turn_count": 4,
         "tool_call_count": 7,
     }
-    record.update(dict(zip(TOKEN_FIELDS, tokens)))
+    record.update(dict(zip(TOKEN_FIELDS, tokens, strict=True)))
     return record
 
 
-def build_fixture(home_dir, now):
+def build_fixture(home_dir: str, now: datetime) -> dict[str, Any]:
     records = [
         # The span-overlap case this entire filter design exists for: opened
         # a month ago, still working yesterday. A start-date filter would
@@ -128,20 +135,20 @@ def build_fixture(home_dir, now):
         _record("old-1", "/projects/gamma", _at(now, 50, 10), _at(now, 49, 10), (5, 5, 500, 40)),
     ]
 
-    metrics_dir = os.path.join(home_dir, ".claude", "metrics")
-    os.makedirs(metrics_dir, exist_ok=True)
-    with open(os.path.join(metrics_dir, "sessions.jsonl"), "w") as f:
+    metrics_dir = Path(home_dir) / ".claude" / "metrics"
+    metrics_dir.mkdir(parents=True, exist_ok=True)
+    with (metrics_dir / "sessions.jsonl").open("w") as f:
         for record in records:
             f.write(json.dumps(record) + "\n")
     # An empty subagents file, not a missing one: load_records tolerates
     # absence, but an empty file is what a real install actually looks like
     # before any subagent has run.
-    open(os.path.join(metrics_dir, "subagents.jsonl"), "w").close()
+    (metrics_dir / "subagents.jsonl").touch()
 
     # Expected values come from metrics_core - the tested data layer - with
     # no help from the rendering code. The page then has to reproduce them
     # by being DRIVEN, which is the whole point.
-    expected = {}
+    expected: dict[str, dict[str, Any]] = {}
     for period in mr.PERIODS:
         window = mr.resolve_period(period.id, now)
         scoped = mr.filter_sessions_by_window(records, window)

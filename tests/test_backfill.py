@@ -1,13 +1,15 @@
 import json
+from pathlib import Path
+from typing import Any
 
 import metrics_core as mr
 
 
-def write_transcript(path, entries):
+def write_transcript(path: Path, entries: list[tuple[str, str | None, dict[str, int]]]) -> None:
     """entries: list of (timestamp, message_id_or_None, usage_dict)."""
-    with open(path, "w") as f:
+    with path.open("w") as f:
         for timestamp, message_id, usage in entries:
-            message = {"usage": usage}
+            message: dict[str, Any] = {"usage": usage}
             if message_id is not None:
                 message["id"] = message_id
             f.write(
@@ -22,7 +24,12 @@ def write_transcript(path, entries):
             )
 
 
-def usage(input_tokens=0, output_tokens=0, cache_read=0, cache_creation=0):
+def usage(
+    input_tokens: int = 0,
+    output_tokens: int = 0,
+    cache_read: int = 0,
+    cache_creation: int = 0,
+) -> dict[str, int]:
     return {
         "input_tokens": input_tokens,
         "output_tokens": output_tokens,
@@ -31,7 +38,14 @@ def usage(input_tokens=0, output_tokens=0, cache_read=0, cache_creation=0):
     }
 
 
-def record(session_id, timestamp_end, input_tokens, output_tokens, cache_read=0, cache_creation=0):
+def record(
+    session_id: str,
+    timestamp_end: str,
+    input_tokens: int,
+    output_tokens: int,
+    cache_read: int = 0,
+    cache_creation: int = 0,
+) -> dict[str, Any]:
     return {
         "session_id": session_id,
         "timestamp_end": timestamp_end,
@@ -101,14 +115,14 @@ def test_plan_corrections_leaves_an_already_correct_row_alone(tmp_path):
     path = tmp_path / "s1.jsonl"
     write_transcript(path, [("2026-08-01T10:00:00", "msg-1", usage(input_tokens=100))])
     records = [record("s1", "2026-08-01T10:00:00", 100, 0)]  # stored = deduped
-    plan, stats, factors = mr.plan_corrections(records, {"s1": str(path)}, cutoff="2026-08-13")
+    plan, stats, _factors = mr.plan_corrections(records, {"s1": str(path)}, cutoff="2026-08-13")
     assert plan == {}
     assert stats["untouched: already correct"] == 1
 
 
 def test_plan_corrections_skips_a_session_with_no_transcript():
     records = [record("ghost", "2026-08-01T10:00:00", 999, 0)]
-    plan, stats, factors = mr.plan_corrections(records, {}, cutoff="2026-08-13")
+    plan, stats, _factors = mr.plan_corrections(records, {}, cutoff="2026-08-13")
     assert plan == {}
     assert stats["untouched: no transcript on disk"] == 1
 
@@ -126,7 +140,7 @@ def test_plan_corrections_skips_the_whole_session_when_any_row_spans_the_cutoff(
         record("s1", "2026-08-01T10:00:01", 200, 0),  # correctable on its own
         record("s1", "2026-08-14T00:00:00", 200, 0),  # past the cutoff
     ]
-    plan, stats, factors = mr.plan_corrections(records, {"s1": str(path)}, cutoff="2026-08-13")
+    plan, stats, _factors = mr.plan_corrections(records, {"s1": str(path)}, cutoff="2026-08-13")
     assert plan == {}
     assert stats["untouched: session spans the cutoff"] == 2
 
@@ -147,7 +161,7 @@ def test_plan_corrections_refuses_a_row_that_would_increase_a_field(tmp_path):
     # correcting would raise that one field, which the row-level "only
     # decrease" invariant forbids.
     records = [record("s1", "2026-08-01T10:00:01", 90, 110)]
-    plan, stats, factors = mr.plan_corrections(records, {"s1": str(path)}, cutoff="2026-08-13")
+    plan, stats, _factors = mr.plan_corrections(records, {"s1": str(path)}, cutoff="2026-08-13")
     assert plan == {}
     assert stats["untouched: session where a correction would increase a field"] == 1
 
@@ -163,7 +177,7 @@ def test_plan_corrections_accepts_a_row_within_tolerance_of_the_raw_sum(tmp_path
     )
     # raw_now is 2000; 1990 is 0.5% off, inside NEITHER_TOLERANCE (2%).
     records = [record("s1", "2026-08-01T10:00:01", 1990, 0)]
-    plan, stats, factors = mr.plan_corrections(records, {"s1": str(path)}, cutoff="2026-08-13")
+    plan, stats, _factors = mr.plan_corrections(records, {"s1": str(path)}, cutoff="2026-08-13")
     assert plan == {0: [1000, 0, 0, 0]}
     assert stats["corrected"] == 1
 
@@ -193,7 +207,7 @@ def test_plan_corrections_refuses_the_whole_session_when_one_row_matches_neither
             "s1", "2026-08-01T10:00:02", 1800, 0
         ),  # matches neither formula (deduped=1100, raw=1200)
     ]
-    plan, stats, factors = mr.plan_corrections(records, {"s1": str(path)}, cutoff="2026-08-13")
+    plan, stats, _factors = mr.plan_corrections(records, {"s1": str(path)}, cutoff="2026-08-13")
     assert plan == {}
     assert stats["untouched: session has a row matching neither formula"] == 2
 
@@ -203,7 +217,7 @@ def test_plan_corrections_refuses_a_row_matching_neither_formula(tmp_path):
     write_transcript(path, [("2026-08-01T10:00:00", "msg-1", usage(input_tokens=1000))])
     # 1500 is 50% off the raw sum (1000) - well outside tolerance.
     records = [record("s1", "2026-08-01T10:00:00", 1500, 0)]
-    plan, stats, factors = mr.plan_corrections(records, {"s1": str(path)}, cutoff="2026-08-13")
+    plan, stats, _factors = mr.plan_corrections(records, {"s1": str(path)}, cutoff="2026-08-13")
     assert plan == {}
     assert stats["untouched: session has a row matching neither formula"] == 1
 

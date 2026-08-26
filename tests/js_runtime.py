@@ -10,6 +10,7 @@ METRICS_SKIP_JS_TESTS=1.
 import os
 import shutil
 import subprocess
+from pathlib import Path
 
 import pytest
 
@@ -23,13 +24,13 @@ _INSTALL_HINT = (
 )
 
 
-def require_node_with_jsdom():
+def require_node_with_jsdom() -> str:
     if os.environ.get(NODE_SKIP_ENV):
         pytest.skip(f"{NODE_SKIP_ENV} is set - rendering is NOT being checked")
     node = shutil.which("node")
     if not node:
         pytest.fail(f"node not found on PATH.\n{_INSTALL_HINT}")
-    repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    repo_root = Path(__file__).resolve().parent.parent
     probe = subprocess.run(
         [node, "-e", "require.resolve('jsdom')"],
         cwd=repo_root,

@@ -4,7 +4,7 @@ a machine with no data at all only by accident, and its numbers would
 drift daily."""
 
 import json
-import os
+from pathlib import Path
 
 FIXTURE_SESSION_IDS = {
     "long-1",
@@ -43,7 +43,7 @@ EXPECTED_MEMBERSHIP = {
 
 
 def test_dashboard_is_generated_from_the_fixture(dashboard_page):
-    html = open(dashboard_page.html_path, encoding="utf-8").read()
+    html = Path(dashboard_page.html_path).read_text(encoding="utf-8")
     for project in FIXTURE_PROJECTS:
         assert project in html, f"fixture project {project!r} missing from the page"
 
@@ -51,19 +51,20 @@ def test_dashboard_is_generated_from_the_fixture(dashboard_page):
 def test_no_real_metrics_leak_into_the_page(dashboard_page):
     # If the real ~/.claude/metrics were read, these would appear. They are
     # the user's actual project names, so their absence is the proof.
-    html = open(dashboard_page.html_path, encoding="utf-8").read()
+    html = Path(dashboard_page.html_path).read_text(encoding="utf-8")
     for leaked in ("billing-report", "editor-plugin", "claude-metrics-dashboard"):
         assert leaked not in html, f"real project {leaked!r} leaked - HOME was not isolated"
 
 
 def test_output_landed_inside_the_temporary_home(dashboard_page):
     assert dashboard_page.html_path.startswith(dashboard_page.home)
-    assert not dashboard_page.html_path.startswith(os.path.expanduser("~/.claude"))
+    assert not dashboard_page.html_path.startswith(str(Path("~/.claude").expanduser()))
 
 
 def test_fixture_records_are_where_the_builder_says(dashboard_page):
-    path = os.path.join(dashboard_page.home, ".claude/metrics/sessions.jsonl")
-    ids = {json.loads(line)["session_id"] for line in open(path) if line.strip()}
+    path = Path(dashboard_page.home) / ".claude/metrics/sessions.jsonl"
+    with path.open() as f:
+        ids = {json.loads(line)["session_id"] for line in f if line.strip()}
     assert ids == FIXTURE_SESSION_IDS
 
 
@@ -137,7 +138,7 @@ def test_every_period_holds_a_different_set_of_sessions(dashboard_page):
             f"{period} holds no session at all - every non-vacuity guard in the "
             "harness is unsatisfiable under it"
         )
-    seen = {}
+    seen: dict[frozenset[str], str] = {}
     for period, ids in by_period.items():
         clash = seen.get(ids)
         assert clash is None, (

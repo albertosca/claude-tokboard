@@ -23,12 +23,15 @@ focus) is caught.
 import json
 import os
 import subprocess
+from pathlib import Path
+from typing import Any
 
 import pytest
+from conftest import DashboardPage
 
-REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-VENV_PYTHON = os.path.join(REPO_ROOT, ".venv", "bin", "python3")
-DRIVER = os.path.join(os.path.dirname(__file__), "tui_state_driver.py")
+REPO_ROOT = Path(__file__).resolve().parent.parent
+VENV_PYTHON = REPO_ROOT / ".venv" / "bin" / "python3"
+DRIVER = Path(__file__).resolve().parent / "tui_state_driver.py"
 
 TUI_SKIP_ENV = "METRICS_SKIP_TUI_TESTS"
 
@@ -42,13 +45,13 @@ _INSTALL_HINT = (
 
 
 @pytest.fixture(scope="session")
-def state_after_p(dashboard_page):
+def state_after_p(dashboard_page: DashboardPage) -> dict[str, Any]:
     """Runs the headless driver against the same throwaway HOME the rest of
     the suite uses, so this measures the committed fixture and never the
     user's real data."""
     if os.environ.get(TUI_SKIP_ENV):
         pytest.skip(f"{TUI_SKIP_ENV} is set - the TUI is NOT being checked")
-    if not os.path.exists(VENV_PYTHON):
+    if not VENV_PYTHON.exists():
         pytest.fail(f"no TUI virtualenv at {VENV_PYTHON}.\n{_INSTALL_HINT}")
 
     env = dict(os.environ, HOME=dashboard_page.home)
@@ -56,7 +59,7 @@ def state_after_p(dashboard_page):
     # ahead of the venv's own; the driver adds what it needs to sys.path.
     env.pop("PYTHONPATH", None)
     result = subprocess.run(
-        [VENV_PYTHON, DRIVER],
+        [str(VENV_PYTHON), str(DRIVER)],
         env=env,
         cwd=REPO_ROOT,
         capture_output=True,
@@ -67,7 +70,7 @@ def state_after_p(dashboard_page):
         f"the TUI state driver failed ({result.returncode})\n"
         f"stdout: {result.stdout}\nstderr: {result.stderr}"
     )
-    return json.loads(result.stdout.strip().splitlines()[-1])
+    return json.loads(result.stdout.strip().splitlines()[-1])  # type: ignore[no-any-return]  # subprocess stdout parses to Any; the fixture's dict[str, Any] is the documented contract
 
 
 @pytest.mark.parametrize("case", ["sessions_case", "panorama_case"])

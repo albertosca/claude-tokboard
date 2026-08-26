@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Any
 
 import metrics_core as mr
 
@@ -6,7 +7,7 @@ NOW = datetime(2026, 8, 13, 15, 30, tzinfo=None).astimezone()
 YESTERDAY = mr.resolve_period("ontem", NOW)
 
 
-def stamp(year, month, day, hour=0):
+def stamp(year: int, month: int, day: int, hour: int = 0) -> str:
     # Local-time ISO strings with a real offset, NOT "...Z". A UTC literal
     # would land on a different calendar day depending on the machine's
     # timezone, so these tests would pass in São Paulo and fail in Tokyo -
@@ -14,11 +15,11 @@ def stamp(year, month, day, hour=0):
     return datetime(year, month, day, hour, tzinfo=None).astimezone().isoformat()
 
 
-def session(start, end):
+def session(start: str, end: str | None) -> dict[str, Any]:
     return {"timestamp_start": start, "timestamp_end": end, "output_tokens": 1}
 
 
-def delta(when):
+def delta(when: str | None) -> dict[str, Any]:
     # expand_records_to_daily_deltas stores the snapshot's END time in the
     # field named timestamp_start; these fixtures mirror that on purpose.
     return {"timestamp_start": when, "output_tokens": 1}

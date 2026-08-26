@@ -33,12 +33,13 @@ Prints one JSON object on stdout. Never launch the app interactively.
 
 import asyncio
 import json
-import os
 import sys
+from pathlib import Path
+from typing import Any
 
-REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-sys.path.insert(0, os.path.join(REPO, "lib"))
-sys.path.insert(0, REPO)
+REPO = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO / "lib"))
+sys.path.insert(0, str(REPO))
 
 import metrics_core as mr  # noqa: E402
 from textual.widgets import Footer, TabbedContent  # noqa: E402
@@ -46,7 +47,7 @@ from textual.widgets import Footer, TabbedContent  # noqa: E402
 import dashboard_tui as tui  # noqa: E402
 
 
-def _state(app):
+def _state(app: Any) -> dict[str, Any]:
     active = app.query_one(TabbedContent).active
     pane = app.query_one(f"#{active}")
     focused = app.focused
@@ -61,10 +62,10 @@ def _state(app):
     }
 
 
-async def main():
+async def main() -> None:
     args = tui.build_arg_parser().parse_args(["--label-budget", "0"])
 
-    results = {}
+    results: dict[str, Any] = {}
     async with tui.MetricsTUIApp(mr, tui.load_data(args, mr=mr), args=args).run_test(
         size=(140, 45)
     ) as pilot:

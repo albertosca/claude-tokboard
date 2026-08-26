@@ -82,7 +82,7 @@ def clear_pycache() -> None:
         shutil.rmtree(cache_dir, ignore_errors=True)
 
 
-def run_suite() -> subprocess.CompletedProcess:
+def run_suite() -> subprocess.CompletedProcess[str]:
     env = dict(os.environ, PYTHONPATH="lib:tests")
     # Defensive, not expected to trigger here: a rendering test that
     # SKIPS instead of running would also leave the suite green on an
@@ -103,12 +103,20 @@ def run_suite() -> subprocess.CompletedProcess:
     )
 
 
-def failed_test_names(output: str):
+def failed_test_names(output: str) -> list[str]:
     return sorted(set(SUMMARY_RE.findall(output)))
 
 
 class Defect:
-    def __init__(self, name, description, anchor, replacement, expected_tests, expected_labels):
+    def __init__(
+        self,
+        name: str,
+        description: str,
+        anchor: str,
+        replacement: str,
+        expected_tests: list[str],
+        expected_labels: list[str],
+    ) -> None:
         self.name = name
         self.description = description
         self.anchor = anchor
@@ -120,7 +128,7 @@ class Defect:
         self.expected_tests = expected_tests
         self.expected_labels = expected_labels
 
-    def missing_evidence(self, caught, output):
+    def missing_evidence(self, caught: list[str], output: str) -> list[str]:
         missing = [f"expected failing test {t}" for t in self.expected_tests if t not in caught]
         # The harness's stdout reaches here only through the assertion
         # message of the test that failed, and pytest prefixes those lines
@@ -211,7 +219,7 @@ def main() -> int:
         return 2
 
     original_hash = sha256(TARGET)
-    results = []
+    results: list[tuple[Defect, str, list[str], str | None]] = []
     overall_ok = True
 
     for defect in DEFECTS:
