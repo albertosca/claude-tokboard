@@ -71,4 +71,4 @@ disallow_untyped_defs = false
 # subprocess in its own .venv (see tests/tui_state_driver.py and friends),
 # never imported inside this pytest process, so coverage.py can't measure
 # it and including it only produces a spurious CoverageWarning.
-addopts = "--cov=lib/metrics_core --cov=dashboard_html --cov=scripts --cov=hooks --cov-branch"
+addopts = "--cov=lib/metrics_core --cov=dashboard_html --cov=dashboard_html_assets --cov=scripts --cov=hooks --cov-branch"

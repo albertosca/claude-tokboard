@@ -15,7 +15,7 @@ suite's coverage, not an expected or acceptable outcome. This script exits
 non-zero in that case and never softens the report.
 
 For each defect this script:
-  1. Snapshots dashboard_html.py to a backup file.
+  1. Snapshots each defect's own target file to a backup file.
   2. Applies an ANCHORED patch - matched against a unique, exact source
      string. If the anchor's count in the file is not exactly 1, the patch
      is refused loudly instead of silently matching nothing (matching
@@ -30,13 +30,13 @@ For each defect this script:
      plain python3 on this machine's PATH is an asdf shim that exits 126 the
      moment HOME is overridden, which is exactly what the suite's own
      dashboard_page fixture does internally.
-  5. Restores dashboard_html.py by copying the backup's bytes back over it -
+  5. Restores each target by copying its own backup's bytes back over it -
      never `git checkout --`, which is a destructive operation wearing the
      costume of a restore on a file that is modified but not yet committed.
   6. Verifies the restore two independent ways: a sha256 comparison between
      the pre-patch backup and the restored file, and (belt and suspenders,
      since the file is tracked and was clean before this script ran)
-     `git diff --exit-code -- dashboard_html.py`.
+     `git diff --exit-code` against every distinct target file.
 
 "Detected" means the RIGHT assertion fired, not that the suite went red.
 Every defect below names the pytest node id that must fail and the harness
