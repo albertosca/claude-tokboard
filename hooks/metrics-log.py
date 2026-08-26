@@ -36,6 +36,9 @@ def get_internal_name(session_id: str | None, sessions_dir: Path | None = None) 
         sessions_dir = Path("~/.claude/sessions").expanduser()
     candidates = [sessions_dir / f"{os.getppid()}.json"]
     with contextlib.suppress(Exception):
+        # Path.glob (unlike glob.glob) also matches dot-prefixed entries; safe
+        # here because Claude Code's own naming scheme never produces a
+        # leading dot.
         candidates += list(sessions_dir.glob("*.json"))
     seen: set[Path] = set()
     for path in candidates:

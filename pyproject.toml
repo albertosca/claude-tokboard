@@ -5,6 +5,10 @@ line-length = 100
 # docs/superpowers holds historical plan/spec records - mechanically
 # reformatting the code samples quoted inside them would rewrite history
 # that has nothing to do with this project's actual source tree.
+# This exclude only covers docs/ - Ruff still formats/lints markdown files
+# outside it (e.g. README.md, commands/*.md, scripts/README.md). A future
+# CI phase running `ruff format --check .` can still fail on one of those
+# for this reason.
 extend-exclude = ["docs"]
 
 [tool.ruff.lint]
@@ -63,4 +67,8 @@ module = [
 disallow_untyped_defs = false
 
 [tool.pytest.ini_options]
-addopts = "--cov=lib/metrics_core --cov=dashboard_html --cov=dashboard_tui --cov=scripts --cov-branch"
+# dashboard_tui.py is deliberately excluded: it's only ever exercised via
+# subprocess in its own .venv (see tests/tui_state_driver.py and friends),
+# never imported inside this pytest process, so coverage.py can't measure
+# it and including it only produces a spurious CoverageWarning.
+addopts = "--cov=lib/metrics_core --cov=dashboard_html --cov=scripts --cov=hooks --cov-branch"

@@ -60,6 +60,8 @@ def index_transcripts(projects_dir: str) -> dict[str, str]:
     largest file is the complete one.
     """
     index: dict[str, str] = {}
+    # Path.glob (unlike glob.glob) also matches dot-prefixed entries; safe here
+    # because Claude Code's own naming scheme never produces a leading dot.
     for path in (str(p) for p in Path(projects_dir).glob("*/*.jsonl")):
         session_id = Path(path).name[: -len(".jsonl")]
         current = index.get(session_id)

@@ -273,7 +273,7 @@ def render_detail_panel(
         f'<div class="detail-panel{open_class}" id="detail-{session_id}" '
         f'data-periods="{" ".join(period_ids)}">'
         f'<button class="detail-close" onclick="closeDetail(\'{session_id}\')" '
-        'aria-label="Fechar">&times;</button>'
+        'aria-label="Fechar">×</button>'  # noqa: RUF001 - multiplication sign in shipped HTML, not a confusable identifier
         f"<h3>{session_id}</h3>{title}{body}</div>"
     )
 

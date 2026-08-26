@@ -102,6 +102,9 @@ def get_open_projects(sessions_dir: str | None = None) -> set[str]:
         sessions_dir = str(Path("~/.claude/sessions").expanduser())
     open_projects: set[str] = set()
     try:
+        # Path.glob (unlike glob.glob) also matches dot-prefixed entries; safe
+        # here because Claude Code's own naming scheme never produces a
+        # leading dot.
         paths = list(Path(sessions_dir).glob("*.json"))
     except Exception:
         return open_projects
