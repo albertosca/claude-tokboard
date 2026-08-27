@@ -27,13 +27,22 @@ def test_choose_granularity_picks_each_bucket_by_span():
     assert mr.choose_granularity([at(), at(days=2000)]) == "year"
 
 
-def test_choose_granularity_boundaries_are_inclusive():
+def test_choose_granularity_thresholds_are_pinned_from_both_sides():
     # Each comparison is <=, so exactly-at-the-edge stays in the finer
-    # bucket rather than falling through to the coarser one.
+    # bucket rather than falling through to the coarser one - and one
+    # minute past the edge must actually cross into the coarser bucket
+    # (otherwise the threshold could be widened without any test
+    # failing, since both arcs would still execute either way).
     assert mr.choose_granularity([at(), at(hours=2)]) == "minute"
+    assert mr.choose_granularity([at(), at(hours=2, minutes=1)]) == "hour"
     assert mr.choose_granularity([at(), at(hours=48)]) == "hour"
+    assert mr.choose_granularity([at(), at(hours=48, minutes=1)]) == "day"
     assert mr.choose_granularity([at(), at(days=45)]) == "day"
+    assert mr.choose_granularity([at(), at(days=45, minutes=1)]) == "week"
     assert mr.choose_granularity([at(), at(days=365)]) == "week"
+    assert mr.choose_granularity([at(), at(days=365, minutes=1)]) == "month"
+    assert mr.choose_granularity([at(), at(days=365 * 3)]) == "month"
+    assert mr.choose_granularity([at(), at(days=365 * 3, minutes=1)]) == "year"
 
 
 def test_choose_granularity_uses_the_full_span_not_input_order():
@@ -72,11 +81,25 @@ def test_aggregate_by_day_buckets_records_and_reports_granularity():
         ]
     )
     assert granularity == "day"
-    assert [b["day"] for b in buckets] == sorted(b["day"] for b in buckets)
+    assert [b["day"] for b in buckets] == ["2026-03-07", "2026-03-17"]
     assert len(buckets) == 2
     first, second = buckets
     assert [r["marker"] for r in first["records"]] == ["a", "b"]
     assert [r["marker"] for r in second["records"]] == ["c"]
+
+
+def test_aggregate_by_day_uses_minute_granularity_for_a_short_span():
+    # Pins that aggregate_by_day really calls choose_granularity (not a
+    # hardcoded "day") AND that the returned bucket keys use the minute
+    # key_fmt from GRANULARITY_CONFIG, not day resolution.
+    granularity, buckets = mr.aggregate_by_day(
+        [
+            record(at().isoformat(), "a"),
+            record(at(minutes=30).isoformat(), "b"),
+        ]
+    )
+    assert granularity == "minute"
+    assert [b["day"] for b in buckets] == ["2026-03-07T12:00", "2026-03-07T12:30"]
 
 
 def test_aggregate_by_day_skips_records_with_no_timestamp():

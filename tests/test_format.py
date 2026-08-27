@@ -38,6 +38,9 @@ def test_format_tokens_uses_magnitude_so_negatives_scale_too():
 
 def test_format_tokens_truncates_a_float_toward_zero():
     assert mr.format_tokens(1500.9) == "1.5k"
+    # Under rounding, 999.9 would become 1000 -> "1.0k" - this only
+    # passes under truncation, which discriminates int(n) from round(n).
+    assert mr.format_tokens(999.9) == "999"
 
 
 # --- format_duration -------------------------------------------------

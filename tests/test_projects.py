@@ -197,12 +197,21 @@ def test_assign_group_colors_wraps_after_thirty_slots():
 
 
 def test_build_project_groups_groups_by_canonical_key_newest_first():
-    records = [record("/a", "1"), record("/b", "2"), record("/a", "3")]
+    # "/b" then "/a" - without the internal reversal, group order would
+    # be ["/b", "/a"] (first-seen-first); asserting ["/a", "/b"] only
+    # passes because the last record's group ("/a") leads.
+    records = [record("/b", "1"), record("/a", "2")]
     colors = mr.assign_group_colors(records)
     groups = mr.build_project_groups(records, colors)
-    # Input is reversed internally, so the last record's group leads.
     assert [g["project"] for g in groups] == ["/a", "/b"]
-    assert len(groups[0]["records"]) == 2
+
+    # A second record on "/a" must come back newest-first inside its
+    # own group, not in input order.
+    records_with_two_on_a = [record("/b", "1"), record("/a", "2"), record("/a", "3")]
+    colors2 = mr.assign_group_colors(records_with_two_on_a)
+    groups2 = mr.build_project_groups(records_with_two_on_a, colors2)
+    assert len(groups2[0]["records"]) == 2
+    assert [r["timestamp_start"] for r in groups2[0]["records"]] == ["3", "2"]
 
 
 def test_build_project_groups_merges_a_worktree_into_its_parent():
