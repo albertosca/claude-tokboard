@@ -61,6 +61,7 @@ module = [
     "test_period_filters",
     "test_periods",
     "test_project_totals",
+    "test_projects",
     "test_tui_responsiveness",
     "test_tui_state",
     "tui_latency_driver",
