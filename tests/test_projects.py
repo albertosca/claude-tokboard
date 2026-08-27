@@ -145,11 +145,18 @@ def test_get_open_projects_skips_unreadable_and_cwd_less_entries(tmp_path):
     assert mr.get_open_projects(str(tmp_path)) == {"/home/me/a"}
 
 
-def test_get_open_projects_defaults_to_the_real_sessions_directory():
-    # No sessions_dir given - exercises the module's own default (real
-    # ~/.claude/sessions), so this can't assert specific content, only
-    # that it resolves and returns the right type without crashing.
-    assert isinstance(mr.get_open_projects(), set)
+def test_get_open_projects_resolves_the_real_default_sessions_directory(monkeypatch, tmp_path):
+    # No sessions_dir given - exercises the sessions_dir is None branch,
+    # which must expand to ~/.claude/sessions. HOME is monkeypatched so
+    # that expansion lands inside tmp_path instead of touching this
+    # machine's real sessions directory, and the seeded file's cwd is
+    # asserted exactly - a broken default (e.g. missing the ".claude"
+    # segment, or landing outside tmp_path) would return set() instead.
+    monkeypatch.setenv("HOME", str(tmp_path))
+    sessions_dir = tmp_path / ".claude" / "sessions"
+    sessions_dir.mkdir(parents=True)
+    (sessions_dir / "one.json").write_text(json.dumps({"cwd": "/home/me/somewhere"}))
+    assert mr.get_open_projects() == {"/home/me/somewhere"}
 
 
 def test_get_open_projects_on_a_glob_error_is_empty():
