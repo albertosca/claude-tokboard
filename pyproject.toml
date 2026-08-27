@@ -58,6 +58,7 @@ module = [
     "test_format",
     "test_granularity",
     "test_js_runtime",
+    "test_labels",
     "test_period_filters",
     "test_periods",
     "test_project_totals",
