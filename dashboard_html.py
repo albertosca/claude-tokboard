@@ -336,7 +336,14 @@ def render_trend_chart(
     plot_width = candidate_width - padding_left - padding_right
     step = plot_width / n
     bar_width = step * 0.6
-    if bar_width < min_bar_width:
+    # Confirmed dead (PROJECT-LOG 2026-07-18, round 4): removing the
+    # 1000px width cap made bar_width mathematically unreachable below
+    # ~28.4px for any n - a deliberate decision with Alberto to keep this
+    # fallback anyway rather than delete it. Re-verified by exhaustive
+    # sweep during coverage-phase3c Task 3 (2026-08-31): n swept 1..20000
+    # (both algebraically and by calling this function directly), global
+    # minimum bar_width ~28.44px at n=25, never within reach of the floor.
+    if bar_width < min_bar_width:  # pragma: no cover - unreachable, see comment above
         step = min_bar_width + bar_gap
         bar_width = min_bar_width
         plot_width = step * n
@@ -599,7 +606,16 @@ def render_project_totals_chart(
     ordered_projects = [p for p in ordered_projects if totals.get(p, 0) > 0]
     if not ordered_projects:
         return ""
-    max_total = max(totals.values()) or 1
+    # The "or 1" fallback is unreachable: the early return just above
+    # already excludes every all-zero/empty scenario (a project only
+    # survives the filter above if its total is > 0), so by the time
+    # max(totals.values()) runs at least one project is guaranteed
+    # positive. Re-verified by running with all-zero and empty inputs
+    # during coverage-phase3c Task 3 (2026-08-31) - both return "" before
+    # reaching this line, never fall through to it with a zero max. Kept
+    # as cheap insurance against a future refactor removing that early
+    # return.
+    max_total = max(totals.values()) or 1  # pragma: no cover - unreachable, see comment above
 
     # row_height must clear label_baseline(=row start) + bar(9..23) + the
     # NEXT row's label ascent, or that next label overlaps up into this
