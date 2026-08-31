@@ -265,12 +265,43 @@ def test_render_group_header_shows_display_label_and_aggregate_token_total():
 
     assert mr.project_display_label("/proj/a") in out
     expected_total = mr.format_tokens(sum(mr.record_token_total(r) for r in records))
+    # `[^>]*` tolerates whatever attributes sit between data-period="tudo"
+    # and the closing >  (e.g. the " hidden" flag - pinned separately by
+    # test_render_group_header_only_default_period_block_is_unhidden below -
+    # or any future cosmetic attribute) so this test only fails when the
+    # thing it's actually named for, the label and aggregate total, is
+    # wrong. An earlier version anchored on the literal sequence
+    # data-period="tudo"> with no room for other attributes, which failed
+    # on ANY markup addition after that point even when visibility was
+    # untouched (caught by review: adding a no-op data-testid="pb"
+    # attribute broke it).
     tudo_block = re.search(
-        r'<span class="group-count period-block" data-period="tudo">(.*?)</span>', out
+        r'<span class="group-count period-block" data-period="tudo"[^>]*>(.*?)</span>', out
     )
     assert tudo_block
     assert expected_total in tudo_block.group(1)
     assert f"({len(records)} sessões" in tudo_block.group(1)
+
+
+def test_render_group_header_only_default_period_block_is_unhidden():
+    # The period-visibility invariant itself, pinned directly and by name -
+    # the same family of bug (period.id == DEFAULT_PERIOD_ID deciding what
+    # is shown vs. hidden) that render_session_row and render_detail_panel
+    # each got a dedicated test for. Every period-block span must carry
+    # " hidden" except the default period's own block.
+    group = _group("/proj/a", [])
+    period_windows = _ALL_NONE_PERIOD_WINDOWS
+    out = dashboard_html.render_group_header(0, group, period_windows)
+    for period in mr.PERIODS:
+        match = re.search(
+            rf'<span class="group-count period-block" data-period="{period.id}"([^>]*)>', out
+        )
+        assert match, f"no period-block span found for period {period.id!r}"
+        attrs = match.group(1)
+        if period.id == mr.DEFAULT_PERIOD_ID:
+            assert "hidden" not in attrs, f"default period {period.id!r} block is hidden"
+        else:
+            assert "hidden" in attrs, f"non-default period {period.id!r} block is not hidden"
 
 
 def test_render_group_header_carries_group_colour_class():
