@@ -67,11 +67,15 @@ def _parse_elements(fragment: str, tag: str) -> list[dict[str, Any]]:
 
 
 def _svg_block(out: str, id_prefix: str) -> str:
-    """Extract one full <svg id="{id_prefix}...">...</svg> block. Trend
-    charts render two svgs (pane/tokens) per period; id_prefix picks one."""
+    """Extract one full <svg ...id="{id_prefix}...">...</svg> block. Trend
+    charts render two svgs (pane/tokens) per period; id_prefix picks one.
+    Locates by the id attribute alone, anywhere in the opening tag's
+    attribute list - NOT by attribute position - so this survives the
+    attributes being reordered or a new one being added anywhere in the
+    tag (found by review: an earlier version anchored on the literal
+    `viewBox="..." class="..." id="..."` sequence and broke on both)."""
     m = re.search(
-        rf'(<svg viewBox="0 0 [\d.]+ [\d.]+" class="[^"]*" id="{re.escape(id_prefix)}[^"]*"'
-        r"[^>]*>.*?</svg>)",
+        rf'(<svg\b[^>]*\bid="{re.escape(id_prefix)}[^"]*"[^>]*>.*?</svg>)',
         out,
         re.S,
     )
