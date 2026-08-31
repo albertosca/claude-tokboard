@@ -35,9 +35,26 @@ def test_format_table_header_plus_one_row_per_record_in_input_order():
     lines = dashboard_html.format_table(records).split("\n")
     # header + separator + one line per record, in the same order
     assert len(lines) == 2 + len(records)
-    assert lines[2].startswith("first-sessi")  # 12-char truncation
-    assert lines[3].startswith("second-sess")
-    assert lines[4].startswith("third-sessi")
+    # Each session_id is 13-14 chars; [:12] is an intentional pin (not
+    # incidental - see test_format_table_truncates_long_fields_to_column_widths
+    # below for the truncation bound itself), so the full 12-char prefix is
+    # asserted here rather than a shorter startswith().
+    assert lines[2].startswith("first-sessio")
+    assert lines[3].startswith("second-sessi")
+    assert lines[4].startswith("third-sessio")
+
+
+def test_format_table_truncates_long_fields_to_column_widths():
+    # A slice bound (session_id[:12], tag[:10], branch[:12]) has no branch
+    # to cover, so 100% branch coverage cannot protect it - this test pins
+    # the exact truncated length for all three fields directly.
+    record = {
+        "session_id": "abcdefghijklmnopqrstuvwxyz",  # 26 chars
+        "tag": "verylongtagname",  # 15 chars
+        "git_branch": "feature/very-long-branch-name",  # 30 chars
+    }
+    fields = dashboard_html.format_table([record]).split("\n")[2].split()
+    assert fields == ["abcdefghijkl", "verylongta", "feature/very", "-", "0", "0", "0", "0"]
 
 
 def test_format_table_column_set_is_pinned():
@@ -159,13 +176,15 @@ def test_render_composition_bar_widths_are_proportional_and_sum_to_100():
 
 
 def test_render_composition_bar_all_zero_tokens_does_not_divide_by_zero():
-    out = dashboard_html.render_composition_bar({"input_tokens": 0, "output_tokens": 0})
-    assert out == '<div class="comp-bar comp-bar-empty"></div>'
-
-
-def test_render_composition_bar_missing_keys_do_not_divide_by_zero():
-    out = dashboard_html.render_composition_bar({})
-    assert out == '<div class="comp-bar comp-bar-empty"></div>'
+    # Explicit-zero and missing-key records both reach `total <= 0` through
+    # the same "or 0" default and behave identically - kept as one test
+    # (not two near-duplicates) since neither adds a code path the other
+    # doesn't already exercise.
+    for record in ({"input_tokens": 0, "output_tokens": 0}, {}):
+        assert (
+            dashboard_html.render_composition_bar(record)
+            == '<div class="comp-bar comp-bar-empty"></div>'
+        )
 
 
 def test_render_composition_bar_zero_value_segment_is_skipped():
