@@ -293,6 +293,21 @@ def test_looks_like_bad_label_true_for_every_listed_refusal_marker(marker: str) 
     assert labels_module._looks_like_bad_label(f"prefix {marker} suffix") is True
 
 
+@pytest.mark.parametrize("marker", labels_module._REFUSAL_MARKERS)
+def test_looks_like_bad_label_true_for_every_marker_capitalized(marker: str) -> None:
+    # Real refusals are capitalized sentences ("I cannot complete this
+    # request", "Não há texto para resumir") - the parametrized test above
+    # feeds markers already lowercased, which can't tell whether the
+    # `.lower()` case-fold in _looks_like_bad_label actually runs. Pin it
+    # with the casing a real refusal would use.
+    assert labels_module._looks_like_bad_label(f"Prefix {marker.capitalize()} suffix") is True
+
+
+def test_looks_like_bad_label_true_for_a_verbatim_capitalized_real_refusal() -> None:
+    assert labels_module._looks_like_bad_label("I cannot complete this request") is True
+    assert labels_module._looks_like_bad_label("Não há texto para resumir") is True
+
+
 def test_looks_like_bad_label_false_for_a_normal_short_label() -> None:
     assert labels_module._looks_like_bad_label("fix the login bug") is False
 
@@ -367,15 +382,20 @@ def test_run_label_prompt_returns_none_when_subprocess_raises(
 
 
 def test_run_label_prompt_passes_the_cost_control_flags(monkeypatch: pytest.MonkeyPatch) -> None:
-    captured: dict[str, list[str]] = {}
+    captured: dict[str, Any] = {}
 
     def fake_run(cmd: list[str], **kw: Any) -> FakeCompletedProcess:
         captured["cmd"] = cmd
+        captured["kwargs"] = kw
         return FakeCompletedProcess(0, "a label")
 
     monkeypatch.setattr(subprocess, "run", fake_run)
     labels_module._run_label_prompt("prompt")
     cmd = captured["cmd"]
+    # `nice -n 15` MUST prefix the actual command, not just appear
+    # somewhere in argv - it's what stops the labeling subprocess from
+    # competing for CPU with interactive work (labels.py:116-118).
+    assert cmd[:3] == ["nice", "-n", "15"]
     assert "--setting-sources" in cmd
     assert cmd[cmd.index("--setting-sources") + 1] == ""
     assert "--tools" in cmd
@@ -383,6 +403,10 @@ def test_run_label_prompt_passes_the_cost_control_flags(monkeypatch: pytest.Monk
     assert "--system-prompt" in cmd
     assert "--model" in cmd
     assert cmd[cmd.index("--model") + 1] == "haiku"
+    # A hung CLI process without a timeout would block dashboard
+    # generation forever - argv alone can't carry this, it's a
+    # subprocess.run kwarg.
+    assert captured["kwargs"]["timeout"] == 30
 
 
 # --- compress_to_label --------------------------------------------------------
@@ -444,6 +468,29 @@ def test_compress_to_label_returns_none_for_none_source() -> None:
 
 def test_compress_to_label_returns_none_for_non_string_source() -> None:
     assert mr.compress_to_label(123) is None
+
+
+def test_compress_to_label_bounds_the_prompt_length_for_a_very_long_source_text(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # An unbounded prompt is a direct cost multiplier (every extra input
+    # token is billed) - source_text[:2000] caps it regardless of how
+    # long the real source (an away summary or joined transcript turns)
+    # actually is.
+    captured: dict[str, str] = {}
+
+    def fake_run(cmd: list[str], **kw: Any) -> FakeCompletedProcess:
+        captured["prompt"] = cmd[cmd.index("-p") + 1]
+        return FakeCompletedProcess(0, "a label")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    very_long_source = "x" * 10_000
+    mr.compress_to_label(very_long_source)
+    # The prompt is the fixed instruction text plus the (possibly
+    # truncated) source - assert the source contribution is bounded at
+    # 2000 chars, not the full 10,000-char input.
+    assert "x" * 2000 in captured["prompt"]
+    assert "x" * 2001 not in captured["prompt"]
 
 
 def test_compress_to_label_truncates_a_long_but_not_bad_label_with_ellipsis(
@@ -558,6 +605,26 @@ def test_get_task_label_short_internal_name_used_directly_without_generating(
     result = mr.get_task_label(record, cache, mr.LabelBudget(None))
     assert result == "short name here"
     assert cache == {"s1": "short name here"}
+    assert calls == []
+
+
+def test_get_task_label_six_word_internal_name_used_directly_without_generating(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Pins the exact boundary: real sessions.jsonl has 261 six-word
+    # internal_names (out of {1: 293, 4: 159, 5: 195, 6: 261, 7: 8}) -
+    # `<= 6` keeps them all free/verbatim; flipping to `< 6` would push
+    # every one of them into a paid `claude -p --model haiku` call. The
+    # existing tests above/below use 3-word and 7-word names, which
+    # straddle nothing.
+    calls: list[list[str]] = []
+    monkeypatch.setattr(subprocess, "run", recording_fake_run(calls))
+    cache: dict[str, str] = {}
+    six_word_name = "one two three four five six"
+    record = {"session_id": "s1", "internal_name": six_word_name}
+    result = mr.get_task_label(record, cache, mr.LabelBudget(None))
+    assert result == six_word_name
+    assert cache == {"s1": six_word_name}
     assert calls == []
 
 
@@ -676,6 +743,33 @@ def test_get_task_label_generates_and_caches_on_success(
     assert cache == {"s1": "generated label"}
 
 
+def test_get_task_label_caches_no_label_marker_when_generation_runs_but_refuses(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # Distinct from the no-source and cache-hit no-label tests above: here
+    # generation actually RAN (budget consumed, subprocess called - twice,
+    # for the retry) and compress_to_label came back None because both
+    # attempts looked like refusals. The negative cache still has to be
+    # written here so this permanently-unlabelable session is attempted
+    # once, not on every future render - `cache[session_id] = label or ""`
+    # would satisfy every other test in this file while writing a falsy
+    # empty string that reads as "not yet tried" instead of the sentinel.
+    path = tmp_path / "t.jsonl"
+    write_transcript(
+        path, [{"type": "system", "subtype": "away_summary", "content": "an away summary"}]
+    )
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda cmd, **kw: FakeCompletedProcess(0, "i cannot do that"),
+    )
+    cache: dict[str, str] = {}
+    record = {"session_id": "s1", "transcript_path": str(path)}
+    result = mr.get_task_label(record, cache, mr.LabelBudget(None))
+    assert result is None
+    assert cache == {"s1": "__no_label__"}
+
+
 # --- get_agent_label ------------------------------------------------------------
 
 
@@ -747,6 +841,29 @@ def test_get_agent_label_generates_and_caches_on_success(
     result = mr.get_agent_label(record, cache, mr.LabelBudget(None))
     assert result == "generated label"
     assert cache == {"a1": "generated label"}
+
+
+def test_get_agent_label_caches_no_label_marker_when_generation_runs_but_refuses(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # Same expensive-arm gap as get_task_label above: generation actually
+    # ran and refused both attempts, so compress_to_label returned None -
+    # the negative cache write on THIS arm (as opposed to the no-source
+    # arm, already pinned above) is what stops the dashboard re-paying for
+    # a subprocess call on every render for a permanently unlabelable
+    # agent.
+    path = tmp_path / "t.jsonl"
+    write_transcript(path, [{"type": "user", "message": {"content": "some turn text"}}])
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda cmd, **kw: FakeCompletedProcess(0, "i cannot do that"),
+    )
+    cache: dict[str, str] = {}
+    record = {"agent_id": "a1", "agent_transcript_path": str(path)}
+    result = mr.get_agent_label(record, cache, mr.LabelBudget(None))
+    assert result is None
+    assert cache == {"a1": "__no_label__"}
 
 
 # --- group_subagents_by_session ---------------------------------------------

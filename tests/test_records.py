@@ -187,17 +187,27 @@ def test_normalize_project_paths_folds_ephemeral_paths_to_none():
 
 
 def test_normalize_project_paths_excludes_worktree_paths_from_collapsing():
-    # A worktree path is kept as its own path even though its immediate
-    # parent (/Users/me/proj/.claude/worktrees) would otherwise be a
-    # collapse target - worktrees are merged later, by color_group_key,
-    # which needs the full "parent / worktree-name" path intact.
+    # /Users/me/proj/.claude/worktrees/feature-x's immediate parent
+    # (/Users/me/proj/.claude/worktrees) is included here AS ITS OWN
+    # RECORD - unlike the original version of this test, where that
+    # parent path never appeared in the dataset at all and so could never
+    # have been a collapse target with or without the marker. With the
+    # parent present, it has exactly one known child (feature-x), which
+    # is <= max_children_to_collapse - a genuine collapse candidate: if
+    # the marker didn't exclude worktree paths, feature-x would collapse
+    # into it and both entries would read back as the bare
+    # ".../worktrees" path. The marker keeps both untouched, preserving
+    # the full "parent / worktree-name" path for color_group_key to merge
+    # later.
     records = [
         {"project_path": "/Users/me/proj"},
+        {"project_path": "/Users/me/proj/.claude/worktrees"},
         {"project_path": "/Users/me/proj/.claude/worktrees/feature-x"},
     ]
     result = mr.normalize_project_paths(records)
     assert [r["project_path"] for r in result] == [
         "/Users/me/proj",
+        "/Users/me/proj/.claude/worktrees",
         "/Users/me/proj/.claude/worktrees/feature-x",
     ]
 
@@ -412,6 +422,22 @@ def test_fold_leaves_a_session_with_no_matching_subagent_totals_untouched():
     subagents = [{"session_id": "other", "input_tokens": 999}]
     result = mr.fold_subagent_tokens_into_sessions(sessions, subagents)
     assert result == [{"session_id": "s1", "input_tokens": 10}]
+
+
+def test_fold_mutates_the_input_records_in_place_not_a_copy():
+    # dashboard_html.py and dashboard_tui.py both call this function and
+    # discard the return value - the in-place mutation on the caller's own
+    # dicts is the ONLY effect they get (see the function's docstring).
+    # Pin both halves of that contract: the ORIGINAL list's dicts reflect
+    # the fold, and the returned list is the same objects, not equal
+    # copies - a `records = [dict(r) for r in records]` at the top would
+    # satisfy every other test in this file while breaking both dashboards
+    # silently (the 2026-08-05 under-half-of-real-consumption bug).
+    sessions = [{"session_id": "s1", "input_tokens": 10}]
+    subagents = [{"session_id": "s1", "input_tokens": 5}]
+    result = mr.fold_subagent_tokens_into_sessions(sessions, subagents)
+    assert sessions[0]["input_tokens"] == 15
+    assert result[0] is sessions[0]
 
 
 # --- filter_sessions_by_window gap not covered by test_period_filters.py ---
