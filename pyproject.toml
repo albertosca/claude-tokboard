@@ -54,6 +54,7 @@ module = [
     "test_backfill_script",
     "test_dashboard_html_backfill_note",
     "test_dashboard_html_formatters",
+    "test_dashboard_html_rows",
     "test_dashboard_rendering",
     "test_fixture_isolation",
     "test_format",
