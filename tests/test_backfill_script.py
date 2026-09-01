@@ -33,25 +33,43 @@ def test_valid_cutoff_rejects_a_string_that_does_not_even_parse(script):
         script._valid_cutoff("not-a-date")
 
 
-def test_print_summary_buckets_every_correction_factor_range(script, capsys):
-    # 1.94 sits just inside the 1.50-1.95x bucket's upper edge - close
-    # enough to the boundary that a one-line shift of it (e.g. to 1.85)
-    # would silently move this factor into the next bucket instead of
-    # merely failing to appear anywhere.
+def test_print_summary_pins_every_bucket_boundary_on_both_sides(script, capsys):
+    # The histogram has FOUR boundaries (1.001, 1.5, 1.95, 2.05), every
+    # comparison a strict `<`. Each one gets a factor strictly BELOW it
+    # (must land in the lower bucket) and a factor AT it (must land in the
+    # upper bucket, since `<` excludes the boundary value itself) - so a
+    # boundary moved in either direction breaks one exact per-bucket count.
+    # A test built from mid-range values only (e.g. 1.2, 1.7) cannot tell
+    # `< 1.5` from `< 1.4`, or `< 1.95` from `< 1.85`: every one of those
+    # mid-range factors lands in the same bucket either way.
+    factors = [
+        1.000,
+        1.001,  # 1.001 boundary
+        1.499,
+        1.5,  # 1.5 boundary
+        1.94,
+        1.95,  # 1.95 boundary
+        2.049,
+        2.05,  # 2.05 boundary
+    ]
+    expected_counts = {
+        "1.00x (no duplicates)": 1,  # 1.000
+        "1.00-1.50x": 2,  # 1.001, 1.499
+        "1.50-1.95x": 2,  # 1.5, 1.94
+        "~2.00x": 2,  # 1.95, 2.049
+        ">2.05x": 1,  # 2.05
+    }
     script.print_summary(
-        stats=collections.Counter({"corrected": 5}),
-        factors=[1.0, 1.2, 1.94, 2.0, 2.1],
+        stats=collections.Counter({"corrected": len(factors)}),
+        factors=factors,
         before_total=100,
         after_total=50,
-        changed_lines=5,
+        changed_lines=len(factors),
         total_lines=10,
     )
     out = capsys.readouterr().out
-    assert "         1  1.00x (no duplicates)" in out
-    assert "         1  1.00-1.50x" in out
-    assert "         1  1.50-1.95x" in out
-    assert "         1  ~2.00x" in out
-    assert "         1  >2.05x" in out
+    for bucket, count in expected_counts.items():
+        assert f"    {count:>6}  {bucket}" in out, f"expected {count} in {bucket!r} - got:\n{out}"
 
 
 def test_write_atomically_writes_new_lines_and_preserves_mode(tmp_path, script):
