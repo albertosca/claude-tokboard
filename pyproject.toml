@@ -69,6 +69,7 @@ module = [
     "test_project_totals",
     "test_projects",
     "test_records",
+    "test_subagent_metrics_log_hook",
     "test_tui_responsiveness",
     "test_tui_state",
     "test_verify_detectors",
