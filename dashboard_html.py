@@ -615,7 +615,16 @@ def render_project_totals_chart(
     # reaching this line, never fall through to it with a zero max. Kept
     # as cheap insurance against a future refactor removing that early
     # return.
-    max_total = max(totals.values()) or 1  # pragma: no cover - unreachable, see comment above
+    #
+    # No pragma here, deliberately: coverage.py measures statements and
+    # control-flow arcs, never the operands of a boolean expression. The
+    # assignment itself runs on every call and is covered by real tests,
+    # so a no-cover pragma would not be excusing anything unreachable - it
+    # would drop a live, tested line out of the denominator and blind the
+    # phase-4 gate to it. (Spelling that pragma out literally here would
+    # also be a bug: coverage.py matches its exclude regex against comment
+    # text, so the words alone are enough to arm the directive.)
+    max_total = max(totals.values()) or 1
 
     # row_height must clear label_baseline(=row start) + bar(9..23) + the
     # NEXT row's label ascent, or that next label overlaps up into this
@@ -1091,13 +1100,19 @@ def main() -> None:
         # the clause becomes necessary again the moment the upstream dedup
         # is removed or reordered, and deleting it now would plant that
         # regression back silently. See docs/superpowers/BACKLOG.md.
+        #
+        # `no branch`, NOT `no cover`: what is unreachable is the false arc
+        # of this `if`, not the statement. `no cover` on an `if` line
+        # excludes the whole statement including its body, which would drop
+        # the always-executed `unique_agents[key] = subagent` out of the
+        # denominator and hide it from the phase-4 100% gate forever.
         unique_agents: dict[Any, dict[str, Any]] = {}
         for subagent in subagent_records:
             key = subagent.get("agent_id")
             if key is None:
                 continue
             existing = unique_agents.get(key)
-            if existing is None or (  # pragma: no cover - unreachable, see comment above
+            if existing is None or (  # pragma: no branch - unreachable, see comment above
                 not existing.get("agent_transcript_path") and subagent.get("agent_transcript_path")
             ):
                 unique_agents[key] = subagent
@@ -1153,14 +1168,16 @@ def main() -> None:
         # upstream of this loop three days later, guaranteeing one record
         # per session_id before it runs - so `existing` is always None here
         # too. Kept for the same reason (a future upstream reorder would
-        # need it back). See docs/superpowers/BACKLOG.md.
+        # need it back). `no branch` rather than `no cover` for the same
+        # reason as above: the body assignment runs every iteration and
+        # must stay measured. See docs/superpowers/BACKLOG.md.
         unique_sessions: dict[Any, dict[str, Any]] = {}
         for record in records:
             key = record.get("session_id")
             if key is None:
                 continue
             existing = unique_sessions.get(key)
-            if existing is None or (  # pragma: no cover - unreachable, see comment above
+            if existing is None or (  # pragma: no branch - unreachable, see comment above
                 not (existing.get("internal_name") or existing.get("transcript_path"))
                 and (record.get("internal_name") or record.get("transcript_path"))
             ):
