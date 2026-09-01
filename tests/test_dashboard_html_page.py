@@ -661,49 +661,61 @@ def test_main_saves_label_caches_at_exactly_the_save_every_boundary(
     # already labeled instead of repeating the whole cold-cache scan next
     # time" - a resilience guard worth its own named test (rule 2).
     #
-    # With exactly 12 unique keys, the correct cadence (`== 0`) saves once
-    # mid-loop (at i=10) plus once unconditionally after the loop: 2 calls
-    # total, for each of the agent- and session-label caches. An off-by-one
-    # (`== 1`) instead fires at i=1 AND i=11: 3 calls - this count is what
-    # discriminates the boundary, verified by injecting exactly that
-    # mutation and confirming this test fails (see the task report).
+    # An earlier version used a single batch of 12 keys and asserted 2 saves
+    # per cache. That only bounds the modulus, it doesn't pin it: every
+    # cadence in 7..12 produces exactly one mid-loop save at 12 keys, so
+    # SAVE_EVERY could drift from 10 to 7 undetected (review M2, measured).
+    #
+    # Pinned instead by straddling the boundary. With a cadence of m, a
+    # batch of N keys fires N // m mid-loop saves plus one unconditional
+    # post-loop save. Asserting 9 keys -> 1 call and 10 keys -> 2 calls
+    # admits exactly m == 10: any smaller m already fires mid-loop at N=9
+    # (9 // m >= 1, so 2+ calls), and any larger m still hasn't fired at
+    # N=10 (10 // m == 0, so 1 call).
     home = isolate_main_from_the_real_filesystem
-    records = [_session_record(f"many-s{i}", "/work/proj-a", tokens=1) for i in range(12)]
-    _write_jsonl(home / ".claude" / "metrics" / "sessions.jsonl", records)
-    subagents = [
-        {
-            "session_id": f"many-s{i}",
-            "agent_id": f"many-a{i}",
-            "input_tokens": 1,
-            "duration_seconds": 1,
-        }
-        for i in range(12)
-    ]
-    _write_jsonl(home / ".claude" / "metrics" / "subagents.jsonl", subagents)
 
-    agent_save_calls = 0
-    session_save_calls = 0
-    real_save_agent = mr.save_agent_label_cache
-    real_save_session = mr.save_label_cache
+    def save_calls_for_batch(batch_size: int) -> tuple[int, int]:
+        records = [
+            _session_record(f"many-s{i}", "/work/proj-a", tokens=1) for i in range(batch_size)
+        ]
+        _write_jsonl(home / ".claude" / "metrics" / "sessions.jsonl", records)
+        subagents = [
+            {
+                "session_id": f"many-s{i}",
+                "agent_id": f"many-a{i}",
+                "input_tokens": 1,
+                "duration_seconds": 1,
+            }
+            for i in range(batch_size)
+        ]
+        _write_jsonl(home / ".claude" / "metrics" / "subagents.jsonl", subagents)
 
-    def counting_save_agent(cache: dict[str, str]) -> None:
-        nonlocal agent_save_calls
-        agent_save_calls += 1
-        real_save_agent(cache)
+        agent_save_calls = 0
+        session_save_calls = 0
+        real_save_agent = mr.save_agent_label_cache
+        real_save_session = mr.save_label_cache
 
-    def counting_save_session(cache: dict[str, str]) -> None:
-        nonlocal session_save_calls
-        session_save_calls += 1
-        real_save_session(cache)
+        def counting_save_agent(cache: dict[str, str]) -> None:
+            nonlocal agent_save_calls
+            agent_save_calls += 1
+            real_save_agent(cache)
 
-    monkeypatch.setattr(mr, "save_agent_label_cache", counting_save_agent)
-    monkeypatch.setattr(mr, "save_label_cache", counting_save_session)
+        def counting_save_session(cache: dict[str, str]) -> None:
+            nonlocal session_save_calls
+            session_save_calls += 1
+            real_save_session(cache)
 
-    _run_main(monkeypatch, ["--html", "--label-budget", "0"])
-    capsys.readouterr()
+        with monkeypatch.context() as patch:
+            patch.setattr(mr, "save_agent_label_cache", counting_save_agent)
+            patch.setattr(mr, "save_label_cache", counting_save_session)
+            _run_main(patch, ["--html", "--label-budget", "0"])
+        capsys.readouterr()
+        return agent_save_calls, session_save_calls
 
-    assert agent_save_calls == 2
-    assert session_save_calls == 2
+    # One key short of the cadence: only the unconditional post-loop save.
+    assert save_calls_for_batch(9) == (1, 1)
+    # Exactly on it: the mid-loop save fires once, plus the post-loop one.
+    assert save_calls_for_batch(10) == (2, 2)
 
 
 def test_main_html_mode_is_unbounded_by_limit(

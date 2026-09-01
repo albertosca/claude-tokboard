@@ -117,6 +117,24 @@ def test_format_summary_aggregates_are_correct_for_a_known_record_set():
     )
 
 
+def test_format_summary_single_record_averages_equal_that_records_own_values():
+    # n == 1 was the one missing input class (review M3), and it is an
+    # ordinary real one - "one session matched" is what every narrow filter
+    # produces. Both averages divide by a count, so they are the arithmetic
+    # that only n == 1 can discriminate: replacing `total_turns / n` with
+    # `/ max(n, 2)` (and the same for the duration mean) changes nothing at
+    # n = 0, 2 or 3 and everything here. With a single record both averages
+    # must reproduce that record's own numbers exactly - 45s and 5.0, not
+    # halves of them.
+    records = [
+        {"duration_seconds": 45, "input_tokens": 7, "output_tokens": 3, "turn_count": 5},
+    ]
+    assert dashboard_html.format_summary(records) == (
+        "\n1 session(s) - avg duration 45s, total input tokens 7, "
+        "total output tokens 3, avg turns 5.0"
+    )
+
+
 def test_format_summary_avg_duration_is_zero_when_no_record_has_a_duration():
     # Targets the `if durations else 0` guard directly (named mutation 3):
     # records is non-empty, but none carry duration_seconds.

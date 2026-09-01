@@ -29,6 +29,8 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
+import metrics_core as mr
+
 import dashboard_html
 
 # ---------------------------------------------------------------------------
@@ -66,6 +68,33 @@ def _parse_elements(fragment: str, tag: str) -> list[dict[str, Any]]:
     return elements
 
 
+def _parse_texts(fragment: str) -> list[dict[str, Any]]:
+    """Every <text ...>content</text> in fragment, as its attributes plus the
+    rendered string under key "text". _parse_elements deliberately drops
+    element content, which is exactly what the y-axis tick labels and the
+    x-axis date ticks need asserted (review C1: their text was rendered,
+    executed, counted as covered, and read by nothing)."""
+    texts = []
+    for m in re.finditer(r"<text\b([^>]*)>(.*?)</text>", fragment, re.S):
+        attrs = m.group(1)
+        parsed: dict[str, Any] = {"text": m.group(2)}
+        for name in ("x", "y"):
+            val = _num_attr(attrs, name)
+            if val is not None:
+                parsed[name] = val
+        for name in ("class", "text-anchor"):
+            val_s = _attr(attrs, name)
+            if val_s is not None:
+                parsed[name] = val_s
+        texts.append(parsed)
+    return texts
+
+
+def _titles(fragment: str) -> list[str]:
+    """Every <title> tooltip in fragment, in document order."""
+    return re.findall(r"<title>(.*?)</title>", fragment, re.S)
+
+
 def _svg_block(out: str, id_prefix: str) -> str:
     """Extract one full <svg ...id="{id_prefix}...">...</svg> block. Trend
     charts render two svgs (pane/tokens) per period; id_prefix picks one.
@@ -83,6 +112,21 @@ def _svg_block(out: str, id_prefix: str) -> str:
     return m.group(1)
 
 
+def _svg_block_with_class(out: str, css_class: str) -> str:
+    """Extract the first full <svg ...class="...{css_class}...">...</svg>.
+    render_project_totals_chart's visible svg carries no id (only the
+    "more" svg does), so this is the id-less twin of _svg_block: it still
+    locates by identity - a class the element genuinely has - never by
+    attribute position."""
+    m = re.search(
+        rf'(<svg\b[^>]*\bclass="[^"]*\b{re.escape(css_class)}\b[^"]*"[^>]*>.*?</svg>)',
+        out,
+        re.S,
+    )
+    assert m, f"no <svg class={css_class!r}...> block found"
+    return m.group(1)
+
+
 def _viewbox(svg_fragment: str) -> tuple[float, float]:
     m = re.search(r'viewBox="0 0 ([\d.]+) ([\d.]+)"', svg_fragment)
     assert m, "no viewBox found"
@@ -93,21 +137,33 @@ def _assert_no_coordinate_escapes(svg_fragment: str) -> None:
     """The single most valuable invariant in this module: nothing drawn
     goes negative or spills past the declared canvas. This is exactly the
     shape of the two real bugs the module's own comments describe (a
-    split-denominator regression and a since-fixed coordinate overflow)."""
+    split-denominator regression and a since-fixed coordinate overflow).
+
+    Every loop below is guarded against vacuity first. Without that, this
+    helper passes trivially over an empty element list - and the `line`
+    loop goes empty precisely when the gridlines it exists to check
+    disappear, so the one assertion touching them stopped testing them at
+    the exact moment they broke (review C1)."""
     width, height = _viewbox(svg_fragment)
-    for rect in _parse_elements(svg_fragment, "rect"):
+    rects = _parse_elements(svg_fragment, "rect")
+    lines = _parse_elements(svg_fragment, "line")
+    texts = _parse_elements(svg_fragment, "text")
+    assert rects, "no <rect> to check - this invariant would pass vacuously"
+    assert lines, "no <line> to check - this invariant would pass vacuously"
+    assert texts, "no <text> to check - this invariant would pass vacuously"
+    for rect in rects:
         assert rect["x"] >= -0.01, rect
         assert rect["y"] >= -0.01, rect
         assert rect["width"] >= -0.01, rect
         assert rect["height"] >= -0.01, rect
         assert rect["x"] + rect["width"] <= width + 0.5, rect
         assert rect["y"] + rect["height"] <= height + 0.5, rect
-    for line in _parse_elements(svg_fragment, "line"):
+    for line in lines:
         assert -0.01 <= line["x1"] <= width + 0.5, line
         assert -0.01 <= line["x2"] <= width + 0.5, line
         assert -0.01 <= line["y1"] <= height + 0.5, line
         assert -0.01 <= line["y2"] <= height + 0.5, line
-    for text in _parse_elements(svg_fragment, "text"):
+    for text in texts:
         if "x" in text:
             assert -0.01 <= text["x"] <= width + 0.5, text
         if "y" in text:
@@ -274,6 +330,135 @@ def test_render_trend_chart_no_coordinate_escapes_canvas_for_cache_heavy_days():
     out = dashboard_html.render_trend_chart(records, {"/proj/a": "group-color-1"}, "p1")
     _assert_no_coordinate_escapes(_svg_block(out, "chart-pane-"))
     _assert_no_coordinate_escapes(_svg_block(out, "chart-tokens-"))
+
+
+# --- the y-axis / x-axis / tooltip surface (review finding C1) -------------
+# build_y_axis ran on every chart, reported 100% covered, and was constrained
+# by nothing: replacing its whole return value with "" - deleting every
+# gridline and axis label from every trend chart - left the suite green.
+# The three tests below assert what it actually emits, not that it ran.
+# Every expected value was read back out of the running function.
+
+# Three days spread over more than 48h and less than 45 -> "day" granularity
+# (choose_granularity), which is the granularity real dashboards render at.
+_DAY_GRANULARITY_RECORDS = [
+    _day_record("2026-08-01", input_tokens=100),
+    _day_record("2026-08-05", input_tokens=200),
+    _day_record("2026-08-10", input_tokens=300),
+]
+# max_pane / max_tokens for the record set above: the largest per-day total.
+_DAY_GRANULARITY_MAX = 300
+Y_AXIS_FRACS = (0.0, 0.25, 0.5, 0.75, 1.0)
+
+
+def test_render_trend_chart_y_axis_draws_five_gridlines_spanning_the_whole_plot_area():
+    # Pins gridline COUNT (one per frac in build_y_axis's tuple), their
+    # class (the stylesheet hook - renaming it silently unstyles every
+    # gridline), their y positions (top of plot to baseline, evenly
+    # spaced), and their horizontal EXTENT: a gridline runs from the left
+    # padding to width - padding_right, never to the canvas edge.
+    out = dashboard_html.render_trend_chart(
+        _DAY_GRANULARITY_RECORDS, {"/proj/a": "group-color-1"}, "p1"
+    )
+    for svg in (_svg_block(out, "chart-pane-"), _svg_block(out, "chart-tokens-")):
+        width, _height = _viewbox(svg)
+        gridlines = [
+            line for line in _parse_elements(svg, "line") if line.get("class") == "chart-gridline"
+        ]
+        assert len(gridlines) == len(Y_AXIS_FRACS)
+        expected_ys = [PADDING_TOP + PLOT_HEIGHT - frac * PLOT_HEIGHT for frac in Y_AXIS_FRACS]
+        assert expected_ys == [130.0, 100.0, 70.0, 40.0, 10.0]
+        assert [line["y1"] for line in gridlines] == expected_ys
+        for line in gridlines:
+            assert line["y2"] == line["y1"]  # horizontal
+            assert line["x1"] == PADDING_LEFT
+            assert line["x2"] == width - PADDING_RIGHT
+
+
+def test_render_trend_chart_y_axis_labels_read_the_scale_from_zero_up_to_the_busiest_bucket():
+    # The gridlines' companion text: the actual token amounts a reader uses
+    # to size a bar by eye. Both panes share one denominator (the busiest
+    # day's total), so both axes must read 0 .. that total, formatted by
+    # format_tokens. This is the surface the 2026-08-10 incident recorded in
+    # the module's own comment was about ("measuring a different, ~300x
+    # smaller quantity than its own axis labels and tooltips claimed").
+    out = dashboard_html.render_trend_chart(
+        _DAY_GRANULARITY_RECORDS, {"/proj/a": "group-color-1"}, "p1"
+    )
+    expected_labels = [mr.format_tokens(_DAY_GRANULARITY_MAX * frac) for frac in Y_AXIS_FRACS]
+    assert expected_labels == ["0", "75", "150", "225", "300"]
+    for svg in (_svg_block(out, "chart-pane-"), _svg_block(out, "chart-tokens-")):
+        # The x-axis date ticks share the chart-axis-label class but are the
+        # only ones centred on their bar (text-anchor="middle"); the y-axis
+        # labels sit in the left gutter with no anchor.
+        axis_labels = [
+            text
+            for text in _parse_texts(svg)
+            if text.get("class") == "chart-axis-label" and "text-anchor" not in text
+        ]
+        assert [text["text"] for text in axis_labels] == expected_labels
+        gridlines = [
+            line for line in _parse_elements(svg, "line") if line.get("class") == "chart-gridline"
+        ]
+        # Each label is baseline-nudged onto its own gridline, and lives in
+        # the left gutter rather than over the plot area.
+        assert [text["y"] for text in axis_labels] == [line["y1"] + 3 for line in gridlines]
+        for text in axis_labels:
+            assert 0 <= text["x"] < PADDING_LEFT
+
+
+def test_render_trend_chart_x_axis_ticks_are_dates_in_the_granularitys_own_tick_format():
+    # tick_fmt comes from GRANULARITY_CONFIG, so the same chart code renders
+    # "01/08" for a day-bucketed history and "2001" for a year-bucketed one.
+    # Nothing pinned the tick TEXT before: rendering every tick as the same
+    # constant (strftime("%Y") on day data) left the suite green.
+    day_out = dashboard_html.render_trend_chart(
+        _DAY_GRANULARITY_RECORDS, {"/proj/a": "group-color-1"}, "p1"
+    )
+    day_ticks = [
+        text["text"]
+        for text in _parse_texts(_svg_block(day_out, "chart-pane-"))
+        if text.get("text-anchor") == "middle"
+    ]
+    assert mr.GRANULARITY_CONFIG["day"]["tick_fmt"] == "%d/%m"
+    assert day_ticks == ["01/08", "05/08", "10/08"]
+
+    year_out = dashboard_html.render_trend_chart(
+        _year_records(5, start_year=2001), {"/proj/a": "group-color-1"}, "p1"
+    )
+    year_ticks = [
+        text["text"]
+        for text in _parse_texts(_svg_block(year_out, "chart-pane-"))
+        if text.get("text-anchor") == "middle"
+    ]
+    assert mr.GRANULARITY_CONFIG["year"]["tick_fmt"] == "%Y"
+    assert year_ticks == ["2001", "2002", "2003", "2004", "2005"]
+
+
+def test_render_trend_chart_bar_tooltips_name_the_slice_the_bucket_and_the_amount():
+    # The <title> tooltip is the only place a bar states which project (pane
+    # mode) or which token type (tokens mode) it represents, and how many
+    # tokens it is - the exact pairing the 2026-08-10 incident got wrong.
+    # Neither string was asserted anywhere: dropping the project name and
+    # the token-type name from their tooltips both left the suite green.
+    records = [
+        _day_record("2026-08-01", i=0, input_tokens=100, project="/proj/a"),
+        _day_record("2026-08-01", i=1, output_tokens=40, project="/proj/b"),
+        _day_record("2026-08-10", i=0, cache_read_tokens=300, project="/proj/a"),
+    ]
+    out = dashboard_html.render_trend_chart(
+        records, {"/proj/a": "group-color-1", "/proj/b": "group-color-2"}, "p1"
+    )
+    assert _titles(_svg_block(out, "chart-pane-")) == [
+        f"{mr.project_display_label('/proj/a')} · 2026-08-01 - {mr.format_tokens(100)} tokens",
+        f"{mr.project_display_label('/proj/b')} · 2026-08-01 - {mr.format_tokens(40)} tokens",
+        f"{mr.project_display_label('/proj/a')} · 2026-08-10 - {mr.format_tokens(300)} tokens",
+    ]
+    assert _titles(_svg_block(out, "chart-tokens-")) == [
+        f"{dashboard_html.SERIES_NAMES['series-1']} · 2026-08-01 - {mr.format_tokens(100)} tokens",
+        f"{dashboard_html.SERIES_NAMES['series-2']} · 2026-08-01 - {mr.format_tokens(40)} tokens",
+        f"{dashboard_html.SERIES_NAMES['series-3']} · 2026-08-10 - {mr.format_tokens(300)} tokens",
+    ]
 
 
 def test_render_trend_chart_shared_denominator_pane_and_tokens_modes_agree_on_bucket_height():
@@ -601,9 +786,12 @@ def test_render_project_totals_chart_row_height_pins_svg_height_and_row_position
         _project_record("/proj/b", input_tokens=50),
     ]
     out = dashboard_html.render_project_totals_chart(two_projects, {}, {}, set(), "p1")
-    viewbox_match = re.search(r'<svg viewBox="0 0 \d+ (\d+)"', out)
-    assert viewbox_match
-    viewbox_height = int(viewbox_match.group(1))
+    # Located by class, then read by attribute NAME - the earlier version
+    # anchored on `<svg viewBox=` and so required viewBox to be the svg's
+    # first attribute, which is exactly the brittleness _svg_block was
+    # introduced to remove (review M1: adding a no-op data-testid attribute
+    # to the svg broke this test while behaviour was untouched).
+    _viewbox_width, viewbox_height = _viewbox(_svg_block_with_class(out, "project-chart-svg"))
     assert viewbox_height == 2 * 34 + 20 == 88
     tracks = _parse_elements(out, "rect")
     track_ys = sorted(r["y"] for r in tracks if r.get("class") == "project-chart-track")

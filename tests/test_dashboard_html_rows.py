@@ -51,6 +51,56 @@ def _extract_span(html_out: str, css_class: str) -> str:
     return match.group(1)
 
 
+# --------------------------------------------------------------------------
+# Attribute-order-independent locators (review M1). Elements are found by
+# identity - an attribute they genuinely carry - and attributes are read by
+# NAME, never by position in the tag, so adding or reordering a cosmetic
+# attribute never fails a test that isn't about that attribute.
+# --------------------------------------------------------------------------
+
+
+def _attr(attrs: str, name: str) -> str | None:
+    m = re.search(rf'{re.escape(name)}="([^"]*)"', attrs)
+    return m.group(1) if m else None
+
+
+def _attr_names(attrs: str) -> set[str]:
+    """Attribute NAMES present in a tag's attribute string, including
+    valueless boolean attributes like `hidden`. Substring-testing the raw
+    string instead would flip on any future attribute whose name merely
+    contains "hidden"."""
+    return set(re.findall(r'([A-Za-z_:][-A-Za-z0-9_:.]*)(?:="[^"]*")?', attrs))
+
+
+def _period_block(html_out: str, period_id: str) -> tuple[str, str]:
+    """The (attributes, inner text) of the group header's period-count span
+    for one period, located by its data-period value and group-count class
+    rather than by a literal attribute sequence."""
+    # Scanned as opening tags rather than as `<span...>(.*?)</span>` pairs:
+    # the period blocks are nested inside an outer <span>, and a paired
+    # regex lets the outer match swallow the first inner one whole.
+    for m in re.finditer(r"<span\b([^>]*)>", html_out):
+        attrs = m.group(1)
+        classes = (_attr(attrs, "class") or "").split()
+        if _attr(attrs, "data-period") == period_id and "group-count" in classes:
+            # No period block contains a nested span, so its content runs
+            # to the next closing tag.
+            return attrs, html_out[m.end() : html_out.index("</span>", m.end())]
+    raise AssertionError(f"no group-count period-block span for period {period_id!r}")
+
+
+def _div_classes(html_out: str, first_class: str) -> list[str]:
+    """Every <div>'s full class string, in document order, whose class list
+    starts with first_class - located by class membership, not by class
+    being the div's only attribute."""
+    found = []
+    for m in re.finditer(r"<div\b([^>]*)>", html_out):
+        classes = (_attr(m.group(1), "class") or "").split()
+        if classes and classes[0] == first_class:
+            found.append(" ".join(classes))
+    return found
+
+
 def test_render_session_row_pins_own_fields():
     record = _base_record()
     out = dashboard_html.render_session_row(
@@ -265,22 +315,18 @@ def test_render_group_header_shows_display_label_and_aggregate_token_total():
 
     assert mr.project_display_label("/proj/a") in out
     expected_total = mr.format_tokens(sum(mr.record_token_total(r) for r in records))
-    # `[^>]*` tolerates whatever attributes sit between data-period="tudo"
-    # and the closing >  (e.g. the " hidden" flag - pinned separately by
-    # test_render_group_header_only_default_period_block_is_unhidden below -
-    # or any future cosmetic attribute) so this test only fails when the
-    # thing it's actually named for, the label and aggregate total, is
-    # wrong. An earlier version anchored on the literal sequence
-    # data-period="tudo"> with no room for other attributes, which failed
-    # on ANY markup addition after that point even when visibility was
-    # untouched (caught by review: adding a no-op data-testid="pb"
-    # attribute broke it).
-    tudo_block = re.search(
-        r'<span class="group-count period-block" data-period="tudo"[^>]*>(.*?)</span>', out
-    )
-    assert tudo_block
-    assert expected_total in tudo_block.group(1)
-    assert f"({len(records)} sessões" in tudo_block.group(1)
+    # _period_block finds the span by the attributes it genuinely carries
+    # (data-period + the group-count class), in any order and with any
+    # number of other attributes around them - so this test only fails when
+    # the thing it's actually named for, the label and aggregate total, is
+    # wrong. Two earlier versions were brittle here: the first anchored on
+    # the literal sequence data-period="tudo"> with no room for other
+    # attributes; the second still required class to be immediately
+    # followed by data-period, and broke on an attribute inserted between
+    # them (review M1).
+    _attrs, body = _period_block(out, "tudo")
+    assert expected_total in body
+    assert f"({len(records)} sessões" in body
 
 
 def test_render_group_header_only_default_period_block_is_unhidden():
@@ -293,15 +339,16 @@ def test_render_group_header_only_default_period_block_is_unhidden():
     period_windows = _ALL_NONE_PERIOD_WINDOWS
     out = dashboard_html.render_group_header(0, group, period_windows)
     for period in mr.PERIODS:
-        match = re.search(
-            rf'<span class="group-count period-block" data-period="{period.id}"([^>]*)>', out
-        )
-        assert match, f"no period-block span found for period {period.id!r}"
-        attrs = match.group(1)
+        # Located by identity, and `hidden` is checked as an attribute NAME
+        # rather than as a substring of the raw tag: the substring form
+        # would flip on any future attribute whose name merely contains
+        # "hidden" (review M1).
+        attrs, _body = _period_block(out, period.id)
+        names = _attr_names(attrs)
         if period.id == mr.DEFAULT_PERIOD_ID:
-            assert "hidden" not in attrs, f"default period {period.id!r} block is hidden"
+            assert "hidden" not in names, f"default period {period.id!r} block is hidden"
         else:
-            assert "hidden" in attrs, f"non-default period {period.id!r} block is not hidden"
+            assert "hidden" in names, f"non-default period {period.id!r} block is not hidden"
 
 
 def test_render_group_header_carries_group_colour_class():
@@ -405,7 +452,11 @@ def test_render_detail_panel_zebra_stripes_odd_rows_only():
         _subagent("c", "2026-08-20T10:00:00Z", agent_label="row-c"),
     ]
     out = dashboard_html.render_detail_panel("sess-1", subagents, is_active=False)
-    rows = re.findall(r'<div class="(subagent-row(?: subagent-row-odd)?)">', out)
+    # _div_classes locates rows by class membership instead of requiring
+    # class to be the div's only attribute and immediately followed by `>`
+    # (review M1). The first subagent-row is the column header, which the
+    # zebra pattern deliberately doesn't count.
+    rows = [cls for cls in _div_classes(out, "subagent-row") if "subagent-header" not in cls]
     assert rows == ["subagent-row", "subagent-row subagent-row-odd", "subagent-row"]
 
 
