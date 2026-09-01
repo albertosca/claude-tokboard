@@ -81,7 +81,9 @@ ceiling was NOT adjusted: it is the same number, re-justified against a
 dataset the size it was calibrated for and against an instrument the
 original calibration never ran under.
 
-One warning for whoever re-runs this probe. Its FIRST five paired runs
+One warning for anyone re-measuring this by hand in the future, recorded
+here rather than in a committed script - the ad-hoc probe that produced
+the numbers above was never checked in. Its FIRST five paired runs
 reported coverage as free, and they were wrong: the probe passed
 `source=[".../dashboard_tui.py"]` to coverage.Coverage, and a FILE PATH in
 `source` traces nothing and only emits a module-not-imported warning. The

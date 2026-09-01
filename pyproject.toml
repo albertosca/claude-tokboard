@@ -57,7 +57,12 @@ mypy_path = "lib"
 # file. Deliberately left as follow-up rather than smuggled in here; see
 # the Task 1 report for the full list.
 [[tool.mypy.overrides]]
-module = ["textual.*", "textual_plotext.*"]
+# plotext.* added here (Phase 3e Task 2, 2026-09-01): tests/test_tui_chart.py
+# imports it directly (import plotext) to derive the "gray" ANSI escape
+# sequence from plotext's own colorize() rather than hard-coding one, so a
+# future palette remap can't silently make that assertion meaningless. Same
+# situation as textual/textual_plotext above - no stubs, no py.typed.
+module = ["textual.*", "textual_plotext.*", "plotext.*"]
 ignore_missing_imports = true
 follow_imports = "skip"
 
@@ -105,6 +110,7 @@ module = [
     "test_projects",
     "test_records",
     "test_subagent_metrics_log_hook",
+    "test_tui_chart",
     "test_tui_responsiveness",
     "test_tui_state",
     "test_verify_detectors",
