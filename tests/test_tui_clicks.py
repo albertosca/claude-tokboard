@@ -58,19 +58,33 @@ def _run(coro: Any) -> Any:
 
 
 def seeded_tui_home_with_subagents(mp: pytest.MonkeyPatch, home: Path) -> Path:
-    """The same committed fixture as seeded_tui_home, plus two subagent
-    records under session "week-1" (the busier of the two "beta" project
-    sessions) - the committed fixture's own subagents.jsonl is empty (see
-    tests/fixtures/build_fixture.py), so it can never exercise
-    SessionDetailPanel.show_session's populated branch. Neither record sets
-    agent_transcript_path, so get_agent_label's cold_summary_source lookup
-    is falsy and caches _NO_LABEL without touching the filesystem or
-    `claude -p` - consistent with --label-budget 0 never reaching a real
-    subprocess call anywhere else in this suite.
+    """The same committed fixture as seeded_tui_home, plus:
 
-    One subagent has duration_seconds=None (the SessionDetailPanel
-    "-" duration branch) and the other a real duration - between them they
-    exercise both halves of show_session's per-row duration formatting.
+    - three subagent records under session "week-1" (the busier of the two
+      "beta" project sessions) - the committed fixture's own
+      subagents.jsonl is empty (see tests/fixtures/build_fixture.py), so it
+      can never exercise SessionDetailPanel.show_session's populated
+      branch. None sets agent_transcript_path, so get_agent_label's
+      cold_summary_source lookup is falsy and caches _NO_LABEL without
+      touching the filesystem or `claude -p` - consistent with
+      --label-budget 0 never reaching a real subprocess call anywhere else
+      in this suite.
+    - one extra SESSION record, "zero-dur", whose own duration_seconds is
+      0 - not merely absent from the fixture, but a real recorded shape.
+      Phase 3d established (see hooks/metrics-log.py's test for a
+      single-timestamped-entry transcript) that a session which logs
+      exactly once yields timestamp_end == timestamp_start, i.e. a real
+      duration_seconds of 0. `duration_seconds:.0f` is falsy for 0 - the
+      unnamed-mutation sweep for this task found that
+      `if duration is not None else "-"` relaxed to `if duration else "-"`
+      survives every other test here and would render "-" for this exact
+      shape where the app should render "0s".
+
+    Three subagents, not two: "sub-a" has a real duration (the ">0"
+    branch), "sub-b" has duration_seconds=None (the "-" branch), and
+    "sub-c" has duration_seconds=0 (the same 0-vs-None distinction as
+    "zero-dur" above, but on show_session's own per-row formatting rather
+    than build_session_tree's).
     """
     seeded_tui_home(mp, home)
     subagents = [
@@ -96,11 +110,40 @@ def seeded_tui_home_with_subagents(mp: pytest.MonkeyPatch, home: Path) -> Path:
             "tool_call_count": 1,
             "duration_seconds": None,
         },
+        {
+            "session_id": "week-1",
+            "agent_id": "sub-c",
+            "agent_type": "zero-duration-agent",
+            "input_tokens": 2,
+            "output_tokens": 3,
+            "cache_read_tokens": 0,
+            "cache_creation_tokens": 0,
+            "tool_call_count": 1,
+            "duration_seconds": 0,
+        },
     ]
     subagents_path = home / ".claude" / "metrics" / "subagents.jsonl"
     with subagents_path.open("w") as f:
         for subagent in subagents:
             f.write(json.dumps(subagent) + "\n")
+
+    zero_duration_session = {
+        "session_id": "zero-dur",
+        "project_path": "/projects/iota",
+        "timestamp_start": "2026-08-30T10:00:00+00:00",
+        "timestamp_end": "2026-08-30T10:00:00+00:00",
+        "duration_seconds": 0,
+        "turn_count": 1,
+        "tool_call_count": 1,
+        "input_tokens": 1,
+        "output_tokens": 1,
+        "cache_read_tokens": 1,
+        "cache_creation_tokens": 1,
+    }
+    sessions_path = home / ".claude" / "metrics" / "sessions.jsonl"
+    with sessions_path.open("a") as f:
+        f.write(json.dumps(zero_duration_session) + "\n")
+
     return home
 
 
@@ -133,13 +176,13 @@ async def _drive_composition_legend_clicks() -> dict[str, Any]:
 
         results: dict[str, Any] = {"series": series}
 
-        # Rightmost pixel of the widget: integer division against a width
-        # not evenly divisible by len(series) can push x // chip_width past
-        # the last valid index. The unnamed-mutation sweep found this is a
-        # real IndexError waiting to happen (min(..., 3) relaxed to
-        # min(..., 4)), not a defensive test for something impossible - a
-        # click that lands here is exactly what a user's mouse would do at
-        # the widget's own edge.
+        # Rightmost pixel of the widget. The production clamp
+        # (min(x // chip_width, 3)) is already correct here - verified: it
+        # holds at every width the review swept. What the unnamed-mutation
+        # sweep found is that nothing in this suite CONSTRAINED that clamp:
+        # relaxing it to min(..., 4) survived every other test. That is a
+        # test gap, not a shipped bug - this test closes it, so a future
+        # edit that relaxes the clamp cannot ship silently.
         await pilot.click(legend, offset=(width - 1, 0))
         await pilot.pause()
         results["after_rightmost_click"] = legend.highlighted
@@ -211,9 +254,11 @@ async def _drive_project_legend_clicks() -> dict[str, Any]:
         results: dict[str, Any] = {"keys": keys}
 
         # Same rightmost-pixel boundary as CompositionLegend, mirrored here
-        # since ProjectLegend has its own independent clamp expression
-        # (min(..., len(series_keys) - 1)) that the sweep also found
-        # relaxable to an out-of-range index without any test noticing.
+        # since ProjectLegend has its own independent, and already-correct,
+        # clamp expression (min(..., len(series_keys) - 1)). The sweep
+        # found the same test gap here - nothing constrained it, so a
+        # relaxation to min(..., len(series_keys)) would have shipped
+        # silently. This test closes that gap.
         await pilot.click(legend, offset=(width - 1, 0))
         await pilot.pause()
         results["after_rightmost_click"] = legend.highlighted
@@ -300,6 +345,23 @@ async def _drive_tree_selection() -> dict[str, Any]:
         await pilot.pause()
         results["panel_after_yest_1_click"] = str(panel._body.render())
 
+        # "zero-dur" pins build_session_tree's own duration_str, a
+        # SEPARATE `duration is not None` expression (line 300) from
+        # show_session's per-subagent one exercised above via "sub-c" -
+        # its recorded duration_seconds is 0, a real shape (see
+        # seeded_tui_home_with_subagents's docstring), and must render
+        # "0s", not "-".
+        zero_dur_node = next(c for c in tree.root.children if "iota" in str(c.label))
+        results["zero_dur_group_label"] = str(zero_dur_node.label)
+        zero_dur_node.expand()
+        await pilot.pause()
+        zero_dur_leaf = next(
+            line.path[-1]
+            for line in tree._tree_lines
+            if line.path[-1].data == {"session_id": "zero-dur"}
+        )
+        results["zero_dur_leaf_label"] = str(zero_dur_leaf.label)
+
         return results
 
 
@@ -347,7 +409,9 @@ def test_composition_legend_click_highlights_only_the_clicked_series(composition
 
 def test_composition_legend_rightmost_pixel_clamps_to_the_last_series(composition_legend_clicks):
     """The widget's own right edge must resolve to a valid index (the last
-    series), never raise IndexError from an off-by-one clamp."""
+    series). The production clamp already does this correctly; this test
+    pins it so a future relaxation cannot ship silently (see the driving
+    coroutine's comment above)."""
     r = composition_legend_clicks
     assert r["after_rightmost_click"] == {r["series"][-1]}
 
@@ -460,14 +524,38 @@ def test_clicking_a_group_node_does_not_populate_the_detail_panel(tree_selection
 def test_selecting_a_session_with_subagents_shows_its_own_subagent_table(tree_selection):
     text = tree_selection["panel_after_week_1_click"]
     assert "week-1" in text
-    assert "Subagentes despachados (2)" in text
+    assert "Subagentes despachados (3)" in text
     assert "general-purpose" in text
     assert "code-reviewer" in text
+    assert "zero-duration-agent" in text
     assert "10/20" in text, "input/output tokens for the first subagent must appear"
     assert "5/6" in text, "input/output tokens for the second subagent must appear"
+    assert "2/3" in text, "input/output tokens for the third subagent must appear"
     assert "12s" in text, "a real duration must be formatted with a trailing 's'"
-    assert text.index("general-purpose") < text.index("code-reviewer"), (
-        "subagents must render in the order they were dispatched"
+    assert (
+        text.index("general-purpose")
+        < text.index("code-reviewer")
+        < text.index("zero-duration-agent")
+    ), "subagents must render in the order they were dispatched"
+
+
+def test_show_session_renders_a_real_zero_duration_as_0s_not_a_dash(tree_selection):
+    """show_session's own `duration is not None else "-"` (dashboard_tui.py
+    around line 345) must tell a genuinely-recorded duration_seconds=0
+    apart from an ABSENT duration_seconds - the unnamed-mutation sweep
+    found relaxing this to a truthiness check survives every other test
+    here, and Phase 3d established a single-timestamped-entry transcript
+    produces exactly this shape (see
+    seeded_tui_home_with_subagents's docstring)."""
+    text = tree_selection["panel_after_week_1_click"]
+    rows = text.splitlines()
+    zero_duration_row = next(row for row in rows if "zero-duration-agent" in row)
+    none_duration_row = next(row for row in rows if "code-reviewer" in row)
+    assert zero_duration_row.rstrip().endswith("0s"), (
+        f"a real duration_seconds=0 must render as '0s', not '-': {zero_duration_row!r}"
+    )
+    assert none_duration_row.rstrip().endswith("-"), (
+        f"a MISSING duration_seconds must still render as '-': {none_duration_row!r}"
     )
 
 
@@ -487,3 +575,15 @@ def test_selecting_a_different_session_replaces_the_panel_not_appends(tree_selec
     assert "week-1" not in after
     assert "Subagentes despachados" not in after
     assert before != after
+
+
+def test_session_tree_row_renders_a_real_zero_duration_as_0s_not_a_dash(tree_selection):
+    """build_session_tree's own duration_str expression (dashboard_tui.py
+    around line 300) is a SEPARATE piece of code from show_session's, with
+    its own copy of the same `duration is not None else "-"` guard - pinned
+    independently rather than assumed identical."""
+    label = tree_selection["zero_dur_leaf_label"]
+    assert label.rstrip().endswith("0s"), (
+        f"session 'zero-dur' has a real duration_seconds=0 and must render "
+        f"'0s' in its own tree row, not '-': {label!r}"
+    )
