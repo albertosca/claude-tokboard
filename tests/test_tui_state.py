@@ -18,59 +18,183 @@ press "p"), which is also the sequence the user actually hit. Both starting
 points are driven below so a regression in either branch of the fix (the
 Sessões case restores Tree focus, the Panorama case restores TrendChart
 focus) is caught.
+
+WHY THIS RUNS IN-PROCESS (2026-09-01)
+
+This file used to hand tests/tui_state_driver.py to .venv/bin/python3 and
+read a JSON result back over a pipe. That was never a test-isolation
+decision - it was a workaround for an environment split: pytest ran on the
+system interpreter, textual existed only in the repo's .venv, and neither
+could import the other. The cost was that coverage.py could not see into
+the child, so dashboard_tui.py - the repo's second-largest module - was
+excluded from measurement entirely.
+
+textual is now a declared test dependency (requirements-dev.txt) installed
+into whatever interpreter runs pytest, and the app is driven here through
+Textual's own testing API. The alternative - COVERAGE_PROCESS_START plus a
+coverage.process_startup() .pth in the venv's site-packages - was rejected
+because it is environment-level, does not travel with the repository, and
+yields ZERO coverage without erroring wherever the .pth is absent. A
+measurement that can silently return nothing is worse than a known gap.
+
+There is deliberately no METRICS_SKIP_TUI_TESTS escape hatch any more. If
+textual is missing the import below fails at collection, loudly, which is
+the only acceptable behaviour for a dependency this suite genuinely has.
 """
 
-import json
-import os
+import asyncio
 import subprocess
+import sys
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 import pytest
-from conftest import DashboardPage
 
+# lib/ holds metrics_core and the repo root holds dashboard_tui; neither is
+# installed as a package, so both are put on the path the same way the
+# production entry points do it. Every import below is therefore
+# necessarily below this line - hence the noqa: E402 on each.
 REPO_ROOT = Path(__file__).resolve().parent.parent
-VENV_PYTHON = REPO_ROOT / ".venv" / "bin" / "python3"
-DRIVER = Path(__file__).resolve().parent / "tui_state_driver.py"
+sys.path.insert(0, str(REPO_ROOT / "lib"))
+sys.path.insert(0, str(REPO_ROOT))
 
-TUI_SKIP_ENV = "METRICS_SKIP_TUI_TESTS"
+import metrics_core as mr  # noqa: E402
+import metrics_core.backfill as backfill_module  # noqa: E402
+import metrics_core.labels as labels_module  # noqa: E402
+from fixtures.build_fixture import build_fixture  # noqa: E402
+from textual.widgets import Footer, TabbedContent  # noqa: E402
 
-_INSTALL_HINT = (
-    "The TUI tests need the dashboard's own virtualenv (textual is not, and "
-    "should not be, installed on the interpreter running pytest).\n"
-    "  Create it:  scripts/setup-tui-venv.sh\n"
-    '  Skip explicitly (this is not free - nothing checks that "p" leaves the '
-    f"footer and the active tab alone):  {TUI_SKIP_ENV}=1 pytest\n"
-)
+import dashboard_tui as tui  # noqa: E402
+
+
+def isolate_tui_from_the_real_filesystem(mp: pytest.MonkeyPatch, home: Path) -> None:
+    """Point every path dashboard_tui can reach at a throwaway HOME.
+
+    The subprocess this file replaced got isolation for free by passing
+    HOME in the child's environment, before the child imported anything.
+    In-process that is not enough, and the difference is the single most
+    dangerous part of this rewrite: METRICS_FILE, SUBAGENTS_FILE,
+    TASK_LABELS_FILE, AGENT_LABELS_FILE and BACKFILL_STATE_FILE are
+    module-level constants resolved from HOME at IMPORT time, and
+    metrics_core was already imported (by conftest) long before any test
+    ran. setenv("HOME") alone would leave all five aimed at the user's
+    real ~/.claude/metrics - which other live sessions are appending to
+    right now, and which is irreplaceable. They are patched directly.
+
+    setenv("HOME") is still needed, and is the correct mechanism, for the
+    paths computed fresh at CALL time - mr.get_open_projects()'s
+    ~/.claude/sessions is the one that matters here.
+    """
+    metrics = home / ".claude" / "metrics"
+    metrics.mkdir(parents=True, exist_ok=True)
+    mp.setenv("HOME", str(home))
+    mp.setattr(mr, "METRICS_FILE", str(metrics / "sessions.jsonl"))
+    mp.setattr(mr, "SUBAGENTS_FILE", str(metrics / "subagents.jsonl"))
+    mp.setattr(labels_module, "TASK_LABELS_FILE", str(metrics / "task_labels.json"))
+    mp.setattr(labels_module, "AGENT_LABELS_FILE", str(metrics / "agent_labels.json"))
+    mp.setattr(backfill_module, "BACKFILL_STATE_FILE", str(metrics / "backfill_state.json"))
+
+    # --label-budget 0 must never reach a real `claude -p` call. Failing
+    # loudly here - the same mechanism tests/test_dashboard_html_page.py
+    # uses - turns an expensive, network-touching false green into a hard
+    # failure.
+    def fail(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError("real subprocess.run must never be called in tests")
+
+    mp.setattr(subprocess, "run", fail)
+
+
+def seeded_tui_home(mp: pytest.MonkeyPatch, home: Path) -> Path:
+    """An isolated HOME carrying the same committed eight-record fixture
+    the rest of the suite measures."""
+    isolate_tui_from_the_real_filesystem(mp, home)
+    build_fixture(str(home), datetime.now().astimezone())
+    return home
+
+
+def _state(app: Any) -> dict[str, Any]:
+    """The state report the former driver printed as JSON.
+
+    active                       TabbedContent.active id
+    focused_type                 type name of app.focused, or None
+    focused_inside_active_pane   is app.focused a descendant of the TabPane
+                                 named by `active`
+    footer_keys                  FooterKey children the Footer actually
+                                 rendered - the direct, visible proof the
+                                 footer did not stay blank
+    """
+    active = app.query_one(TabbedContent).active
+    pane = app.query_one(f"#{active}")
+    focused = app.focused
+    footer = app.query_one(Footer)
+    return {
+        "active": active,
+        "focused_type": type(focused).__name__ if focused is not None else None,
+        "focused_inside_active_pane": (focused in pane.walk_children())
+        if focused is not None
+        else False,
+        "footer_keys": len(footer.query("FooterKey")),
+    }
+
+
+async def _drive_both_cases() -> dict[str, Any]:
+    """Two cases are driven because the fix has a branch per tab:
+
+    sessions_case   presses "p" from the app's default tab (Sessões) and
+                    checks the Tree stays the focused, in-pane widget.
+    panorama_case   toggles to Panorama with "g" first, THEN presses "p" -
+                    this is the sequence the user actually hit, and the one
+                    defect 2 depended on (it did not reproduce starting
+                    from Sessões, since that is also where a fresh,
+                    un-recomposed TabbedContent already defaults to).
+    """
+    args = tui.build_arg_parser().parse_args(["--label-budget", "0"])
+
+    results: dict[str, Any] = {}
+    async with tui.MetricsTUIApp(mr, tui.load_data(args, mr=mr), args=args).run_test(
+        size=(140, 45)
+    ) as pilot:
+        app = pilot.app
+        await pilot.pause()
+        before = _state(app)
+        await pilot.press("p")
+        await pilot.pause()
+        after = _state(app)
+        results["sessions_case"] = {"active_before": before["active"], **after}
+
+    async with tui.MetricsTUIApp(mr, tui.load_data(args, mr=mr), args=args).run_test(
+        size=(140, 45)
+    ) as pilot:
+        app = pilot.app
+        await pilot.pause()
+        await pilot.press("g")
+        await pilot.pause()
+        before = _state(app)
+        await pilot.press("p")
+        await pilot.pause()
+        after = _state(app)
+        results["panorama_case"] = {"active_before": before["active"], **after}
+
+    return results
 
 
 @pytest.fixture(scope="session")
-def state_after_p(dashboard_page: DashboardPage) -> dict[str, Any]:
-    """Runs the headless driver against the same throwaway HOME the rest of
-    the suite uses, so this measures the committed fixture and never the
-    user's real data."""
-    if os.environ.get(TUI_SKIP_ENV):
-        pytest.skip(f"{TUI_SKIP_ENV} is set - the TUI is NOT being checked")
-    if not VENV_PYTHON.exists():
-        pytest.fail(f"no TUI virtualenv at {VENV_PYTHON}.\n{_INSTALL_HINT}")
+def state_after_p(tmp_path_factory: pytest.TempPathFactory) -> Any:
+    """Drives the app against a throwaway HOME seeded with the committed
+    fixture, so this measures the fixture and never the user's real data.
 
-    env = dict(os.environ, HOME=dashboard_page.home)
-    # Inherited PYTHONPATH would put the pytest interpreter's lib directory
-    # ahead of the venv's own; the driver adds what it needs to sys.path.
-    env.pop("PYTHONPATH", None)
-    result = subprocess.run(
-        [str(VENV_PYTHON), str(DRIVER)],
-        env=env,
-        cwd=REPO_ROOT,
-        capture_output=True,
-        text=True,
-        timeout=180,
-    )
-    assert result.returncode == 0, (
-        f"the TUI state driver failed ({result.returncode})\n"
-        f"stdout: {result.stdout}\nstderr: {result.stderr}"
-    )
-    return json.loads(result.stdout.strip().splitlines()[-1])  # type: ignore[no-any-return]  # subprocess stdout parses to Any; the fixture's dict[str, Any] is the documented contract
+    Session-scoped, and therefore driving its own MonkeyPatch instead of
+    the function-scoped `monkeypatch` fixture: both app runs happen once
+    and every assertion below reads the same captured report, exactly as
+    they did when one subprocess produced one JSON document.
+    """
+    mp = pytest.MonkeyPatch()
+    try:
+        seeded_tui_home(mp, tmp_path_factory.mktemp("tui-state-home"))
+        return asyncio.run(_drive_both_cases())
+    finally:
+        mp.undo()
 
 
 @pytest.mark.parametrize("case", ["sessions_case", "panorama_case"])

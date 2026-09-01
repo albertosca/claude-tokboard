@@ -1,7 +1,26 @@
+# What running the TEST SUITE needs, installed into whichever interpreter
+# runs pytest.
+#
+# Not to be confused with requirements-tui.txt, which is what an END USER
+# gets auto-provisioned into the repo's .venv by scripts/setup-tui-venv.sh
+# so that installing the plugin does not make them manage dependencies.
+# The two overlap (textual, textual-plotext) and that overlap is
+# deliberate, not duplication: shipping and testing are separate concerns
+# that happen to need the same library, and collapsing them is what
+# produced the subprocess-driver arrangement Phase 3e removed.
+
 pytest>=8.0
+pytest-cov>=5.0
+ruff>=0.6
+mypy>=1.11
 
 # The rendering tests also need Node and jsdom: run `npm install`.
 # Without them pytest FAILS rather than skipping - see tests/js_runtime.py.
-ruff>=0.6
-mypy>=1.11
-pytest-cov>=5.0
+
+# tests/test_tui_state.py and tests/test_tui_responsiveness.py import
+# dashboard_tui and drive it in-process through Textual's own testing API
+# (App.run_test). They used to shell out to .venv/bin/python3 instead,
+# which hid this requirement rather than removing it - and hid
+# dashboard_tui.py from coverage.py along with it (2026-09-01).
+textual>=8.0
+textual-plotext>=1.0
