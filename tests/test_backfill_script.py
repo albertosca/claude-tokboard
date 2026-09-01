@@ -1,5 +1,6 @@
 import argparse
 import collections
+import hashlib
 import importlib.util
 import json
 import stat
@@ -625,7 +626,13 @@ def test_main_dry_run_returns_zero_and_writes_nothing(tmp_path, script, monkeypa
     exit_code = script.main()
 
     assert exit_code == 0
-    assert "DRY RUN - nothing written" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "DRY RUN - nothing written" in out
+    # The header names the digest as sha256 and it is the operator's only
+    # record of which bytes this run read. Computed here with hashlib
+    # directly, never by calling the script's own sha256_bytes: comparing
+    # that function against itself would pass under any algorithm.
+    assert f"  sha256 {hashlib.sha256(before).hexdigest()}" in out
     assert metrics_file.read_bytes() == before
     assert not state_path.exists()
 

@@ -1,3 +1,4 @@
+import hashlib
 import json
 from pathlib import Path
 from typing import Any
@@ -54,6 +55,36 @@ def record(
         "cache_read_tokens": cache_read,
         "cache_creation_tokens": cache_creation,
     }
+
+
+# --- sha256_bytes ---------------------------------------------------------
+
+
+def test_sha256_bytes_really_is_sha256_and_not_merely_some_digest():
+    # The digest this returns is printed by the backfill script as the
+    # operator's record of exactly which bytes were read and which were
+    # written before a destructive correction. Nothing in the suite used
+    # to constrain WHICH hash produced it: swapping sha256 for sha1 left
+    # the whole suite green. The one property that must not be assumed is
+    # the algorithm, so it is pinned two independent ways, and neither
+    # calls the function under test to build its own expectation - a
+    # comparison of the function against itself passes under sha1, sha512
+    # or a constant.
+    #
+    # First, published SHA-256 test vectors (FIPS 180-4 / RFC 6234), which
+    # hold even if hashlib itself were aliased.
+    assert (
+        mr.sha256_bytes(b"") == "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    )
+    assert (
+        mr.sha256_bytes(b"abc")
+        == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+    )
+    # Second, an independently computed digest over a realistic payload,
+    # so the property is pinned for arbitrary input and not only for the
+    # two constants above.
+    payload = b'{"session_id": "s1", "input_tokens": 100}\n'
+    assert mr.sha256_bytes(payload) == hashlib.sha256(payload).hexdigest()
 
 
 # --- index_transcripts ---------------------------------------------------
