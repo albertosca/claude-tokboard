@@ -1,6 +1,10 @@
+import argparse
+import collections
 import importlib.util
 import json
 import stat
+import sys
+import tempfile
 import types
 from pathlib import Path
 
@@ -19,6 +23,35 @@ def script() -> types.ModuleType:
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def test_valid_cutoff_rejects_a_string_that_does_not_even_parse(script):
+    # Distinct from the round-trip rejection test below (a value that DOES
+    # parse but is not zero-padded): this one never parses at all, hitting
+    # strptime's own ValueError, not the strftime round-trip mismatch.
+    with pytest.raises(argparse.ArgumentTypeError, match="--cutoff must be YYYY-MM-DD"):
+        script._valid_cutoff("not-a-date")
+
+
+def test_print_summary_buckets_every_correction_factor_range(script, capsys):
+    # 1.94 sits just inside the 1.50-1.95x bucket's upper edge - close
+    # enough to the boundary that a one-line shift of it (e.g. to 1.85)
+    # would silently move this factor into the next bucket instead of
+    # merely failing to appear anywhere.
+    script.print_summary(
+        stats=collections.Counter({"corrected": 5}),
+        factors=[1.0, 1.2, 1.94, 2.0, 2.1],
+        before_total=100,
+        after_total=50,
+        changed_lines=5,
+        total_lines=10,
+    )
+    out = capsys.readouterr().out
+    assert "         1  1.00x (no duplicates)" in out
+    assert "         1  1.00-1.50x" in out
+    assert "         1  1.50-1.95x" in out
+    assert "         1  ~2.00x" in out
+    assert "         1  >2.05x" in out
 
 
 def test_write_atomically_writes_new_lines_and_preserves_mode(tmp_path, script):
@@ -55,6 +88,41 @@ def test_write_atomically_refuses_a_non_append_change(tmp_path, script):
     snapshot = path.read_bytes()
     # Something rewrote the file's beginning - not a plain append.
     path.write_bytes(b'{"a": "tampered"}\n')
+
+    with pytest.raises(RuntimeError, match="not a plain append"):
+        script.write_atomically(str(path), snapshot, [b'{"a": "corrected"}'], 0o644)
+
+
+def test_write_atomically_except_handler_tolerates_a_temp_file_already_gone(
+    tmp_path, script, monkeypatch
+):
+    # The `if temporary.exists():` guard in the except handler exists for
+    # the case where something else (another cleanup pass, a /tmp reaper)
+    # already removed the temp file before this function's own cleanup
+    # runs - unlink() on a path that is already gone would raise
+    # FileNotFoundError and mask the real error being propagated. Simulated
+    # here by unlinking the temp file the instant mkstemp hands it back
+    # (the fd stays valid on POSIX even after the directory entry is
+    # removed, so the write below still lands), then triggering the
+    # existing "not a plain append" RuntimeError to reach the handler.
+    path = tmp_path / "sessions.jsonl"
+    path.write_bytes(b'{"a": 1}\n')
+    snapshot = path.read_bytes()
+    path.write_bytes(b'{"a": "tampered"}\n')  # not a plain append
+
+    real_mkstemp = tempfile.mkstemp
+
+    def mkstemp_then_unlink(
+        suffix: str | None = None,
+        prefix: str | None = None,
+        dir: str | None = None,
+        text: bool = False,
+    ) -> tuple[int, str]:
+        handle, name = real_mkstemp(suffix=suffix, prefix=prefix, dir=dir, text=text)
+        Path(name).unlink()
+        return handle, name
+
+    monkeypatch.setattr(script.tempfile, "mkstemp", mkstemp_then_unlink)
 
     with pytest.raises(RuntimeError, match="not a plain append"):
         script.write_atomically(str(path), snapshot, [b'{"a": "corrected"}'], 0o644)
@@ -225,3 +293,376 @@ def test_main_rewrites_the_file_through_the_real_backup_and_write_path(
     assert state["corrected_rows"] == 1
     assert state["cutoff"]
     assert "applied_at" in state
+
+
+def test_main_aborts_when_no_metrics_file_exists_at_the_given_path(
+    tmp_path, script, monkeypatch, capsys
+):
+    missing = tmp_path / "does-not-exist.jsonl"
+    monkeypatch.setattr("sys.argv", ["backfill-token-dedup.py", "--metrics-file", str(missing)])
+
+    exit_code = script.main()
+
+    assert exit_code == 1
+    assert f"no metrics file at {missing}" in capsys.readouterr().err
+
+
+def test_main_aborts_on_a_line_that_is_not_valid_json(tmp_path, script, monkeypatch, capsys):
+    metrics_file = tmp_path / "sessions.jsonl"
+    metrics_file.write_text("not json at all\n")
+    projects_dir = tmp_path / "projects"
+    projects_dir.mkdir()
+
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "backfill-token-dedup.py",
+            "--metrics-file",
+            str(metrics_file),
+            "--projects-dir",
+            str(projects_dir),
+        ],
+    )
+
+    exit_code = script.main()
+
+    assert exit_code == 1
+    assert "line 1 is not valid JSON, aborting" in capsys.readouterr().err
+
+
+def test_main_aborts_when_field_verification_reports_a_problem(
+    tmp_path, script, monkeypatch, capsys
+):
+    # A row from an older schema that never wrote cache_creation_tokens at
+    # all. plan_corrections still computes a correction for it (it reads
+    # every token field with .get(field, 0)), but apply_plan's rewrite ADDS
+    # that key to the corrected copy - changing the record's key SET, which
+    # is exactly what verify_fields exists to catch before anything is
+    # written.
+    metrics_file = tmp_path / "sessions.jsonl"
+    projects_dir = tmp_path / "projects"
+    slug_dir = projects_dir / "some-project"
+    slug_dir.mkdir(parents=True)
+
+    usage = {
+        "input_tokens": 100,
+        "output_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "cache_creation_input_tokens": 0,
+    }
+    _write_transcript(
+        slug_dir / "s1.jsonl",
+        [
+            ("2026-08-01T10:00:00", "msg-1", usage),
+            ("2026-08-01T10:00:01", "msg-1", usage),  # replay
+        ],
+    )
+    metrics_file.write_text(
+        json.dumps(
+            {
+                "session_id": "s1",
+                "timestamp_end": "2026-08-01T10:00:01",
+                "input_tokens": 200,
+                "output_tokens": 0,
+                "cache_read_tokens": 0,
+                # cache_creation_tokens deliberately absent
+            }
+        )
+        + "\n"
+    )
+
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "backfill-token-dedup.py",
+            "--metrics-file",
+            str(metrics_file),
+            "--projects-dir",
+            str(projects_dir),
+        ],
+    )
+
+    exit_code = script.main()
+
+    assert exit_code == 1
+    err = capsys.readouterr().err
+    assert "FIELD VERIFICATION FAILED" in err
+    assert "key set changed" in err
+    # dry run (no --apply): the live file must be untouched either way.
+    assert "cache_creation_tokens" not in metrics_file.read_text()
+
+
+def test_main_aborts_on_a_monotonicity_regression_introduced_by_the_rewrite(
+    tmp_path, script, monkeypatch, capsys
+):
+    # Two rows of the same session, sorted by duration_seconds (the key
+    # find_nonmonotonic_sessions uses) rather than by timestamp_end (the
+    # key the correction is computed as-of). Before correction the raw
+    # values happen to be non-decreasing in duration order (150, then
+    # 200). One of the two rows (the one with the LARGER duration_seconds)
+    # gets corrected down to 100 - which is now LESS than the other row's
+    # untouched 150, introducing a decrease that was not there before.
+    metrics_file = tmp_path / "sessions.jsonl"
+    projects_dir = tmp_path / "projects"
+    slug_dir = projects_dir / "some-project"
+    slug_dir.mkdir(parents=True)
+
+    usage = {
+        "input_tokens": 100,
+        "output_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "cache_creation_input_tokens": 0,
+    }
+    usage_50 = {
+        "input_tokens": 50,
+        "output_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "cache_creation_input_tokens": 0,
+    }
+    _write_transcript(
+        slug_dir / "s1.jsonl",
+        [
+            ("2026-08-01T10:00:00", "msg-1", usage),
+            ("2026-08-01T10:00:01", "msg-1", usage),  # replay: raw-as-of(T1)=200, deduped=100
+            ("2026-08-01T10:00:02", "msg-2", usage_50),  # raw-as-of(T2)=250, deduped=150
+        ],
+    )
+    rows = [
+        {  # duration_seconds smaller -> sorts first; already correct, untouched
+            "session_id": "s1",
+            "timestamp_end": "2026-08-01T10:00:02",
+            "duration_seconds": 10,
+            "input_tokens": 150,
+            "output_tokens": 0,
+            "cache_read_tokens": 0,
+            "cache_creation_tokens": 0,
+        },
+        {  # duration_seconds larger -> sorts second; stored = raw, gets corrected to 100
+            "session_id": "s1",
+            "timestamp_end": "2026-08-01T10:00:01",
+            "duration_seconds": 100,
+            "input_tokens": 200,
+            "output_tokens": 0,
+            "cache_read_tokens": 0,
+            "cache_creation_tokens": 0,
+        },
+    ]
+    metrics_file.write_text("".join(json.dumps(row) + "\n" for row in rows))
+
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "backfill-token-dedup.py",
+            "--metrics-file",
+            str(metrics_file),
+            "--projects-dir",
+            str(projects_dir),
+        ],
+    )
+
+    exit_code = script.main()
+
+    assert exit_code == 1
+    err = capsys.readouterr().err
+    assert "MONOTONICITY REGRESSION in ['s1']" in err
+
+
+def test_main_dry_run_returns_zero_and_writes_nothing(tmp_path, script, monkeypatch, capsys):
+    metrics_file = tmp_path / "sessions.jsonl"
+    projects_dir = tmp_path / "projects"
+    projects_dir.mkdir()
+    state_path = tmp_path / "backfill_state.json"
+    metrics_file.write_text(
+        json.dumps(
+            {
+                "session_id": "s1",
+                "timestamp_end": "2026-08-01T00:00:00",
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "cache_read_tokens": 0,
+                "cache_creation_tokens": 0,
+            }
+        )
+        + "\n"
+    )
+    before = metrics_file.read_bytes()
+
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "backfill-token-dedup.py",
+            "--metrics-file",
+            str(metrics_file),
+            "--projects-dir",
+            str(projects_dir),
+            "--state-file",
+            str(state_path),
+        ],
+    )
+
+    exit_code = script.main()
+
+    assert exit_code == 0
+    assert "DRY RUN - nothing written" in capsys.readouterr().out
+    assert metrics_file.read_bytes() == before
+    assert not state_path.exists()
+
+
+def test_main_aborts_when_the_backup_does_not_verify(tmp_path, script, monkeypatch, capsys):
+    metrics_file = tmp_path / "sessions.jsonl"
+    projects_dir = tmp_path / "projects"
+    slug_dir = projects_dir / "some-project"
+    slug_dir.mkdir(parents=True)
+    backup_dir = tmp_path / "backups"
+    state_path = tmp_path / "backfill_state.json"
+
+    usage = {
+        "input_tokens": 100,
+        "output_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "cache_creation_input_tokens": 0,
+    }
+    _write_transcript(
+        slug_dir / "s1.jsonl",
+        [
+            ("2026-08-01T10:00:00", "msg-1", usage),
+            ("2026-08-01T10:00:01", "msg-1", usage),  # replay
+        ],
+    )
+    metrics_file.write_text(
+        json.dumps(
+            {
+                "session_id": "s1",
+                "timestamp_end": "2026-08-01T10:00:01",
+                "input_tokens": 200,
+                "output_tokens": 0,
+                "cache_read_tokens": 0,
+                "cache_creation_tokens": 0,
+            }
+        )
+        + "\n"
+    )
+
+    # Fake a corrupted-copy race: sha256_of is a seam imported straight into
+    # this module's namespace, so patching it here (never the real repo
+    # source) makes the source and backup hash differently despite
+    # shutil.copy2 having copied the bytes faithfully - the exact situation
+    # this check exists to catch.
+    monkeypatch.setattr(script, "sha256_of", lambda path: f"hash-of-{path}")
+
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "backfill-token-dedup.py",
+            "--metrics-file",
+            str(metrics_file),
+            "--projects-dir",
+            str(projects_dir),
+            "--backup-dir",
+            str(backup_dir),
+            "--apply",
+            "--state-file",
+            str(state_path),
+        ],
+    )
+
+    exit_code = script.main()
+
+    assert exit_code == 1
+    assert "BACKUP VERIFICATION FAILED" in capsys.readouterr().err
+    # aborted before any backfill state was recorded
+    assert not state_path.exists()
+
+
+def test_main_aborts_on_a_written_line_count_mismatch(tmp_path, script, monkeypatch, capsys):
+    metrics_file = tmp_path / "sessions.jsonl"
+    projects_dir = tmp_path / "projects"
+    slug_dir = projects_dir / "some-project"
+    slug_dir.mkdir(parents=True)
+    backup_dir = tmp_path / "backups"
+    state_path = tmp_path / "backfill_state.json"
+
+    usage = {
+        "input_tokens": 100,
+        "output_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "cache_creation_input_tokens": 0,
+    }
+    _write_transcript(
+        slug_dir / "s1.jsonl",
+        [
+            ("2026-08-01T10:00:00", "msg-1", usage),
+            ("2026-08-01T10:00:01", "msg-1", usage),  # replay
+        ],
+    )
+    metrics_file.write_text(
+        json.dumps(
+            {
+                "session_id": "s1",
+                "timestamp_end": "2026-08-01T10:00:01",
+                "input_tokens": 200,
+                "output_tokens": 0,
+                "cache_read_tokens": 0,
+                "cache_creation_tokens": 0,
+            }
+        )
+        + "\n"
+    )
+
+    # write_atomically itself is a proven seam (covered directly above);
+    # here it is left to do the real write, only its returned "appended"
+    # count is corrupted, so the expected/actual line-count arithmetic in
+    # main() disagrees exactly the way a lost or duplicated write would.
+    real_write_atomically = script.write_atomically
+
+    def lying_write_atomically(*args: object, **kwargs: object) -> int:
+        real_write_atomically(*args, **kwargs)
+        return 999
+
+    monkeypatch.setattr(script, "write_atomically", lying_write_atomically)
+
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "backfill-token-dedup.py",
+            "--metrics-file",
+            str(metrics_file),
+            "--projects-dir",
+            str(projects_dir),
+            "--backup-dir",
+            str(backup_dir),
+            "--apply",
+            "--state-file",
+            str(state_path),
+        ],
+    )
+
+    exit_code = script.main()
+
+    assert exit_code == 1
+    assert "LINE COUNT MISMATCH: expected 1000, got 1" in capsys.readouterr().err
+    assert not state_path.exists()
+
+
+def test_module_guard_calls_main_and_exits_with_its_return_code(tmp_path, monkeypatch):
+    # `if __name__ == "__main__": sys.exit(main())` is never exercised by
+    # loading this module under any other name, including the shared
+    # `script` fixture. Re-loading it with __name__ pre-set to "__main__"
+    # runs the real file - so this test drives argv at a metrics file
+    # under tmp_path that does not exist, which makes main() take its very
+    # first abort branch (no metrics file at the given path) before it
+    # touches anything else. This is safe: it can never reach the real
+    # ~/.claude/metrics/sessions.jsonl default, because a value is always
+    # supplied for --metrics-file.
+    missing = tmp_path / "does-not-exist.jsonl"
+    monkeypatch.setattr(sys, "argv", ["backfill-token-dedup.py", "--metrics-file", str(missing)])
+
+    spec = importlib.util.spec_from_file_location("__main__", SCRIPT_PATH)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+
+    with pytest.raises(SystemExit) as excinfo:
+        spec.loader.exec_module(module)
+
+    assert excinfo.value.code == 1

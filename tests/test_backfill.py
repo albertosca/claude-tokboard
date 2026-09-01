@@ -56,7 +56,62 @@ def record(
     }
 
 
+# --- index_transcripts ---------------------------------------------------
+
+
+def test_index_transcripts_a_size_tie_does_not_replace_the_first_file_seen(tmp_path):
+    projects_dir = tmp_path / "projects"
+    slug_a = projects_dir / "proj-a"
+    slug_b = projects_dir / "proj-b"
+    slug_a.mkdir(parents=True)
+    slug_b.mkdir(parents=True)
+    (slug_a / "s1.jsonl").write_text("x" * 10)
+    (slug_b / "s1.jsonl").write_text("y" * 10)  # same size, same session id
+
+    # Path.glob's iteration order is a filesystem detail, not something this
+    # test should assume - so it is discovered independently rather than
+    # guessed. Whichever file glob visits FIRST is the one a correct `>`
+    # comparison must keep: the same-size second file must lose the tie.
+    first_visited = str(next(Path(projects_dir).glob("*/*.jsonl")))
+
+    index = mr.index_transcripts(str(projects_dir))
+    assert index["s1"] == first_visited
+
+
 # --- scan_transcript / build_prefix_sums / as_of ---------------------------
+
+
+def test_scan_transcript_skips_blank_malformed_and_non_assistant_lines(tmp_path):
+    path = tmp_path / "t.jsonl"
+    with path.open("w") as f:
+        f.write("\n")  # blank line
+        f.write("not json at all\n")  # malformed JSON
+        f.write(json.dumps({"type": "user", "timestamp": "x", "message": {}}) + "\n")
+        f.write(
+            json.dumps(
+                {
+                    "type": "assistant",
+                    "timestamp": "2026-08-01T10:00:00",
+                    "message": {"id": "msg-1", "usage": usage(input_tokens=5)},
+                }
+            )
+            + "\n"
+        )
+    timeline = mr.scan_transcript(str(path))
+    assert timeline == [("2026-08-01T10:00:00", False, (5, 0, 0, 0))]
+
+
+def test_scan_transcript_never_flags_entries_with_no_message_id_as_duplicates(tmp_path):
+    path = tmp_path / "t.jsonl"
+    write_transcript(
+        path,
+        [
+            ("2026-08-01T10:00:00", None, usage(input_tokens=10)),
+            ("2026-08-01T10:00:01", None, usage(input_tokens=10)),
+        ],
+    )
+    timeline = mr.scan_transcript(str(path))
+    assert [is_dup for _, is_dup, _ in timeline] == [False, False]
 
 
 def test_scan_transcript_flags_a_repeated_message_id_in_file_order(tmp_path):
@@ -145,6 +200,19 @@ def test_plan_corrections_skips_the_whole_session_when_any_row_spans_the_cutoff(
     assert stats["untouched: session spans the cutoff"] == 2
 
 
+def test_plan_corrections_treats_a_row_exactly_on_the_cutoff_as_spanning_it(tmp_path):
+    # DEFAULT_CUTOFF's own docstring says rows written "on or after" the
+    # cutoff are left alone - so a row whose timestamp_end equals the
+    # cutoff exactly must disqualify the session too, not just rows
+    # strictly past it.
+    path = tmp_path / "s1.jsonl"
+    write_transcript(path, [("2026-08-01T10:00:00", "msg-1", usage(input_tokens=100))])
+    records = [record("s1", "2026-08-13", 100, 0)]  # timestamp_end == cutoff, exactly
+    plan, stats, _factors = mr.plan_corrections(records, {"s1": str(path)}, cutoff="2026-08-13")
+    assert plan == {}
+    assert stats["untouched: session spans the cutoff"] == 1
+
+
 def test_plan_corrections_refuses_a_row_that_would_increase_a_field(tmp_path):
     path = tmp_path / "s1.jsonl"
     write_transcript(
@@ -222,6 +290,32 @@ def test_plan_corrections_refuses_a_row_matching_neither_formula(tmp_path):
     assert stats["untouched: session has a row matching neither formula"] == 1
 
 
+def test_plan_corrections_skips_the_factor_when_the_correction_is_to_zero(tmp_path):
+    # A replayed turn keeps its ORIGINAL timestamp (see scan_transcript's
+    # docstring), so file order and timestamp order can disagree: here
+    # msg-1 appears first in the FILE at the LATER timestamp (not a
+    # duplicate yet) and second in the file at the EARLIER timestamp (now
+    # flagged a duplicate). Sorted by timestamp for the prefix sums, the
+    # earlier moment is therefore a duplicate and contributes nothing to
+    # the deduped total - so the deduped-as-of-that-moment total is zero,
+    # while the raw hook still logged 100. That makes the correction
+    # target itself zero, without any refusal: exactly the `if after:`
+    # guard's reason to exist.
+    path = tmp_path / "s1.jsonl"
+    write_transcript(
+        path,
+        [
+            ("2026-08-01T10:00:05", "msg-1", usage(input_tokens=100)),  # later ts, first in file
+            ("2026-08-01T10:00:00", "msg-1", usage(input_tokens=100)),  # earlier ts, replay
+        ],
+    )
+    records = [record("s1", "2026-08-01T10:00:00", 100, 0)]  # stored = raw-as-of the earlier moment
+    plan, stats, factors = mr.plan_corrections(records, {"s1": str(path)}, cutoff="2026-08-13")
+    assert plan == {0: [0, 0, 0, 0]}
+    assert stats["corrected"] == 1
+    assert factors == []
+
+
 # --- find_nonmonotonic_sessions -----------------------------------------
 
 
@@ -239,6 +333,60 @@ def test_find_nonmonotonic_sessions_ignores_a_non_decreasing_series():
         dict(record("s1", "x", 150, 0), duration_seconds=20),
     ]
     assert mr.find_nonmonotonic_sessions(records) == set()
+
+
+# --- daily_totals ---------------------------------------------------------
+
+
+def test_daily_totals_skips_a_delta_with_no_timestamp(tmp_path):
+    records = [
+        {  # no timestamp_end and no timestamp_start: the delta this expands
+            # to carries no timestamp at all and must be dropped, not crash.
+            "session_id": "s-no-ts",
+            "duration_seconds": 0,
+            "input_tokens": 999,
+            "output_tokens": 0,
+            "cache_read_tokens": 0,
+            "cache_creation_tokens": 0,
+        },
+        {
+            "session_id": "s-ok",
+            "duration_seconds": 0,
+            "timestamp_end": "2026-08-01T10:00:00",
+            "input_tokens": 7,
+            "output_tokens": 0,
+            "cache_read_tokens": 0,
+            "cache_creation_tokens": 0,
+        },
+    ]
+    result = mr.daily_totals(records, days=3)
+    assert result == [("2026-08-01", 7)]  # the 999 never shows up anywhere
+
+
+def test_daily_totals_keeps_every_day_when_days_is_falsy():
+    records = [
+        {
+            "session_id": "s1",
+            "duration_seconds": 0,
+            "timestamp_end": "2026-08-01T10:00:00",
+            "input_tokens": 3,
+            "output_tokens": 0,
+            "cache_read_tokens": 0,
+            "cache_creation_tokens": 0,
+        },
+        {
+            "session_id": "s1",
+            "duration_seconds": 10,
+            "timestamp_end": "2026-08-02T10:00:00",
+            "input_tokens": 4,
+            "output_tokens": 0,
+            "cache_read_tokens": 0,
+            "cache_creation_tokens": 0,
+        },
+    ]
+    result = mr.daily_totals(records, days=None)
+    # both days present, unsliced - the second snapshot's delta is 4-3=1.
+    assert result == [("2026-08-01", 3), ("2026-08-02", 1)]
 
 
 # --- apply_plan / verify_fields -----------------------------------------
@@ -281,6 +429,32 @@ def test_verify_fields_catches_a_non_token_field_change():
     problems = mr.verify_fields(before, after)
     assert len(problems) == 1
     assert "session_id changed" in problems[0]
+
+
+def test_verify_fields_flags_a_record_count_change():
+    before = [record("s1", "x", 100, 0)]
+    after: list[dict[str, Any]] = []
+    problems = mr.verify_fields(before, after)
+    assert problems == ["record count changed: 1 -> 0"]
+
+
+def test_verify_fields_flags_a_key_set_change():
+    # Distinct from the value-change case above: here the SET of keys
+    # itself differs (an extra field was added), which must be caught
+    # before ever comparing individual values.
+    before = [record("s1", "x", 100, 0)]
+    after = [dict(record("s1", "x", 100, 0), extra_field="unexpected")]
+    problems = mr.verify_fields(before, after)
+    assert problems == ["line 1: key set changed"]
+
+
+def test_verify_fields_flags_a_key_order_change_with_the_same_key_set():
+    # Distinct from the key-SET case above: the two dicts share the exact
+    # same keys, only their insertion order differs.
+    before = [{"session_id": "s1", "input_tokens": 100, "output_tokens": 0}]
+    after = [{"output_tokens": 0, "session_id": "s1", "input_tokens": 100}]
+    problems = mr.verify_fields(before, after)
+    assert problems == ["line 1: key order changed"]
 
 
 # --- backfill state file ------------------------------------------------
