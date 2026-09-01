@@ -363,6 +363,34 @@ def test_daily_totals_skips_a_delta_with_no_timestamp(tmp_path):
     assert result == [("2026-08-01", 7)]  # the 999 never shows up anywhere
 
 
+def test_daily_totals_returns_exactly_the_last_n_days_when_days_truncates():
+    # The `days` slice is the whole point of the parameter, and neither of
+    # the neighbouring tests can see its width: one passes days=3 against
+    # data that yields a SINGLE day (where [-3:] and [-4:] are the same
+    # list) and the other passes days=None and never reaches the slice.
+    # Five distinct days against days=3 is the smallest shape where an
+    # off-by-one in either direction changes the answer - [-2:] drops
+    # 08-03, [-4:] keeps 08-02.
+    records = [
+        {
+            "session_id": f"s{n}",  # one snapshot each, so each delta is its own total
+            "duration_seconds": 0,
+            "timestamp_end": f"2026-08-0{n}T10:00:00",
+            "input_tokens": n,
+            "output_tokens": 0,
+            "cache_read_tokens": 0,
+            "cache_creation_tokens": 0,
+        }
+        for n in range(1, 6)
+    ]
+
+    assert mr.daily_totals(records, days=3) == [
+        ("2026-08-03", 3),
+        ("2026-08-04", 4),
+        ("2026-08-05", 5),
+    ]
+
+
 def test_daily_totals_keeps_every_day_when_days_is_falsy():
     records = [
         {
