@@ -458,6 +458,26 @@ def test_parse_transcript_duration_is_difference_of_first_and_last_timestamp(scr
     assert parsed["duration_seconds"] == 90.0
 
 
+def test_parse_transcript_single_timestamped_entry_sets_end_equal_to_start(script, tmp_path):
+    # A session that logs exactly one entry before dying is exactly what
+    # reaches this hook on Stop for a very short-lived session. timestamp_end
+    # is not just a duration input: filter_sessions_by_window uses it to
+    # decide which period a session belongs to, so a None here silently
+    # drops the whole record out of every period view rather than just
+    # reporting a different duration. Assert on timestamp_end specifically -
+    # a test that only checked duration_seconds would still pass under a
+    # mutation that breaks this field while leaving the duration arithmetic
+    # intact.
+    path = tmp_path / "t.jsonl"
+    _write_lines(path, [json.dumps({"type": "user", "timestamp": "2026-01-01T00:00:00+00:00"})])
+
+    parsed = script.parse_transcript(str(path))
+
+    assert parsed["timestamp_end"] == "2026-01-01T00:00:00+00:00"
+    assert parsed["timestamp_start"] == parsed["timestamp_end"]
+    assert parsed["duration_seconds"] == 0.0
+
+
 def test_parse_transcript_duration_is_none_when_no_timestamps_present(script, tmp_path):
     path = tmp_path / "t.jsonl"
     _write_lines(path, [json.dumps({"type": "user"})])
