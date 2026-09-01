@@ -1186,5 +1186,5 @@ def main() -> None:
     print(format_summary(records))
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover - true only when run as a script, not under pytest
     main()
