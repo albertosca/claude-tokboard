@@ -1079,13 +1079,25 @@ def main() -> None:
         # a label another duplicate of the same session could have
         # produced. Falls back to first-seen only when no duplicate has a
         # usable source.
+        #
+        # DEAD BY DRIFT (found 2026-08-31, coverage-phase3c Task 4, confirmed
+        # by mutation testing): the `existing is not None` arm below cannot
+        # execute today. 77f49d5 (2026-07-18) added this source-bearing-
+        # duplicate preference when subagent_records had NO dedup upstream -
+        # correct at the time. 328d5d6 (2026-07-21), three days later, added
+        # dedupe_subagents UPSTREAM of this exact loop, which already
+        # guarantees one record per agent_id before it runs - so `existing`
+        # is always None the one time each key is seen. Kept, not deleted:
+        # the clause becomes necessary again the moment the upstream dedup
+        # is removed or reordered, and deleting it now would plant that
+        # regression back silently. See docs/superpowers/BACKLOG.md.
         unique_agents: dict[Any, dict[str, Any]] = {}
         for subagent in subagent_records:
             key = subagent.get("agent_id")
             if key is None:
                 continue
             existing = unique_agents.get(key)
-            if existing is None or (
+            if existing is None or (  # pragma: no cover - unreachable, see comment above
                 not existing.get("agent_transcript_path") and subagent.get("agent_transcript_path")
             ):
                 unique_agents[key] = subagent
@@ -1135,13 +1147,20 @@ def main() -> None:
         mr.fold_subagent_tokens_into_sessions(all_time_records, subagent_records)
 
         label_cache = mr.load_label_cache()
+        # Same source-bearing-duplicate preference, same dead-by-drift arm as
+        # unique_agents above: 77f49d5 (2026-07-18) added it when `records`
+        # had no dedup upstream; 328d5d6 (2026-07-21) added dedupe_sessions
+        # upstream of this loop three days later, guaranteeing one record
+        # per session_id before it runs - so `existing` is always None here
+        # too. Kept for the same reason (a future upstream reorder would
+        # need it back). See docs/superpowers/BACKLOG.md.
         unique_sessions: dict[Any, dict[str, Any]] = {}
         for record in records:
             key = record.get("session_id")
             if key is None:
                 continue
             existing = unique_sessions.get(key)
-            if existing is None or (
+            if existing is None or (  # pragma: no cover - unreachable, see comment above
                 not (existing.get("internal_name") or existing.get("transcript_path"))
                 and (record.get("internal_name") or record.get("transcript_path"))
             ):

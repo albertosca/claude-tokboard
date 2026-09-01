@@ -377,7 +377,7 @@ def test_render_html_counts_only_nonzero_token_subagents_and_defaults_to_no_suba
     }
     badge_with = rows["row-has-subs"].find_all("span", "subagent-col")[0].text()
     badge_without = rows["row-no-subs"].find_all("span", "subagent-col")[0].text()
-    # subagent_badge = f"{ROBOT_EMOJI}{subagent_count}" if subagent_count else ""
+    # render_session_row: subagent_badge = f"🤖{subagent_count}" if subagent_count else ""
     assert badge_with == "🤖1"
     assert badge_without == ""
 
@@ -653,7 +653,7 @@ def test_main_saves_label_caches_at_exactly_the_save_every_boundary(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     # Found by the unnamed-mutation sweep: test_main_saves_label_caches_
-    # periodically_during_a_large_batch above only asserted the dashboard
+    # periodically_during_a_large_batch below only asserted the dashboard
     # got written, not WHEN the periodic save happened - an off-by-one on
     # `i % SAVE_EVERY == 0` (SAVE_EVERY == 10) survived the whole suite.
     # main()'s own comment: the cache is saved every SAVE_EVERY completions
@@ -749,7 +749,12 @@ def test_main_skips_subagent_and_session_records_with_no_id(
 
     _run_main(monkeypatch, ["--html", "--label-budget", "0"])
     out = capsys.readouterr().out.strip()
-    assert Path(out).read_text().startswith("<!DOCTYPE html>")
+    html_out = Path(out).read_text()
+    assert html_out.startswith("<!DOCTYPE html>")
+    # Not raising is necessary but not sufficient - confirm the well-formed
+    # record among the malformed ones actually made it into the page rather
+    # than the guard accidentally skipping it too.
+    assert 'id="row-s1"' in html_out
 
 
 def test_main_saves_label_caches_periodically_during_a_large_batch(
