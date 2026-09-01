@@ -70,6 +70,7 @@ module = [
     "test_records",
     "test_tui_responsiveness",
     "test_tui_state",
+    "test_verify_detectors",
     "tui_latency_driver",
     "tui_state_driver",
 ]

@@ -75,8 +75,13 @@ def sha256(path: Path) -> str:
 
 def clear_pycache() -> None:
     for cache_dir in REPO_ROOT.rglob("__pycache__"):
-        if ".claude" in cache_dir.parts:
-            continue  # leave any unrelated worktree scratch alone
+        # Skip decisions are relative to REPO_ROOT, not its absolute parts:
+        # this project's own convention puts worktrees under
+        # .claude/worktrees/<name>/, so REPO_ROOT itself may contain
+        # ".claude" while still being the root we are meant to clean. Only
+        # a NESTED .claude/ subtree below REPO_ROOT is unrelated scratch.
+        if ".claude" in cache_dir.relative_to(REPO_ROOT).parts:
+            continue  # leave any nested worktree scratch alone
         shutil.rmtree(cache_dir, ignore_errors=True)
 
 
