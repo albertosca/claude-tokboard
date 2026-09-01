@@ -522,6 +522,9 @@ def test_main_detects_a_defect_and_returns_zero_when_everything_verifies(
     captured = capsys.readouterr()
     assert "=> DETECTED" in captured.out
     assert "MISSING EVIDENCE" not in captured.out
+    # The banner is the run's only record of WHICH edit produced the
+    # result below it; without it a DETECTED verdict names no injection.
+    assert "patch applied:\n  - ANCHOR\n  + REPLACED\n" in captured.out
     assert "Both defects DETECTED" in captured.out
     assert suite.calls == 1
     # The target was really patched and really restored, by this run.
