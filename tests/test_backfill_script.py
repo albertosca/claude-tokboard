@@ -33,6 +33,62 @@ def test_valid_cutoff_rejects_a_string_that_does_not_even_parse(script):
         script._valid_cutoff("not-a-date")
 
 
+def _day_record(session_id: str, day: str, tokens: int) -> dict[str, object]:
+    """One snapshot for a session that has exactly one, so the delta
+    expand_records_to_daily_deltas produces is the row's own token total,
+    dated by its timestamp_end."""
+    return {
+        "session_id": session_id,
+        "duration_seconds": 0,
+        "timestamp_end": f"{day}T10:00:00",
+        "input_tokens": tokens,
+        "output_tokens": 0,
+        "cache_read_tokens": 0,
+        "cache_creation_tokens": 0,
+    }
+
+
+def test_print_daily_comparison_renders_the_whole_table_and_every_factor_state(script, capsys):
+    # This is the report an operator reads before authorising a destructive
+    # backfill against real metrics history, and its last line is a
+    # data-loss detector. It was reachable at 100% coverage with nothing
+    # asserted on it at all, so the entire body could be deleted in
+    # silence. Pinning the rendered block verbatim - header, one row per
+    # day, and the collapsed-days line - is what makes that impossible.
+    #
+    # The three days are chosen to cover all three states of the `factor`
+    # column, which is a single ternary and therefore untestable one state
+    # at a time from a real dataset:
+    #   08-01  after non-zero -> the real before/after ratio
+    #   08-02  after zero, before non-zero -> COLLAPSED (data would vanish)
+    #   08-03  both zero -> "-" (nothing to compare)
+    before = [
+        _day_record("s1", "2026-08-01", 2000),
+        _day_record("s2", "2026-08-02", 500),
+        _day_record("s3", "2026-08-03", 0),
+    ]
+    after = [
+        _day_record("s1", "2026-08-01", 1000),
+        _day_record("s2", "2026-08-02", 0),
+        _day_record("s3", "2026-08-03", 0),
+    ]
+
+    script.print_daily_comparison(before, after, 15)
+
+    out = capsys.readouterr().out
+    assert out.splitlines() == [
+        "",
+        "Per-day token totals via expand_records_to_daily_deltas (last 15 days)",
+        "  day                     before             after    factor",
+        # 2000/1000 - the ratio is before/after, so a correction that halves
+        # a day reads as 2.000x, never 0.500x.
+        "  2026-08-01               2,000             1,000    2.000x",
+        "  2026-08-02                 500                 0 COLLAPSED",
+        "  2026-08-03                   0                 0         -",
+        "  days that collapsed to zero: 1 ['2026-08-02']",
+    ]
+
+
 def test_print_summary_pins_every_bucket_boundary_on_both_sides(script, capsys):
     # The histogram has FOUR boundaries (1.001, 1.5, 1.95, 2.05), every
     # comparison a strict `<`. Each one gets a factor strictly BELOW it
@@ -70,6 +126,54 @@ def test_print_summary_pins_every_bucket_boundary_on_both_sides(script, capsys):
     out = capsys.readouterr().out
     for bucket, count in expected_counts.items():
         assert f"    {count:>6}  {bucket}" in out, f"expected {count} in {bucket!r} - got:\n{out}"
+
+
+def test_print_summary_pins_every_line_it_prints_not_only_the_histogram(script, capsys):
+    # Companion to the bucket-boundary test above, which asserts only the
+    # five histogram lines and therefore leaves the rest of the function
+    # free to print anything. Everything else print_summary emits is
+    # decision-grade: the percentile line is what an operator reads to
+    # judge whether the correction is sane, and "inflation removed" is the
+    # headline figure. So this pins the WHOLE rendered block, in order.
+    #
+    # The inputs are chosen so each output can only come out right one way:
+    #   - three dispositions with DISTINCT counts, passed in a Counter
+    #     whose natural order is not the sorted one, so the `-kv[1]`
+    #     descending sort is observable rather than incidental;
+    #   - SIX factors, so `int(6 * 0.25) == 1` and `round(6 * 0.25) == 2`
+    #     select different elements (1.200x vs 1.300x) - p25 is the only
+    #     percentile of the three where truncation and rounding disagree;
+    #   - factors passed UNSORTED, so the internal sort is what makes
+    #     min/max come out at the ends;
+    #   - before 1000 / after 400, an asymmetric pair, so before/after
+    #     (2.500x) is distinguishable from after/before, and printing
+    #     either total twice in the grand-total line is visible.
+    script.print_summary(
+        stats=collections.Counter(
+            {"corrected": 6, "skipped: row after cutoff": 2, "skipped: no transcript": 1}
+        ),
+        factors=[1.40, 1.10, 1.60, 1.30, 1.20, 1.50],
+        before_total=1000,
+        after_total=400,
+        changed_lines=6,
+        total_lines=10,
+    )
+    assert capsys.readouterr().out.splitlines() == [
+        "",
+        "Row disposition",
+        "       6  corrected",
+        "       2  skipped: row after cutoff",
+        "       1  skipped: no transcript",
+        "",
+        "Lines: 10 read, 6 would change",
+        "Correction factor (stored / recomputed) over corrected rows:",
+        "  min 1.100x  p25 1.200x  median 1.400x  p75 1.500x  max 1.600x",
+        "         4  1.00-1.50x",
+        "         2  1.50-1.95x",
+        "",
+        "Grand total tokens: before 1,000  after 400",
+        "  overall inflation removed: 2.500x (600 tokens)",
+    ]
 
 
 def test_write_atomically_writes_new_lines_and_preserves_mode(tmp_path, script):
