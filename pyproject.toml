@@ -114,6 +114,7 @@ module = [
     "test_tui_clicks",
     "test_tui_responsiveness",
     "test_tui_state",
+    "test_tui_unbound",
     "test_verify_detectors",
 ]
 disallow_untyped_defs = false
