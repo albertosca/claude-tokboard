@@ -1,0 +1,707 @@
+"""Tests for hooks/metrics-log.py.
+
+DANGER: this module's METRICS_DIR/METRICS_FILE constants resolve at import
+time to Alberto's real, irreplaceable metrics history
+(~/.claude/metrics/sessions.jsonl - roughly 8,000 records going back
+months, and actively appended to by other running Claude sessions).
+monkeypatch.setenv("HOME", ...) does NOT redirect them, since they are
+already-resolved Path objects on the module object by the time any test
+runs. Every test in this file that can write MUST monkeypatch.setattr both
+METRICS_DIR and METRICS_FILE on the loaded `script` module before calling
+anything that appends. Never point those constants at anything under
+~/.claude/.
+"""
+
+import importlib.util
+import io
+import json
+import stat
+import subprocess
+import sys
+import types
+from pathlib import Path
+
+import pytest
+
+SCRIPT_PATH = Path(__file__).resolve().parent.parent / "hooks" / "metrics-log.py"
+
+
+@pytest.fixture(scope="module")
+def script() -> types.ModuleType:
+    # The filename has a hyphen, so it cannot be imported with a normal
+    # `import` statement - load it as a module by path instead.
+    spec = importlib.util.spec_from_file_location("metrics_log_hook", SCRIPT_PATH)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _isolate_metrics(
+    monkeypatch: pytest.MonkeyPatch, script: types.ModuleType, tmp_path: Path
+) -> Path:
+    """Redirect METRICS_DIR/METRICS_FILE to a throwaway location under
+    tmp_path. Must be called by every test that can reach append_record."""
+    metrics_dir = tmp_path / "metrics"
+    metrics_file = metrics_dir / "sessions.jsonl"
+    monkeypatch.setattr(script, "METRICS_DIR", metrics_dir)
+    monkeypatch.setattr(script, "METRICS_FILE", metrics_file)
+    return metrics_file
+
+
+def _write_lines(path: Path, lines: list[str]) -> None:
+    path.write_text("\n".join(lines) + "\n")
+
+
+# ---------------------------------------------------------------------------
+# get_tmux_window
+# ---------------------------------------------------------------------------
+
+
+def test_get_tmux_window_returns_none_without_tmux_env(script, monkeypatch):
+    monkeypatch.delenv("TMUX", raising=False)
+
+    assert script.get_tmux_window() is None
+
+
+def test_get_tmux_window_returns_stripped_name_on_success(script, monkeypatch):
+    monkeypatch.setenv("TMUX", "/tmp/tmux-1000/default,1234,0")
+
+    def fake_run(*args, **kwargs):
+        return subprocess.CompletedProcess(args, 0, stdout="  my-window  \n", stderr="")
+
+    monkeypatch.setattr(script.subprocess, "run", fake_run)
+
+    assert script.get_tmux_window() == "my-window"
+
+
+def test_get_tmux_window_returns_none_for_whitespace_only_output(script, monkeypatch):
+    monkeypatch.setenv("TMUX", "/tmp/tmux-1000/default,1234,0")
+
+    def fake_run(*args, **kwargs):
+        return subprocess.CompletedProcess(args, 0, stdout="   \n", stderr="")
+
+    monkeypatch.setattr(script.subprocess, "run", fake_run)
+
+    assert script.get_tmux_window() is None
+
+
+def test_get_tmux_window_returns_none_when_subprocess_raises(script, monkeypatch):
+    monkeypatch.setenv("TMUX", "/tmp/tmux-1000/default,1234,0")
+
+    def fake_run(*args, **kwargs):
+        raise OSError("tmux not found")
+
+    monkeypatch.setattr(script.subprocess, "run", fake_run)
+
+    assert script.get_tmux_window() is None
+
+
+# ---------------------------------------------------------------------------
+# get_internal_name
+# ---------------------------------------------------------------------------
+
+
+def test_get_internal_name_returns_none_for_falsy_session_id(script, tmp_path):
+    assert script.get_internal_name(None, tmp_path) is None
+    assert script.get_internal_name("", tmp_path) is None
+
+
+def test_get_internal_name_defaults_sessions_dir_to_the_real_claude_sessions_path(script):
+    # sessions_dir is optional; when omitted it must default to
+    # ~/.claude/sessions. This only *reads* that directory (glob + json.load
+    # on whatever real session files exist, if any) - it never writes
+    # anything, so it is safe to exercise against the real path. A session
+    # id that cannot plausibly exist keeps the result deterministic
+    # regardless of what real sessions happen to be on this machine.
+    assert script.get_internal_name("definitely-not-a-real-session-id-000") is None
+
+
+def test_get_internal_name_finds_match_via_ppid_file_first(script, tmp_path, monkeypatch):
+    sessions_dir = tmp_path / "sessions"
+    sessions_dir.mkdir()
+    monkeypatch.setattr(script.os, "getppid", lambda: 4242)
+    (sessions_dir / "4242.json").write_text(
+        json.dumps({"sessionId": "target", "nameSource": None, "name": "from-ppid"})
+    )
+
+    assert script.get_internal_name("target", sessions_dir) == "from-ppid"
+
+
+def test_get_internal_name_falls_through_to_glob_when_ppid_file_missing(
+    script, tmp_path, monkeypatch
+):
+    sessions_dir = tmp_path / "sessions"
+    sessions_dir.mkdir()
+    monkeypatch.setattr(script.os, "getppid", lambda: 999999)  # no such file
+    (sessions_dir / "other.json").write_text(
+        json.dumps({"sessionId": "target", "nameSource": None, "name": "from-glob"})
+    )
+
+    assert script.get_internal_name("target", sessions_dir) == "from-glob"
+
+
+def test_get_internal_name_skips_unparseable_json_without_crashing(script, tmp_path, monkeypatch):
+    sessions_dir = tmp_path / "sessions"
+    sessions_dir.mkdir()
+    monkeypatch.setattr(script.os, "getppid", lambda: 999999)
+    (sessions_dir / "broken.json").write_text("not valid json{{{")
+
+    assert script.get_internal_name("target", sessions_dir) is None
+
+
+def test_get_internal_name_skips_when_session_id_does_not_match(script, tmp_path, monkeypatch):
+    sessions_dir = tmp_path / "sessions"
+    sessions_dir.mkdir()
+    monkeypatch.setattr(script.os, "getppid", lambda: 999999)
+    (sessions_dir / "other.json").write_text(
+        json.dumps({"sessionId": "someone-else", "nameSource": None, "name": "nope"})
+    )
+
+    assert script.get_internal_name("target", sessions_dir) is None
+
+
+def test_get_internal_name_skips_when_name_source_is_not_none(script, tmp_path, monkeypatch):
+    # Directly targets the named mutation of flipping `nameSource is None`
+    # to `nameSource is not None`: under the mutation this record would
+    # match and the test would fail.
+    sessions_dir = tmp_path / "sessions"
+    sessions_dir.mkdir()
+    monkeypatch.setattr(script.os, "getppid", lambda: 999999)
+    (sessions_dir / "other.json").write_text(
+        json.dumps({"sessionId": "target", "nameSource": "cli-flag", "name": "user-named"})
+    )
+
+    assert script.get_internal_name("target", sessions_dir) is None
+
+
+def test_get_internal_name_returns_none_when_matched_name_is_not_a_string(
+    script, tmp_path, monkeypatch
+):
+    sessions_dir = tmp_path / "sessions"
+    sessions_dir.mkdir()
+    monkeypatch.setattr(script.os, "getppid", lambda: 999999)
+    (sessions_dir / "other.json").write_text(
+        json.dumps({"sessionId": "target", "nameSource": None, "name": 42})
+    )
+
+    assert script.get_internal_name("target", sessions_dir) is None
+
+
+def test_get_internal_name_does_not_reparse_the_ppid_file_seen_again_via_glob(
+    script, tmp_path, monkeypatch
+):
+    # The ppid candidate also shows up in the `*.json` glob (same file).
+    # This pins the `seen` dedup: json.load must be called exactly once for
+    # that path, not twice.
+    sessions_dir = tmp_path / "sessions"
+    sessions_dir.mkdir()
+    monkeypatch.setattr(script.os, "getppid", lambda: 7777)
+    (sessions_dir / "7777.json").write_text(
+        json.dumps({"sessionId": "someone-else", "nameSource": None, "name": "irrelevant"})
+    )
+
+    real_load = script.json.load
+    calls = []
+
+    def counting_load(f):
+        calls.append(1)
+        if len(calls) > 1:
+            raise AssertionError("ppid candidate file was parsed more than once")
+        return real_load(f)
+
+    monkeypatch.setattr(script.json, "load", counting_load)
+
+    result = script.get_internal_name("target", sessions_dir)
+
+    assert result is None
+    assert len(calls) == 1
+
+
+# ---------------------------------------------------------------------------
+# parse_transcript
+# ---------------------------------------------------------------------------
+
+
+def test_parse_transcript_skips_blank_lines(script, tmp_path):
+    path = tmp_path / "t.jsonl"
+    _write_lines(
+        path,
+        [
+            "",
+            json.dumps(
+                {
+                    "type": "assistant",
+                    "timestamp": "2026-01-01T00:00:00Z",
+                    "message": {"id": "m1", "usage": {"input_tokens": 1}},
+                }
+            ),
+            "   ",
+        ],
+    )
+
+    parsed = script.parse_transcript(str(path))
+
+    assert parsed["turn_count"] == 1
+    assert parsed["input_tokens"] == 1
+
+
+def test_parse_transcript_skips_malformed_json_without_aborting(script, tmp_path):
+    path = tmp_path / "t.jsonl"
+    _write_lines(
+        path,
+        [
+            "{not json",
+            json.dumps(
+                {
+                    "type": "assistant",
+                    "timestamp": "2026-01-01T00:00:01Z",
+                    "message": {"id": "m1", "usage": {"input_tokens": 3}},
+                }
+            ),
+        ],
+    )
+
+    parsed = script.parse_transcript(str(path))
+
+    assert parsed["turn_count"] == 1
+    assert parsed["input_tokens"] == 3
+
+
+def test_parse_transcript_first_and_last_non_empty_timestamps_bound_the_range(script, tmp_path):
+    path = tmp_path / "t.jsonl"
+    _write_lines(
+        path,
+        [
+            json.dumps({"type": "user"}),  # no timestamp at all
+            json.dumps({"type": "assistant", "timestamp": "2026-01-01T00:00:00+00:00"}),
+            json.dumps({"type": "assistant", "timestamp": "2026-01-01T00:05:00+00:00"}),
+            json.dumps({"type": "assistant", "timestamp": "2026-01-01T00:10:00+00:00"}),
+        ],
+    )
+
+    parsed = script.parse_transcript(str(path))
+
+    assert parsed["timestamp_start"] == "2026-01-01T00:00:00+00:00"
+    assert parsed["timestamp_end"] == "2026-01-01T00:10:00+00:00"
+
+
+def test_parse_transcript_last_entry_carrying_git_branch_wins(script, tmp_path):
+    path = tmp_path / "t.jsonl"
+    _write_lines(
+        path,
+        [
+            json.dumps({"type": "user", "gitBranch": "first-branch"}),
+            json.dumps({"type": "user"}),  # no gitBranch key: must not clear it
+            json.dumps({"type": "user", "gitBranch": "second-branch"}),
+        ],
+    )
+
+    parsed = script.parse_transcript(str(path))
+
+    assert parsed["git_branch"] == "second-branch"
+
+
+def test_parse_transcript_only_assistant_entries_count(script, tmp_path):
+    path = tmp_path / "t.jsonl"
+    _write_lines(
+        path,
+        [
+            json.dumps(
+                {
+                    "type": "user",
+                    "timestamp": "2026-01-01T00:00:00Z",
+                    "message": {"id": "u1", "usage": {"input_tokens": 999}},
+                }
+            ),
+            json.dumps(
+                {
+                    "type": "assistant",
+                    "timestamp": "2026-01-01T00:00:01Z",
+                    "message": {"id": "a1", "usage": {"input_tokens": 5}},
+                }
+            ),
+        ],
+    )
+
+    parsed = script.parse_transcript(str(path))
+
+    assert parsed["turn_count"] == 1
+    assert parsed["input_tokens"] == 5
+
+
+def test_parse_transcript_triple_duplicate_message_id_counted_exactly_once(script, tmp_path):
+    # This is the 1.89x inflation bug the module's own comment cites: a
+    # resumed/compacted session replays the same assistant message several
+    # times. A repeat of an already-seen message.id must add neither a turn
+    # nor its usage a second (or third) time.
+    path = tmp_path / "t.jsonl"
+    entry = {
+        "type": "assistant",
+        "timestamp": "2026-01-01T00:00:00Z",
+        "message": {"id": "dup", "usage": {"input_tokens": 10, "output_tokens": 20}},
+    }
+    _write_lines(path, [json.dumps(entry)] * 3)
+
+    parsed = script.parse_transcript(str(path))
+
+    assert parsed["turn_count"] == 1
+    assert parsed["input_tokens"] == 10
+    assert parsed["output_tokens"] == 20
+
+
+def test_parse_transcript_entries_with_no_id_are_always_counted(script, tmp_path):
+    path = tmp_path / "t.jsonl"
+    entry = {
+        "type": "assistant",
+        "timestamp": "2026-01-01T00:00:00Z",
+        "message": {"usage": {"input_tokens": 7}},
+    }
+    _write_lines(path, [json.dumps(entry)] * 2)
+
+    parsed = script.parse_transcript(str(path))
+
+    assert parsed["turn_count"] == 2
+    assert parsed["input_tokens"] == 14
+
+
+def test_parse_transcript_missing_or_null_usage_coerces_to_zero(script, tmp_path):
+    path = tmp_path / "t.jsonl"
+    _write_lines(
+        path,
+        [
+            json.dumps(
+                {"type": "assistant", "timestamp": "2026-01-01T00:00:00Z", "message": {"id": "a"}}
+            ),
+            json.dumps(
+                {
+                    "type": "assistant",
+                    "timestamp": "2026-01-01T00:00:01Z",
+                    "message": {"id": "b", "usage": None},
+                }
+            ),
+            json.dumps(
+                {
+                    "type": "assistant",
+                    "timestamp": "2026-01-01T00:00:02Z",
+                    "message": {
+                        "id": "c",
+                        "usage": {
+                            "input_tokens": None,
+                            "cache_read_input_tokens": None,
+                            "cache_creation_input_tokens": None,
+                        },
+                    },
+                }
+            ),
+        ],
+    )
+
+    parsed = script.parse_transcript(str(path))
+
+    assert parsed["turn_count"] == 3
+    assert parsed["input_tokens"] == 0
+    assert parsed["output_tokens"] == 0
+    assert parsed["cache_read_tokens"] == 0
+    assert parsed["cache_creation_tokens"] == 0
+
+
+def test_parse_transcript_tool_call_count_counts_tool_use_blocks_only(script, tmp_path):
+    path = tmp_path / "t.jsonl"
+    _write_lines(
+        path,
+        [
+            json.dumps(
+                {
+                    "type": "assistant",
+                    "timestamp": "2026-01-01T00:00:00Z",
+                    "message": {
+                        "id": "a",
+                        "content": [
+                            {"type": "text", "text": "hi"},
+                            {"type": "tool_use", "name": "Read"},
+                            "not-a-dict",
+                            {"type": "tool_use", "name": "Bash"},
+                        ],
+                    },
+                }
+            ),
+            json.dumps(
+                {
+                    "type": "assistant",
+                    "timestamp": "2026-01-01T00:00:01Z",
+                    # non-list content must be ignored, not crash
+                    "message": {"id": "b", "content": "plain string content"},
+                }
+            ),
+        ],
+    )
+
+    parsed = script.parse_transcript(str(path))
+
+    assert parsed["tool_call_count"] == 2
+
+
+def test_parse_transcript_duration_is_difference_of_first_and_last_timestamp(script, tmp_path):
+    path = tmp_path / "t.jsonl"
+    _write_lines(
+        path,
+        [
+            json.dumps({"type": "user", "timestamp": "2026-01-01T00:00:00+00:00"}),
+            json.dumps({"type": "user", "timestamp": "2026-01-01T00:01:30+00:00"}),
+        ],
+    )
+
+    parsed = script.parse_transcript(str(path))
+
+    assert parsed["duration_seconds"] == 90.0
+
+
+def test_parse_transcript_duration_is_none_when_no_timestamps_present(script, tmp_path):
+    path = tmp_path / "t.jsonl"
+    _write_lines(path, [json.dumps({"type": "user"})])
+
+    parsed = script.parse_transcript(str(path))
+
+    assert parsed["timestamp_start"] is None
+    assert parsed["timestamp_end"] is None
+    assert parsed["duration_seconds"] is None
+
+
+def test_parse_transcript_duration_is_none_when_timestamps_are_unparseable(script, tmp_path):
+    path = tmp_path / "t.jsonl"
+    _write_lines(
+        path,
+        [
+            json.dumps({"type": "user", "timestamp": "not-a-timestamp"}),
+            json.dumps({"type": "user", "timestamp": "also-not-one"}),
+        ],
+    )
+
+    parsed = script.parse_transcript(str(path))
+
+    assert parsed["duration_seconds"] is None
+
+
+# ---------------------------------------------------------------------------
+# build_record
+# ---------------------------------------------------------------------------
+
+_PARSED_STUB = {
+    "timestamp_start": "2026-01-01T00:00:00Z",
+    "timestamp_end": "2026-01-01T00:01:00Z",
+    "duration_seconds": 60.0,
+    "git_branch": "main",
+    "input_tokens": 1,
+    "output_tokens": 2,
+    "cache_read_tokens": 3,
+    "cache_creation_tokens": 4,
+    "turn_count": 5,
+    "tool_call_count": 6,
+}
+
+_EXPECTED_RECORD_KEYS = {
+    "session_id",
+    "timestamp_start",
+    "timestamp_end",
+    "duration_seconds",
+    "project_path",
+    "git_branch",
+    "tag",
+    "input_tokens",
+    "output_tokens",
+    "cache_read_tokens",
+    "cache_creation_tokens",
+    "turn_count",
+    "tool_call_count",
+    "tmux_window",
+    "internal_name",
+    "transcript_path",
+}
+
+
+def test_build_record_has_exact_key_set_and_correct_values(script, monkeypatch):
+    monkeypatch.setattr(script, "get_tmux_window", lambda: "my-window")
+    monkeypatch.setattr(
+        script, "get_internal_name", lambda session_id, sessions_dir=None: "my-name"
+    )
+    monkeypatch.setenv("CLAUDE_METRIC_TAG", "my-tag")
+
+    hook_input = {
+        "session_id": "sess-1",
+        "cwd": "/some/project",
+        "transcript_path": "/some/transcript.jsonl",
+    }
+
+    record = script.build_record(hook_input, _PARSED_STUB)
+
+    # The exact key set is the emitted-identifier signal for this
+    # function: a renamed key would be a silent dashboard regression that
+    # a subset check would never catch.
+    assert set(record.keys()) == _EXPECTED_RECORD_KEYS
+    assert record["session_id"] == "sess-1"
+    assert record["project_path"] == "/some/project"
+    assert record["transcript_path"] == "/some/transcript.jsonl"
+    assert record["tag"] == "my-tag"
+    assert record["tmux_window"] == "my-window"
+    assert record["internal_name"] == "my-name"
+    assert record["duration_seconds"] == 60.0
+    assert record["git_branch"] == "main"
+
+
+def test_build_record_tag_is_none_when_env_var_unset(script, monkeypatch):
+    monkeypatch.setattr(script, "get_tmux_window", lambda: None)
+    monkeypatch.setattr(script, "get_internal_name", lambda session_id, sessions_dir=None: None)
+    monkeypatch.delenv("CLAUDE_METRIC_TAG", raising=False)
+
+    record = script.build_record({"session_id": "s", "cwd": "/x"}, _PARSED_STUB)
+
+    assert record["tag"] is None
+
+
+# ---------------------------------------------------------------------------
+# append_record
+# ---------------------------------------------------------------------------
+
+
+def test_append_record_creates_directory_and_writes_the_record(script, tmp_path, monkeypatch):
+    metrics_file = _isolate_metrics(monkeypatch, script, tmp_path)
+    assert not metrics_file.parent.exists()
+
+    script.append_record({"a": 1})
+
+    assert metrics_file.exists()
+    assert json.loads(metrics_file.read_text().strip()) == {"a": 1}
+
+
+def test_append_record_appends_one_line_per_call_without_truncating(script, tmp_path, monkeypatch):
+    metrics_file = _isolate_metrics(monkeypatch, script, tmp_path)
+
+    script.append_record({"a": 1})
+    script.append_record({"a": 2})
+
+    lines = metrics_file.read_text().splitlines()
+    assert [json.loads(line) for line in lines] == [{"a": 1}, {"a": 2}]
+
+
+def test_append_record_sets_mode_0600_only_when_file_is_new(script, tmp_path, monkeypatch):
+    metrics_file = _isolate_metrics(monkeypatch, script, tmp_path)
+
+    script.append_record({"a": 1})
+    assert stat.S_IMODE(metrics_file.stat().st_mode) == 0o600
+
+    # An existing file's mode must be left alone on subsequent appends.
+    metrics_file.chmod(0o644)
+    script.append_record({"a": 2})
+    assert stat.S_IMODE(metrics_file.stat().st_mode) == 0o644
+
+
+# ---------------------------------------------------------------------------
+# main
+# ---------------------------------------------------------------------------
+
+
+def test_main_returns_silently_when_transcript_path_is_missing(script, tmp_path, monkeypatch):
+    metrics_file = _isolate_metrics(monkeypatch, script, tmp_path)
+    monkeypatch.setattr(script.sys, "stdin", io.StringIO(json.dumps({"session_id": "s1"})))
+
+    script.main()
+
+    assert not metrics_file.exists()
+
+
+def test_main_returns_silently_when_transcript_path_does_not_exist(script, tmp_path, monkeypatch):
+    metrics_file = _isolate_metrics(monkeypatch, script, tmp_path)
+    hook_input = {"session_id": "s1", "transcript_path": str(tmp_path / "missing.jsonl")}
+    monkeypatch.setattr(script.sys, "stdin", io.StringIO(json.dumps(hook_input)))
+
+    # Spy on parse_transcript rather than asserting on the file alone: an
+    # `and`/`or` swap in the guard (`if not transcript_path or not
+    # Path(transcript_path).exists():`) still leaves the file unwritten
+    # here, because parse_transcript() would go on to raise
+    # FileNotFoundError on the missing path and main()'s blanket
+    # `except Exception: return` swallows that too - the file-absence
+    # assertion alone cannot tell "guard returned early" apart from "guard
+    # was bypassed and the call inside failed instead". Only "was
+    # parse_transcript even invoked" distinguishes the two.
+    calls = []
+    monkeypatch.setattr(script, "parse_transcript", lambda path: calls.append(path))
+
+    script.main()
+
+    assert calls == []
+    assert not metrics_file.exists()
+
+
+def test_main_appends_exactly_one_record_on_the_happy_path(script, tmp_path, monkeypatch):
+    metrics_file = _isolate_metrics(monkeypatch, script, tmp_path)
+    monkeypatch.setattr(script, "get_tmux_window", lambda: None)
+    monkeypatch.setattr(script, "get_internal_name", lambda session_id, sessions_dir=None: None)
+
+    transcript = tmp_path / "transcript.jsonl"
+    transcript.write_text(
+        json.dumps(
+            {
+                "type": "assistant",
+                "timestamp": "2026-01-01T00:00:00Z",
+                "message": {"id": "m1", "usage": {"input_tokens": 5}},
+            }
+        )
+        + "\n"
+    )
+    hook_input = {
+        "session_id": "s1",
+        "cwd": "/proj",
+        "transcript_path": str(transcript),
+    }
+    monkeypatch.setattr(script.sys, "stdin", io.StringIO(json.dumps(hook_input)))
+
+    script.main()
+
+    lines = metrics_file.read_text().splitlines()
+    assert len(lines) == 1
+    record = json.loads(lines[0])
+    assert record["session_id"] == "s1"
+    assert record["input_tokens"] == 5
+
+
+def test_module_guard_calls_main_and_exits_zero_when_run_as_a_script(tmp_path, monkeypatch):
+    # `if __name__ == "__main__": main(); sys.exit(0)` is never exercised by
+    # loading this module under any other name, including the shared
+    # `script` fixture above. This does not edit hooks/metrics-log.py - it
+    # loads a second, independent copy of it with __name__ pre-set to
+    # "__main__", which is a test technique, not a production change.
+    # HOME is redirected to tmp_path BEFORE exec, because
+    # METRICS_DIR/METRICS_FILE are computed the moment this fresh copy
+    # executes its top-level code - there is no chance to
+    # monkeypatch.setattr them afterwards the way every other test here
+    # does. The hook input carries no transcript_path, so main() takes its
+    # early-return path and nothing is ever written, in tmp_path or
+    # anywhere else.
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps({"session_id": "s1"})))
+
+    spec = importlib.util.spec_from_file_location("__main__", SCRIPT_PATH)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+
+    with pytest.raises(SystemExit) as excinfo:
+        spec.loader.exec_module(module)
+
+    assert excinfo.value.code == 0
+    assert not (tmp_path / ".claude" / "metrics" / "sessions.jsonl").exists()
+
+
+def test_main_swallows_exceptions_and_writes_nothing(script, tmp_path, monkeypatch):
+    # main()'s `except Exception: return` is a coverage trap: an assertion
+    # raised from inside its own try block would be swallowed too. Assert
+    # only on the file's contents afterwards, never on the absence of an
+    # exception.
+    metrics_file = _isolate_metrics(monkeypatch, script, tmp_path)
+    monkeypatch.setattr(script.sys, "stdin", io.StringIO("not valid json"))
+
+    script.main()
+
+    assert not metrics_file.exists()
