@@ -120,8 +120,34 @@ def load_base_data(args: argparse.Namespace, mr: ModuleType | None = None) -> di
         key = subagent.get("agent_id")
         if key is None:
             continue
+        # DEAD BY DRIFT, and this is the TWIN of the clause phase 3c
+        # documented in dashboard_html.py (see its main(), same two loops,
+        # same reasoning). Confirmed here by mutation on 2026-09-02:
+        # inverting the entire second arm of BOTH loops leaves all 577
+        # tests green. 77f49d5 (2026-07-18) added the source-bearing-
+        # duplicate preference when neither list had any dedup upstream -
+        # correct at the time. 328d5d6 (2026-07-21) then added
+        # dedupe_subagents/dedupe_sessions ABOVE these loops, which already
+        # guarantee one record per key, so `existing` is always None the one
+        # time each key is seen.
+        #
+        # Kept rather than deleted, for the same reason as the twin: the
+        # clause becomes necessary again the moment that upstream dedup is
+        # removed or reordered, and deleting it now would replant the exact
+        # regression this comment exists to explain.
+        #
+        # `no branch`, NOT `no cover`: what is unreachable is the false arc
+        # of the `if`, not the statement. `no cover` on an `if` line
+        # excludes the body too, which would drop the always-executed
+        # assignment below out of the denominator and hide it from phase 4's
+        # 100% gate forever.
+        #
+        # That this went undiscovered here for six weeks after being found
+        # and documented in the twin is itself the finding recorded in
+        # docs/superpowers/BACKLOG.md about these two dashboards duplicating
+        # logic: the defect was never propagated, because the code was.
         existing = unique_agents.get(key)
-        if existing is None or (
+        if existing is None or (  # pragma: no branch - unreachable, see comment above
             not existing.get("agent_transcript_path") and subagent.get("agent_transcript_path")
         ):
             unique_agents[key] = subagent
@@ -175,8 +201,10 @@ def load_base_data(args: argparse.Namespace, mr: ModuleType | None = None) -> di
         key = record.get("session_id")
         if key is None:
             continue
+        # Same dead-by-drift clause as unique_agents above, same evidence,
+        # same ruling - dedupe_sessions runs upstream of this loop.
         existing = unique_sessions.get(key)
-        if existing is None or (
+        if existing is None or (  # pragma: no branch - unreachable, see comment above
             not (existing.get("internal_name") or existing.get("transcript_path"))
             and (record.get("internal_name") or record.get("transcript_path"))
         ):
@@ -513,7 +541,16 @@ class TrendChart(PlotextPlot):  # type: ignore[misc]  # textual: base is Any (no
             day_totals_list = [
                 sum(series_data[k][i] for k in series_keys) for i in range(len(days))
             ]
-            if series_lists:
+            # The false arc is unreachable, by construction rather than by
+            # accident: render_chart derives `days` from the SAME
+            # self.chart_records that feeds compute_pane_projects, and
+            # returns early above when len(days) < 2. So reaching this line
+            # requires chart_records to be non-empty, which guarantees at
+            # least one key in that function's `totals`, hence a non-empty
+            # top_keys, hence a non-empty series_keys and series_lists.
+            # `no branch` rather than `no cover`: the body below runs on
+            # every real render and must stay in the denominator.
+            if series_lists:  # pragma: no branch - unreachable, see comment above
                 series_lists[0] = floor_stacked_bottom_series(series_lists[0], day_totals_list)
             series_labels = [pane_series_label(self.mr, k) for k in series_keys]
             palette = [
