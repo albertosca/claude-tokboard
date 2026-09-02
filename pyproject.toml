@@ -111,6 +111,8 @@ module = [
     "test_records",
     "test_subagent_metrics_log_hook",
     "test_tui_chart",
+    "test_tui_data_shapes",
+    "test_tui_unconstrained",
     "test_tui_clicks",
     "test_tui_responsiveness",
     "test_tui_state",

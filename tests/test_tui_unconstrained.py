@@ -1,0 +1,336 @@
+"""Findings the pre-task ternary/slice mutation sweep surfaced that reaching
+100% statement/branch coverage will NOT sweep up (Phase 3e, Task 5).
+
+coverage.py tracks statements and control-flow arcs. It has no concept of a
+conditional expression's two OPERANDS, or of a slice bound's specific
+number - `x if cond else y` and `seq[:N]` each read as one fully-covered
+line the moment they execute once, however wrong the operand or the bound
+is. The plan's controller swept all 28 ternaries and all 6 slices in
+dashboard_tui.py by hand (see the plan's "Both sweeps were run by the
+controller" section) and found several that survive the full 557-test
+suite with coverage staying byte-identical - meaning the file can already
+report 100% while these are silently broken. Each test below targets one
+survivor, and each was proven by re-injecting the exact named mutation into
+a throwaway copy of dashboard_tui.py and confirming the test fails (see the
+task report for the per-item canary transcript).
+
+Two survivors named by the sweep are deliberately NOT tested here, per the
+plan's own judgement call:
+
+- line 347 (`"on #202020" if i % 2 == 1 else ""`, subagent-row zebra
+  striping) - a one-row shift in alternating background color. Cosmetic:
+  no information is lost, only which rows get the (already decorative)
+  stripe.
+- line 678 (`"█" if is_open else "▓"`, the bar character for an open vs.
+  historical project) - real but low-impact: inverted, an open project's
+  bar looks historical and vice versa, on a widget whose primary signal is
+  the bar's LENGTH (token total), not its fill character. Low severity
+  relative to the four items below.
+"""
+
+import sys
+from pathlib import Path
+from typing import Any
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO_ROOT / "lib"))
+sys.path.insert(0, str(REPO_ROOT))
+
+import metrics_core as mr  # noqa: E402
+
+import dashboard_tui as tui  # noqa: E402
+
+
+def _daily(project: str, day: int, tokens: int) -> dict[str, Any]:
+    return {
+        "session_id": f"{project}-{day}",
+        "project_path": project,
+        "timestamp_start": f"2026-01-{day:02d}T09:00:00",
+        "timestamp_end": f"2026-01-{day:02d}T09:30:00",
+        "input_tokens": tokens,
+        "output_tokens": 0,
+        "cache_read_tokens": 0,
+        "cache_creation_tokens": 0,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Finding 1 - floor_stacked_bottom_series (dashboard_tui.py:444), the
+# serious one: its entire output is corruptible in silence, per the task
+# brief, because no test called it directly before this file.
+# ---------------------------------------------------------------------------
+
+
+def test_floor_stacked_bottom_series_floors_a_zero_bottom_on_a_real_day():
+    """A day with real total tokens but a zero bottom-series value is the
+    plotext rendering-bug case the function exists for (see its own
+    docstring) - it must come back as 1, not 0."""
+    assert tui.floor_stacked_bottom_series([0], [100]) == [1]
+
+
+def test_floor_stacked_bottom_series_leaves_a_genuinely_empty_day_at_zero():
+    """The explicit decision the docstring calls out: a day with NO data at
+    all (day_total == 0 too) must stay at 0, not get a phantom bar."""
+    assert tui.floor_stacked_bottom_series([0], [0]) == [0]
+
+
+def test_floor_stacked_bottom_series_leaves_real_nonzero_values_untouched():
+    """The non-edge case, so the two tests above cannot pass by a mutant
+    that floors (or zeroes) everything."""
+    assert tui.floor_stacked_bottom_series([5], [100]) == [5]
+
+
+def test_floor_stacked_bottom_series_mixed_row():
+    """All three shapes together in one call, matching how render_chart
+    actually invokes it - one list, one day-totals list, several days."""
+    bottom = [0, 5, 0]
+    totals = [100, 200, 0]
+    assert tui.floor_stacked_bottom_series(bottom, totals) == [1, 5, 0]
+
+
+# ---------------------------------------------------------------------------
+# Finding 2 - series highlighting, unconstrained in four places (treated as
+# one finding, per the task brief): the STYLE guards (382, 611) and the
+# COLOUR guards (525, 553).
+# ---------------------------------------------------------------------------
+
+
+def test_composition_legend_bolds_only_the_highlighted_chip():
+    """dashboard_tui.py:382. Existing click tests (test_tui_clicks.py) only
+    ever assert on `.highlighted` (the state), never on `.render()` (what
+    the user actually sees) - so an inverted guard, which bolds every OTHER
+    chip and leaves the clicked one plain, would pass every test in the
+    suite before this one."""
+    legend = tui.CompositionLegend(
+        {"series-1": 10, "series-2": 20, "series-3": 30, "series-4": 40}, mr
+    )
+    legend.highlighted = {"series-2"}
+    text = legend.render()
+    assert "[bold reverse]output" in text, "the highlighted chip must carry the bold-reverse tag"
+    for other in ("input", "cache read", "cache creation"):
+        assert f"[bold reverse]{other}" not in text, (
+            f"{other!r} is not highlighted and must not carry the bold-reverse tag"
+        )
+
+
+def test_project_legend_bolds_only_the_highlighted_chip():
+    """dashboard_tui.py:611, the pane-mode twin of the test above."""
+    records = [_daily(f"/projects/p{i:02d}", day=1, tokens=100 - i) for i in range(3)]
+    legend = tui.ProjectLegend(mr, records)
+    keys = legend._series_keys()
+    assert all(k is not None for k in keys), "this fixture yields no 'outros' bucket"
+    legend.highlighted = {keys[1]}
+    text = legend.render()
+    assert f"[bold reverse]{str(keys[1]).split('/')[-1]}" in text
+    for key in (keys[0], keys[2]):
+        label = str(key).split("/")[-1]
+        assert f"[bold reverse]{label}" not in text, (
+            f"{label!r} is not the highlighted project and must not be bolded"
+        )
+
+
+def _capture_stacked_bar_color(chart: Any) -> dict[str, Any]:
+    captured: dict[str, Any] = {}
+    original = chart.plt.stacked_bar
+
+    def spy(*args: Any, **kwargs: Any) -> Any:
+        captured["color"] = kwargs.get("color")
+        return original(*args, **kwargs)
+
+    chart.plt.stacked_bar = spy
+    return captured
+
+
+def test_set_highlight_colors_the_highlighted_series_and_greys_the_rest():
+    """dashboard_tui.py:553 (`self.SERIES_COLORS[i] if key in
+    self.highlighted else "gray"`). tests/test_tui_chart.py's own
+    highlighting tests only check THAT gray appears somewhere in the
+    render, which is exactly the assertion an operand swap survives (gray
+    still appears - just on the wrong series). This reads the actual
+    `color` list passed to plt.stacked_bar and checks it by series
+    identity."""
+    records = [_daily("/projects/a", 1, 10), _daily("/projects/a", 2, 20)]
+    chart = tui.TrendChart(mr, records)
+    chart.toggle_mode()  # into "tokens" mode, where set_highlight applies
+    captured = _capture_stacked_bar_color(chart)
+    chart.set_highlight({"series-1"})
+    color = captured["color"]
+    assert color[0] == chart.SERIES_COLORS[0], (
+        "the highlighted series (series-1) must keep its own color, not go gray"
+    )
+    for i in (1, 2, 3):
+        assert color[i] == "gray", f"series index {i} is not highlighted and must be grayed out"
+
+
+def test_set_project_highlight_colors_the_highlighted_project_and_greys_the_rest():
+    """dashboard_tui.py:525, the pane-mode twin - and the same class of gap
+    as line 520's boundary just below it: computed with more projects than
+    PANE_COLORS so the "outros" bucket is exercised at the same time."""
+    records = [_daily(f"/projects/p{i:02d}", day, 100 - i) for i in range(3) for day in (1, 2)]
+    chart = tui.TrendChart(mr, records)
+    chart.render_chart()
+    captured = _capture_stacked_bar_color(chart)
+    highlighted_key = chart.pane_series_keys[1]
+    chart.set_project_highlight({highlighted_key})
+    color = captured["color"]
+    assert color[1] == tui.PANE_COLORS[1], (
+        "the highlighted project must keep its own palette color, not go gray"
+    )
+    assert color[0] == "gray"
+    assert color[2] == "gray"
+
+
+# ---------------------------------------------------------------------------
+# Finding 3 - line 520's boundary: `i < len(PANE_COLORS)` vs `i <=
+# len(PANE_COLORS)`. Caught by an operand swap (recoloring every entry),
+# but the boundary shift only changes the ONE overflow entry, and survives.
+# ---------------------------------------------------------------------------
+
+
+def test_overflow_projects_beyond_pane_colors_get_the_other_color():
+    """9 distinct, distinctly-ranked projects: PANE_MAX_PROJECTS (7) go
+    into top_keys, the rest collapse into one "outros" bucket, so
+    series_keys has exactly 8 entries - one more than len(PANE_COLORS) (7).
+    That 8th entry (index 7) is the only one the `i < len(PANE_COLORS)`
+    boundary controls."""
+    records = [_daily(f"/projects/p{i:02d}", day, (9 - i) * 10) for i in range(9) for day in (1, 2)]
+    chart = tui.TrendChart(mr, records)
+    captured = _capture_stacked_bar_color(chart)
+    chart.render_chart()
+    color = captured["color"]
+    assert len(chart.pane_series_keys) == 8
+    assert chart.pane_series_keys[-1] == tui.PANE_OTHER_KEY
+    assert color[:7] == tui.PANE_COLORS, (
+        "the 7 real top projects must use the named palette in order"
+    )
+    assert color[7] == tui.PANE_OTHER_COLOR, (
+        "the overflow ('outros') bucket must use PANE_OTHER_COLOR - a boundary "
+        "shift here (i <= len(PANE_COLORS)) would try PANE_COLORS[7], which "
+        "does not exist"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Finding 4 - line 668's slice: `visible = ordered[:10]` surviving becoming
+# `ordered[:9]`. tests/test_tui_unbound.py already has a 12-project test
+# for this widget, but it only asserts the two SMALLEST projects are hidden
+# - it never asserts all ten VISIBLE ones actually are, so a slice shrunk
+# to 9 (silently dropping the 10th-ranked project, p09, from both the
+# visible and hidden halves) passes it unnoticed.
+# ---------------------------------------------------------------------------
+
+
+def _records_for_n_projects(n: int) -> list[dict[str, Any]]:
+    return [
+        {
+            "project_path": f"/projects/p{i:02d}",
+            "input_tokens": (n - i) * 100,
+            "output_tokens": 0,
+            "cache_read_tokens": 0,
+            "cache_creation_tokens": 0,
+        }
+        for i in range(n)
+    ]
+
+
+def test_project_ranking_list_shows_exactly_ten_projects_when_collapsed():
+    records = _records_for_n_projects(12)
+    panel = tui.ProjectRankingList(mr, records, {}, {}, set())
+    collapsed = panel.render()
+    for i in range(10):
+        label = f"p{i:02d}"
+        assert label in collapsed, (
+            f"{label!r} is one of the 10 highest-ranked projects and must be "
+            f"visible while collapsed - got:\n{collapsed}"
+        )
+    for i in (10, 11):
+        assert f"p{i:02d}" not in collapsed
+
+
+# ---------------------------------------------------------------------------
+# Finding 5 - session-tree column alignment, unconstrained in both
+# directions at four truncation/pad pairs (313, 346, 681 - line 313 is
+# actually two pairs, session_id[:12]/:<14 and task_label[:28]/:<30). The
+# brief asks to pin the ALIGNMENT INVARIANT (a row's columns land at fixed
+# offsets) rather than six magic numbers - one test per row-producing
+# function below does that, using deliberately over-length input so a
+# widened slice (which a format spec's pad never truncates back down)
+# would push every later column out of place.
+# ---------------------------------------------------------------------------
+
+
+def test_session_tree_row_columns_land_at_their_fixed_offsets():
+    session_id = "Q" * 20  # over session_id[:12]'s pad (:<14)
+    task_label_raw = "Z" * 50  # over task_label[:28]'s pad (:<30)
+    record = {
+        "project_path": "/projects/x",
+        "session_id": session_id,
+        "task_label": task_label_raw,
+        "timestamp_start": "2026-01-01T09:00:00",
+        "duration_seconds": 42,
+        "input_tokens": 5,
+        "output_tokens": 0,
+        "cache_read_tokens": 0,
+        "cache_creation_tokens": 0,
+    }
+    tree = tui.build_session_tree([record], {}, mr)
+    row = str(tree.root.children[0].children[0].label)
+    date_str = mr.format_date(str(record["timestamp_start"]))
+    tokens = mr.format_tokens(mr.record_token_total(record))
+    assert row[14 : 14 + len(date_str)] == date_str, (
+        "the date column did not start at its promised fixed offset (14) - "
+        "session_id[:12] must never be wide enough to overflow its own "
+        ":<14 pad"
+    )
+    assert row[28 : 28 + 28] == task_label_raw[:28], (
+        "the task_label column did not start at its promised fixed offset "
+        "(28) - the date column above must not have overflowed either"
+    )
+    assert row[58 : 58 + 8] == f"{tokens:>8}", (
+        "the tokens column did not start at its promised fixed offset (58) "
+        "- task_label[:28] must never be wide enough to overflow its own "
+        ":<30 pad"
+    )
+
+
+def test_subagent_detail_row_columns_land_at_their_fixed_offsets():
+    panel = tui.SessionDetailPanel(mr)
+    subagent = {
+        "agent_type": "T" * 30,
+        "agent_label": "L" * 30,  # combined, over task[:38]'s pad (:<40)
+        "input_tokens": 5,
+        "output_tokens": 7,
+        "tool_call_count": 3,
+        "duration_seconds": 12,
+    }
+    panel.show_session("sess", [subagent])
+    row = str(panel._body.render()).split("\n")[-1]
+    in_tok = mr.format_tokens(5)
+    assert row[40 : 40 + len(in_tok) + 2] == f"{in_tok}/7", (
+        "the input/output token column did not start at its promised fixed "
+        "offset (40) - task[:38] must never be wide enough to overflow its "
+        "own :<40 pad"
+    )
+
+
+def test_project_ranking_row_columns_land_at_their_fixed_offsets():
+    records = [
+        {
+            "project_path": "/projects/" + "x" * 40,  # over label[:24]'s pad (:<26)
+            "input_tokens": 100,
+            "output_tokens": 0,
+            "cache_read_tokens": 0,
+            "cache_creation_tokens": 0,
+        }
+    ]
+    panel = tui.ProjectRankingList(mr, records, {}, {}, set())
+    row = panel.render().split("\n")[2]
+    formatted_total = mr.format_tokens(100)
+    assert row[26:58].strip("▓ ") == "" or "▓" in row[26:58], (
+        "sanity check: the bar column must actually be at offset 26"
+    )
+    assert row[58 : 58 + len(formatted_total)] == formatted_total, (
+        "the token-total column did not start at its promised fixed offset "
+        "(58) - label[:24] must never be wide enough to overflow its own "
+        ":<26 pad"
+    )
