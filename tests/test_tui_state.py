@@ -243,3 +243,31 @@ def test_sessions_case_restores_the_tree(state_after_p):
 
 def test_panorama_case_restores_the_trend_chart(state_after_p):
     assert state_after_p["panorama_case"]["focused_type"] == "TrendChart"
+
+
+def test_tree_holds_focus_immediately_after_mount(monkeypatch, tmp_path):
+    """dashboard_tui.py:837, App.on_mount's `self.query_one(Tree).focus()`.
+
+    Every focus assertion above runs AFTER a 'p' keypress; none of them
+    covers mount time itself. Textual's own default focus does not land on
+    the Tree - the final whole-branch review (2026-09-02) probed the
+    mounted app directly and found `app.focused` is `ContentTabs` (the tab
+    bar) without this call, `Tree` (the session list) with it. Dropping the
+    call is real and user-facing: at startup the arrow keys would drive the
+    tab bar instead of the session list."""
+    seeded_tui_home(monkeypatch, tmp_path)
+    args = tui.build_arg_parser().parse_args(["--label-budget", "0"])
+
+    async def _focused_type_at_mount() -> str:
+        async with tui.MetricsTUIApp(mr, tui.load_data(args, mr=mr), args=args).run_test(
+            size=(140, 45)
+        ) as pilot:
+            await pilot.pause()
+            return type(pilot.app.focused).__name__
+
+    focused_type = asyncio.run(_focused_type_at_mount())
+    assert focused_type == "Tree", (
+        f"app.focused was {focused_type!r} immediately after mount - "
+        "on_mount's self.query_one(Tree).focus() must land focus on the "
+        "session Tree rather than leaving Textual's own default"
+    )

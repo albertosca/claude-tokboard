@@ -26,6 +26,30 @@ plan's own judgement call:
   bar looks historical and vice versa, on a widget whose primary signal is
   the bar's LENGTH (token total), not its fill character. Low severity
   relative to the four items below.
+
+FINDING 6 - the final whole-branch review's I1 (2026-09-02): four rendered
+VALUES with no test constraining them, found by the same mechanism as
+Finding 2 above but on the numbers rather than the highlight guards. The
+existing tests for these three widgets/functions all assert on labels,
+tags, or which rows are present/absent - never on whether the NUMBER next
+to a label is the right one:
+
+- `CompositionLegend.render` (~406): `self.totals.get(series, 0)` keyed by
+  the wrong dict key (`name` instead of `series`) renders every chip's
+  number as 0.
+- `ProjectRankingList.render` (~713): `self.mr.format_tokens(total)`
+  swapped for `format_tokens(max_total)` makes every row show the largest
+  project's total.
+- `ProjectRankingList.render` (~710): `bar_len` replaced by a constant
+  makes every bar the same length regardless of the row's own total.
+- `build_session_tree` (~317): the group header's `total_tokens = sum(...)`
+  replaced by a literal makes every group's header lie about its total.
+
+Deliberately NOT tested here, per the final review's own ruling: the
+`duration:.0f` -> `.1f` precision survivor (cosmetic - the `is not None`
+guard beside it is what actually matters and is already pinned) and the
+`bar_len` multiplier `30` -> `29` survivor (cosmetic below the `:<32` pad
+width; `* 40` is already caught by the column-alignment test above).
 """
 
 import sys
@@ -333,4 +357,106 @@ def test_project_ranking_row_columns_land_at_their_fixed_offsets():
         "the token-total column did not start at its promised fixed offset "
         "(58) - label[:24] must never be wide enough to overflow its own "
         ":<26 pad"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Finding 6 - the final whole-branch review's I1: labels are asserted
+# everywhere above, the numbers beside them never were.
+# ---------------------------------------------------------------------------
+
+
+def test_composition_legend_chips_show_their_own_series_total():
+    """dashboard_tui.py:406 (`self.totals.get(series, 0)`). The bold/plain
+    tests above only assert on the [bold reverse] tag and the label text -
+    keying the lookup by `name` (the human label) instead of `series` (the
+    key compute_token_type_totals actually produces, "series-1" etc.)
+    would render every chip's number as 0 and pass unnoticed, because
+    nothing above reads the number."""
+    totals = {"series-1": 111, "series-2": 222, "series-3": 333, "series-4": 444}
+    legend = tui.CompositionLegend(totals, mr)
+    text = legend.render()
+    for series, name in tui.CompositionLegend.SERIES:
+        formatted = mr.format_tokens(totals[series])
+        assert f"{name} · {formatted}" in text, (
+            f"chip for {name!r} did not show its own series total ({formatted!r}) - got:\n{text}"
+        )
+
+
+def test_project_ranking_rows_show_their_own_token_total_not_the_max():
+    """dashboard_tui.py:~713 (`self.mr.format_tokens(total)`). Two projects
+    with different totals - if the row rendered `format_tokens(max_total)`
+    instead, both rows would show the SAME (largest) number, and the
+    existing "shows exactly ten projects" test above would not notice
+    since it only checks which project LABELS are present."""
+    records = [_daily("/projects/big", 1, 900), _daily("/projects/small", 1, 100)]
+    panel = tui.ProjectRankingList(mr, records, {}, {}, set())
+    lines = panel.render().split("\n")
+    small_line = next(line for line in lines if "small" in line)
+    big_line = next(line for line in lines if "big" in line and "small" not in line)
+    assert mr.format_tokens(100) in small_line, (
+        f"the 'small' project's row must show its own total (100) - got:\n{small_line}"
+    )
+    assert mr.format_tokens(900) not in small_line, (
+        "the 'small' project's row must not show the largest project's "
+        f"total (900) - got:\n{small_line}"
+    )
+    assert mr.format_tokens(900) in big_line
+
+
+def test_project_ranking_bar_length_is_proportional_to_each_rows_own_total():
+    """dashboard_tui.py:~710 (`bar_len = int((total / max_total) * 30)`).
+    A constant `bar_len` (or one derived from the wrong total) makes every
+    bar the same length regardless of the row's own data - unnoticed by
+    every test above, none of which counts bar characters."""
+    records = [_daily("/projects/big", 1, 900), _daily("/projects/small", 1, 100)]
+    panel = tui.ProjectRankingList(mr, records, {}, {}, set())
+    lines = panel.render().split("\n")
+    big_line = next(line for line in lines if "big" in line and "small" not in line)
+    small_line = next(line for line in lines if "small" in line)
+    big_bar = big_line[26:58].count("▓")
+    small_bar = small_line[26:58].count("▓")
+    assert big_bar == 30, (
+        f"the largest project's bar must fill the full 30-char field, got {big_bar}"
+    )
+    assert small_bar == int((100 / 900) * 30), (
+        f"expected a bar proportional to 100/900, got {small_bar} chars"
+    )
+    assert small_bar < big_bar, "a smaller total must produce a shorter bar than a larger one"
+
+
+def test_session_tree_group_header_shows_the_real_summed_total():
+    """dashboard_tui.py:~317 (`total_tokens = sum(...)`). A constant
+    (the review's canary used 12345) would show the same total for every
+    project group regardless of its sessions' real token totals - and no
+    test above reads the header text for its number, only for the session
+    count and the project label."""
+    records_a = [
+        {
+            "project_path": "/projects/alpha",
+            "session_id": "a1",
+            "input_tokens": 50,
+            "output_tokens": 0,
+            "cache_read_tokens": 0,
+            "cache_creation_tokens": 0,
+        }
+    ]
+    records_b = [
+        {
+            "project_path": "/projects/beta",
+            "session_id": "b1",
+            "input_tokens": 500,
+            "output_tokens": 0,
+            "cache_read_tokens": 0,
+            "cache_creation_tokens": 0,
+        }
+    ]
+    tree = tui.build_session_tree(records_a + records_b, {}, mr)
+    labels = [str(node.label) for node in tree.root.children]
+    alpha_label = next(label for label in labels if "alpha" in label)
+    beta_label = next(label for label in labels if "beta" in label)
+    assert mr.format_tokens(50) in alpha_label, alpha_label
+    assert mr.format_tokens(500) in beta_label, beta_label
+    assert alpha_label != beta_label, (
+        "each project group's header must show its OWN summed token total, not a shared constant"
     )
