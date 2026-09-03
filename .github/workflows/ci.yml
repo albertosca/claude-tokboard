@@ -5,6 +5,12 @@ on:
     branches: [main]
   pull_request:
 
+# Read-only by default. A fork's pull_request run must never be able to
+# write to this repository - see the `badge` job below, which is the only
+# place that needs (and is the only place that gets) contents: write.
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -19,6 +25,17 @@ jobs:
       - run: pip install -r requirements-dev.txt
       - run: npm install
       - run: pytest tests/
+      # Only needed to feed the `badge` job below, so only produced on the
+      # runs that job actually acts on - a fork's pull_request run never
+      # even builds this artifact.
+      - name: Upload coverage data
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-data
+          path: .coverage
+          include-hidden-files: true
+          retention-days: 1
 
   lint:
     runs-on: ubuntu-latest
@@ -31,3 +48,46 @@ jobs:
       - run: ruff check .
       - run: ruff format --check .
       - run: mypy --strict .
+
+  # Generates and commits .github/badges/coverage.svg. Split into its own
+  # job, rather than a step tacked onto `test`, specifically for
+  # permissions: this is the only job in the workflow with contents: write,
+  # and the `if` below means it never runs at all for a pull_request event -
+  # including one opened from a fork. A fork PR still runs `test` and
+  # `lint` (read-only), but the write-scoped GITHUB_TOKEN is never issued to
+  # a job that executes fork-authored code, because this job doesn't
+  # execute until code has already landed on `main` via a push.
+  badge:
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: coverage-data
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - run: pip install -r requirements-dev.txt
+      - run: python3 scripts/make-coverage-badge.py
+      # Two guards against the retrigger loop this step would otherwise
+      # cause (a push from this job would normally re-run `push`
+      # workflows): commit only when the SVG bytes actually changed - an
+      # unchanged badge makes no commit and therefore triggers nothing -
+      # and, belt and braces, "[skip ci]" in the message, which GitHub
+      # honours by not starting new workflow runs for that commit even if
+      # something did change.
+      - name: Commit badge if it changed
+        run: |
+          if git diff --quiet -- .github/badges/coverage.svg; then
+            echo "Badge unchanged - nothing to commit."
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add .github/badges/coverage.svg
+            git commit -m "chore: update coverage badge [skip ci]"
+            git push
+          fi
