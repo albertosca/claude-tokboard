@@ -129,3 +129,23 @@ disallow_untyped_defs = false
 # why that, and not a COVERAGE_PROCESS_START/.pth arrangement), so it is
 # measured by a plain `pytest` run with no environment-level setup step.
 addopts = "--cov=lib/metrics_core --cov=dashboard_html --cov=dashboard_html_assets --cov=dashboard_tui --cov=scripts --cov=hooks --cov-branch"
+
+[tool.coverage.report]
+# The gate (Phase 4, 2026-09-03). Every module in the --cov set above is at
+# 100% statement and branch, so this locks it there: a single uncovered line
+# fails the run. Proven able to fail before being trusted - appending one
+# never-called function to lib/metrics_core/format.py took the total to
+# 99.96% and pytest exited 1 while all 582 tests still passed. A gate that
+# has not been shown to go red is not a gate.
+#
+# Declared here rather than as --cov-fail-under in addopts so that a bare
+# `coverage report` enforces the same number: one source of truth.
+#
+# NOTE for anyone running a SUBSET of the suite: pytest-cov applies this
+# threshold to whatever ran, so `pytest tests/test_format.py` reports ~9%
+# and fails - not because anything is broken, but because coverage measured
+# over one file is meaningless. Use `--no-cov` for subset runs. This is a
+# deliberate trade: the alternative (gate only in CI) leaves a full local
+# run unable to catch a regression, and this repo's standing practice is to
+# run the whole suite anyway, which takes about 30 seconds.
+fail_under = 100
