@@ -1,11 +1,15 @@
+🇺🇸 [English](README.md) · 🇧🇷 [Português](README.pt.md)
+
+[![CI](https://github.com/albertosca/claude-metrics-dashboard/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/albertosca/claude-metrics-dashboard/actions/workflows/ci.yml)
+[![Lint](https://github.com/albertosca/claude-metrics-dashboard/actions/workflows/lint.yml/badge.svg?branch=main)](https://github.com/albertosca/claude-metrics-dashboard/actions/workflows/lint.yml)
+[![Coverage](https://raw.githubusercontent.com/albertosca/claude-metrics-dashboard/main/.github/badges/coverage.svg)](https://github.com/albertosca/claude-metrics-dashboard/blob/main/.github/badges/coverage.svg)
+
 # metrics-dashboard
 
 Um plugin do Claude Code que acompanha seu histórico de sessões e uso
 de tokens, e mostra isso de duas formas: um dashboard HTML e um app de
 terminal (TUI) completo. Veja no que você tem trabalhado e quanto isso
 está custando, por projeto, por dia.
-
-[Read this in English](README.md)
 
 ## O que você ganha
 

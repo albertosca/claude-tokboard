@@ -37,18 +37,6 @@ jobs:
           include-hidden-files: true
           retention-days: 1
 
-  lint:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.14"
-      - run: pip install -r requirements-dev.txt
-      - run: ruff check .
-      - run: ruff format --check .
-      - run: mypy --strict .
-
   # Generates and commits .github/badges/coverage.svg. Split into its own
   # job, rather than a step tacked onto `test`, specifically for
   # permissions: this is the only job in the workflow with contents: write,
@@ -56,7 +44,10 @@ jobs:
   # including one opened from a fork. A fork PR still runs `test` and
   # `lint` (read-only), but the write-scoped GITHUB_TOKEN is never issued to
   # a job that executes fork-authored code, because this job doesn't
-  # execute until code has already landed on `main` via a push.
+  # execute until code has already landed on `main` via a push. (`lint`
+  # lives in its own workflow, lint.yml, so its badge can address that
+  # job's status precisely - GitHub's badge API is per-workflow, not
+  # per-job.)
   badge:
     needs: test
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
