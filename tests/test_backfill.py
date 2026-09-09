@@ -538,13 +538,70 @@ def test_load_backfill_state_returns_none_on_corrupt_json(tmp_path):
     assert mr.load_backfill_state(str(path)) is None
 
 
+def test_write_backfill_state_creates_missing_parent_directories(tmp_path):
+    # write_backfill_state used to be a truncate-then-write with no
+    # os.makedirs guard, inconsistent with the rest of this module's
+    # atomic-write discipline - the real path lives under ~/.claude/metrics,
+    # which is not guaranteed to exist yet on a fresh machine.
+    path = str(tmp_path / "nested" / "does" / "not" / "exist" / "state.json")
+    mr.write_backfill_state("2026-08-19", "2026-08-19T12:00:00", 1, path=path)
+    assert mr.load_backfill_state(path) is not None
+
+
+def test_write_backfill_state_records_uncorrectable_rows_and_earliest_corrected(tmp_path):
+    path = str(tmp_path / "state.json")
+    written = mr.write_backfill_state(
+        "2026-08-19",
+        "2026-08-19T12:00:00",
+        3411,
+        uncorrectable_rows=42,
+        earliest_corrected="2026-07-22T09:00:00",
+        path=path,
+    )
+    loaded = mr.load_backfill_state(path)
+    assert loaded == written
+    assert loaded["uncorrectable_rows"] == 42
+    assert loaded["earliest_corrected"] == "2026-07-22T09:00:00"
+
+
 def test_describe_backfill_state_when_never_applied():
     text = mr.describe_backfill_state(None)
     assert "2026-08-13" in text
     assert "não" in text  # Portuguese: not yet corrected
 
 
+def test_describe_backfill_state_degrades_on_a_state_that_is_not_a_dict():
+    # load_backfill_state() only guards against corrupt JSON; valid JSON
+    # that parses to a list or a number is a different, unguarded shape
+    # this used to raise TypeError on (state['cutoff'] on a list).
+    text = mr.describe_backfill_state([1, 2, 3])  # type: ignore[arg-type]
+    assert "não" in text
+
+
+def test_describe_backfill_state_degrades_on_a_dict_missing_required_keys():
+    text = mr.describe_backfill_state({"corrected_rows": 3411})
+    assert "não" in text
+
+
 def test_describe_backfill_state_when_applied():
     state = {"cutoff": "2026-08-19", "applied_at": "2026-08-19T12:00:00", "corrected_rows": 3411}
     text = mr.describe_backfill_state(state)
     assert "2026-08-19" in text
+
+
+def test_describe_backfill_state_names_the_retention_boundary_when_present():
+    state = {
+        "cutoff": "2026-08-19",
+        "applied_at": "2026-08-19T12:00:00",
+        "corrected_rows": 3411,
+        "uncorrectable_rows": 42,
+        "earliest_corrected": "2026-07-22T09:00:00",
+    }
+    text = mr.describe_backfill_state(state)
+    assert "2026-07-22" in text
+
+
+def test_describe_backfill_state_omits_the_retention_boundary_when_absent():
+    state = {"cutoff": "2026-08-19", "applied_at": "2026-08-19T12:00:00", "corrected_rows": 3411}
+    text = mr.describe_backfill_state(state)
+    assert "pra corrigir" not in text

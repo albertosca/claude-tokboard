@@ -292,6 +292,11 @@ def test_main_writes_backfill_state_after_a_successful_apply(tmp_path, script, m
     assert state["cutoff"]
     assert "applied_at" in state
     assert state["corrected_rows"] == 0
+    # "s1" has no transcript on disk, so plan_corrections can never touch
+    # it - the state records that as the OTHER boundary (retention, not
+    # just the cutoff date), and there is nothing corrected to date.
+    assert state["uncorrectable_rows"] == 1
+    assert state["earliest_corrected"] is None
 
 
 def test_main_rejects_a_malformed_cutoff(script, monkeypatch, capsys):
@@ -416,6 +421,8 @@ def test_main_rewrites_the_file_through_the_real_backup_and_write_path(
     assert state["corrected_rows"] == 1
     assert state["cutoff"]
     assert "applied_at" in state
+    assert state["earliest_corrected"] == "2026-08-01T10:00:01"
+    assert state["uncorrectable_rows"] == 0
 
 
 def test_main_aborts_when_no_metrics_file_exists_at_the_given_path(

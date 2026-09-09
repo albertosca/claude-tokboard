@@ -303,24 +303,68 @@ def load_backfill_state(path: str | None = None) -> dict[str, Any] | None:
 
 
 def write_backfill_state(
-    cutoff: str, applied_at: str, corrected_rows: int, path: str | None = None
+    cutoff: str,
+    applied_at: str,
+    corrected_rows: int,
+    uncorrectable_rows: int = 0,
+    earliest_corrected: str | None = None,
+    path: str | None = None,
 ) -> dict[str, Any]:
     path = path or BACKFILL_STATE_FILE
-    state = {"cutoff": cutoff, "applied_at": applied_at, "corrected_rows": corrected_rows}
-    with Path(path).open("w") as f:
+    state = {
+        "cutoff": cutoff,
+        "applied_at": applied_at,
+        "corrected_rows": corrected_rows,
+        # Rows that plan_corrections() could never touch for lack of a
+        # transcript on disk, and the earliest timestamp_end actually
+        # corrected - together they mark WHERE the correction boundary
+        # falls inside the transcript-retention window, not just when the
+        # cutoff itself was set. See describe_backfill_state().
+        "uncorrectable_rows": uncorrectable_rows,
+        "earliest_corrected": earliest_corrected,
+    }
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with target.open("w") as f:
         json.dump(state, f, indent=2)
     return state
 
 
 def describe_backfill_state(state: dict[str, Any] | None) -> str:
-    """Plain-language boundary note, rendered verbatim by both dashboards."""
-    if state is None:
-        return (
-            f"duplicação de tokens ainda não corrigida no histórico "
-            f"(dados anteriores a {DEFAULT_CUTOFF} podem estar inflados)"
-        )
-    return (
-        f"duplicação corrigida para sessões encerradas antes de {state['cutoff']} "
-        f"(aplicado em {state['applied_at'][:10]}); sessões sem transcript "
+    """Plain-language boundary note, rendered verbatim by both dashboards.
+
+    Degrades to the "never applied" note on any malformed state - missing
+    keys, or valid JSON that isn't a dict at all - instead of raising
+    KeyError/TypeError and crashing both dashboards over a state file that
+    lives outside the repo and is hand-editable. load_backfill_state()
+    already guards against corrupt JSON; this guards against JSON that
+    parses fine but isn't the shape expected here.
+    """
+    never_applied = (
+        f"duplicação de tokens ainda não corrigida no histórico "
+        f"(dados anteriores a {DEFAULT_CUTOFF} podem estar inflados)"
+    )
+    if not isinstance(state, dict):
+        return never_applied
+    cutoff = state.get("cutoff")
+    applied_at = state.get("applied_at")
+    if not isinstance(cutoff, str) or not isinstance(applied_at, str):
+        return never_applied
+    note = (
+        f"duplicação corrigida para sessões encerradas antes de {cutoff} "
+        f"(aplicado em {applied_at[:10]}); sessões sem transcript "
         f"salvo continuam com contagem inflada"
     )
+    # The OTHER boundary (2026-08-24 backlog entry): correction is also
+    # bounded by transcript retention, not just the cutoff date above. A
+    # reader can't otherwise tell "that week was genuinely busier" from
+    # "that week is still uncorrected" - measured on the 2026-08-21
+    # production run, pre-2026-07-22 days averaged roughly the same
+    # 1.6-2x factor the correction removes elsewhere.
+    earliest_corrected = state.get("earliest_corrected")
+    if isinstance(earliest_corrected, str) and earliest_corrected:
+        note += (
+            f"; dados antes de {earliest_corrected[:10]} podem ainda estar "
+            "inflados, sem transcript pra corrigir"
+        )
+    return note

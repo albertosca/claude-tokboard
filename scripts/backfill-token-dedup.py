@@ -339,7 +339,20 @@ def main() -> int:
         print(f"  mode {oct(stat.S_IMODE(metrics_path.stat().st_mode))}")
         print(f"  sha256 {sha256_bytes(written)}")
 
-    write_backfill_state(args.cutoff, datetime.now().isoformat(), len(plan), path=args.state_file)
+    # The earliest timestamp_end actually corrected, and the count of rows
+    # that could never be (no transcript on disk) - both feed the boundary
+    # note's other half: WHERE correction stops for lack of transcript
+    # retention, not just the cutoff date.
+    earliest_corrected = min((records[index]["timestamp_end"] for index in plan), default=None)
+    uncorrectable_rows = stats.get("untouched: no transcript on disk", 0)
+    write_backfill_state(
+        args.cutoff,
+        datetime.now().isoformat(),
+        len(plan),
+        uncorrectable_rows=uncorrectable_rows,
+        earliest_corrected=earliest_corrected,
+        path=args.state_file,
+    )
     print(f"  backfill state recorded: {args.state_file}")
     return 0
 
