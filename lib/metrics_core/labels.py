@@ -282,11 +282,23 @@ def load_label_cache() -> dict[str, str]:
 
 def save_label_cache(cache: dict[str, str]) -> None:
     Path(TASK_LABELS_FILE).parent.mkdir(parents=True, exist_ok=True)
-    with Path(TASK_LABELS_FILE).open("w") as f:
+    with Path(TASK_LABELS_FILE).open("w") as f, _CACHE_LOCK:
         json.dump(cache, f, indent=2)
 
 
 _NO_LABEL = "__no_label__"
+
+# Guards every write to a label cache dict AND every json.dump of one.
+# dashboard_html.py's main() shares one cache dict between the main
+# thread (which periodically calls save_*_cache while labeling is still
+# in flight - see its SAVE_EVERY comment) and a single ThreadPoolExecutor
+# worker thread (which writes cache[key] = ... as each get_*_label call
+# resolves). Without this lock, json.dump's internal dict iteration can
+# observe the worker thread inserting a new key mid-iteration and raise
+# "RuntimeError: dictionary changed size during iteration" - reproduced
+# directly (2026-09-08) running dashboard_html.py for real against a
+# cache with genuinely new, uncached agent ids to write.
+_CACHE_LOCK = threading.Lock()
 
 
 class LabelBudget:
@@ -325,14 +337,16 @@ def get_task_label(
     internal_name = record.get("internal_name")
     if internal_name and len(internal_name.split()) <= 6:
         internal_name = cast(str, internal_name)
-        cache[session_id] = internal_name
+        with _CACHE_LOCK:
+            cache[session_id] = internal_name
         return internal_name
 
     source = internal_name or find_away_summary(record.get("transcript_path"))
     if not source:
         source = cold_summary_source(record.get("transcript_path"))
     if not source:
-        cache[session_id] = _NO_LABEL
+        with _CACHE_LOCK:
+            cache[session_id] = _NO_LABEL
         return None
 
     # Budget exhausted: leave this session UNCACHED (don't write
@@ -342,7 +356,8 @@ def get_task_label(
         return None
 
     label = compress_to_label(source)
-    cache[session_id] = label or _NO_LABEL
+    with _CACHE_LOCK:
+        cache[session_id] = label or _NO_LABEL
     return label
 
 
@@ -358,7 +373,7 @@ def load_agent_label_cache() -> dict[str, str]:
 
 def save_agent_label_cache(cache: dict[str, str]) -> None:
     Path(AGENT_LABELS_FILE).parent.mkdir(parents=True, exist_ok=True)
-    with Path(AGENT_LABELS_FILE).open("w") as f:
+    with Path(AGENT_LABELS_FILE).open("w") as f, _CACHE_LOCK:
         json.dump(cache, f, indent=2)
 
 
@@ -380,14 +395,16 @@ def get_agent_label(
     # docstring for the real-data evidence behind this ordering.
     source = warm_summary_source(transcript_path) or cold_summary_source(transcript_path)
     if not source:
-        cache[agent_id] = _NO_LABEL
+        with _CACHE_LOCK:
+            cache[agent_id] = _NO_LABEL
         return None
 
     if not budget.try_consume():
         return None
 
     label = compress_to_label(source)
-    cache[agent_id] = label or _NO_LABEL
+    with _CACHE_LOCK:
+        cache[agent_id] = label or _NO_LABEL
     return label
 
 
