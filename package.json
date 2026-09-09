@@ -1,5 +1,5 @@
 {
-  "name": "claude-metrics-dashboard-tests",
+  "name": "claude-tokboard-tests",
   "private": true,
   "description": "Dev-only: jsdom for the dashboard rendering tests. The dashboard itself has no runtime JavaScript dependencies.",
   "devDependencies": {

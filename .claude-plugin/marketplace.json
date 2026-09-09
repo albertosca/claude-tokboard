@@ -1,12 +1,12 @@
 {
-  "name": "metrics-dashboard",
+  "name": "tokboard",
   "owner": { "name": "albertosca" },
   "metadata": {
     "description": "Session metrics logger and dashboard for Claude Code - HTML and terminal (TUI) modes, token usage, cost, and project/session history"
   },
   "plugins": [
     {
-      "name": "metrics-dashboard",
+      "name": "tokboard",
       "source": ".",
       "description": "Session metrics logger and dashboard for Claude Code - HTML and terminal (TUI) modes, token usage, cost, and project/session history"
     }

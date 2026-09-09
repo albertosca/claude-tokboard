@@ -1,10 +1,10 @@
 🇺🇸 [English](README.md) · 🇧🇷 [Português](README.pt.md)
 
-[![CI](https://github.com/albertosca/claude-metrics-dashboard/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/albertosca/claude-metrics-dashboard/actions/workflows/ci.yml)
-[![Lint](https://github.com/albertosca/claude-metrics-dashboard/actions/workflows/lint.yml/badge.svg?branch=main)](https://github.com/albertosca/claude-metrics-dashboard/actions/workflows/lint.yml)
-[![Coverage](https://raw.githubusercontent.com/albertosca/claude-metrics-dashboard/main/.github/badges/coverage.svg)](https://github.com/albertosca/claude-metrics-dashboard/blob/main/.github/badges/coverage.svg)
+[![CI](https://github.com/albertosca/claude-tokboard/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/albertosca/claude-tokboard/actions/workflows/ci.yml)
+[![Lint](https://github.com/albertosca/claude-tokboard/actions/workflows/lint.yml/badge.svg?branch=main)](https://github.com/albertosca/claude-tokboard/actions/workflows/lint.yml)
+[![Coverage](https://raw.githubusercontent.com/albertosca/claude-tokboard/main/.github/badges/coverage.svg)](https://github.com/albertosca/claude-tokboard/blob/main/.github/badges/coverage.svg)
 
-# metrics-dashboard
+# tokboard
 
 Um plugin do Claude Code que acompanha seu histórico de sessões e uso
 de tokens, e mostra isso de duas formas: um dashboard HTML e um app de
@@ -33,8 +33,8 @@ abaixo pros comandos exatos, ou os workflows em si em
 - **Histórico de sessões** - toda sessão registrada com um rótulo de
   tarefa auto-gerado (opcional - veja abaixo), filtrável por projeto ou
   tag, com detalhamento de subagentes por sessão.
-- **Duas formas de ver**: `/metrics` abre um dashboard HTML interativo
-  no navegador; `/metrics-tui` abre um app de terminal completo
+- **Duas formas de ver**: `/tokboard` abre um dashboard HTML interativo
+  no navegador; `/tokboard-tui` abre um app de terminal completo
   (feito com [Textual](https://github.com/Textualize/textual)) pra
   quando um navegador não é conveniente.
 
@@ -43,16 +43,16 @@ abaixo pros comandos exatos, ou os workflows em si em
 Instale este plugin pelo sistema de plugins do Claude Code (veja a
 [documentação de plugins do Claude Code](https://docs.claude.com/en/docs/claude-code)
 pra saber como seu ambiente descobre e instala plugins). Depois de
-instalado, `/metrics` já funciona de cara (zero dependências
-externas) - `/metrics-tui` instala sozinho suas dependências
+instalado, `/tokboard` já funciona de cara (zero dependências
+externas) - `/tokboard-tui` instala sozinho suas dependências
 (`textual`, `textual-plotext`) num ambiente virtual dedicado, na
 primeira vez que você rodar.
 
 No Debian/Ubuntu, esse passo de auto-instalação precisa do pacote
-`python3-venv`, que nem sempre já vem instalado. Se o `/metrics-tui`
+`python3-venv`, que nem sempre já vem instalado. Se o `/tokboard-tui`
 falhar na primeira vez com um erro sobre `ensurepip`, rode
 `sudo apt install python3-venv` (ou o `python3.X-venv` específico da
-versão que a mensagem de erro citar) e tente de novo - o `/metrics`
+versão que a mensagem de erro citar) e tente de novo - o `/tokboard`
 em si não é afetado, já que não tem dependência nenhuma pra instalar.
 
 ## Rótulos de tarefa por IA (opcional)

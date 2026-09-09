@@ -1,12 +1,12 @@
 {
-  "name": "metrics-dashboard",
+  "name": "tokboard",
   "description": "Session metrics logger and dashboard for Claude Code - HTML and terminal (TUI) modes, token usage, cost, and project/session history",
-  "version": "1.0.3",
+  "version": "2.0.0",
   "author": {
     "name": "Alberto de Sá Cavalcanti de Albuquerque"
   },
-  "homepage": "https://github.com/albertosca/claude-metrics-dashboard",
-  "repository": "https://github.com/albertosca/claude-metrics-dashboard",
+  "homepage": "https://github.com/albertosca/claude-tokboard",
+  "repository": "https://github.com/albertosca/claude-tokboard",
   "license": "MIT",
   "keywords": [
     "metrics",
