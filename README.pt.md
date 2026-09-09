@@ -11,6 +11,20 @@ de tokens, e mostra isso de duas formas: um dashboard HTML e um app de
 terminal (TUI) completo. Veja no que você tem trabalhado e quanto isso
 está custando, por projeto, por dia.
 
+## Notas de engenharia
+
+Duas camadas de apresentação (um dashboard HTML e um TUI feito com
+[Textual](https://github.com/Textualize/textual)) compartilham uma
+única camada de dados em Python puro (`lib/metrics_core/`), então todo
+número que as duas superfícies mostram é calculado uma vez só e
+testado uma vez só. A suíte está em 100% de cobertura (statement e
+branch) com um gate permanente (`--cov-fail-under=100` - uma única
+linha sem cobertura derruba o build), e o CI roda ela junto com o
+`ruff` (um conjunto amplo de regras, não só o padrão) e o
+`mypy --strict` a cada push - veja [Contribuindo](#contribuindo)
+abaixo pros comandos exatos, ou os workflows em si em
+[`.github/workflows/`](.github/workflows/).
+
 ## O que você ganha
 
 - **Visibilidade de custo e tokens** - tokens de input/output/cache
@@ -63,3 +77,23 @@ Todo dado registrado fica em `~/.claude/metrics/` (`sessions.jsonl`,
 `subagents.jsonl`, caches de rótulo, o `dashboard.html` gerado) -
 independente do plugin em si. Desinstalar o plugin para de registrar
 dados novos, mas não apaga o que já existe.
+
+## Contribuindo
+
+```bash
+pip install -r requirements-dev.txt -r requirements-tui.txt
+npm install                     # jsdom, pros testes de renderização
+pytest -q                       # suíte completa, 100% de cobertura é gate
+ruff check . && ruff format --check .
+mypy .
+```
+
+Sem build step e sem asset compilado - `dashboard_html.py` e
+`dashboard_tui.py` são os dois pontos de entrada, ambos lendo de
+`lib/metrics_core/`. PRs são bem-vindos; abra uma issue antes pra
+qualquer coisa além de um fix pequeno, pra alinhar a direção antes do
+trabalho.
+
+## Licença
+
+[MIT](LICENSE)

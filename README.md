@@ -11,6 +11,18 @@ and shows it back to you two ways: an HTML dashboard, and a full
 terminal (TUI) app. See what you've been working on and how much it's
 costing you, project by project, day by day.
 
+## Engineering notes
+
+Two presentation layers (an HTML dashboard and a [Textual](https://github.com/Textualize/textual)
+TUI) share one pure-Python data layer (`lib/metrics_core/`), so every
+number both surfaces show is computed once and tested once. The suite
+is at 100% statement and branch coverage with a permanent gate
+(`--cov-fail-under=100` - a single uncovered line fails the build), and
+CI runs it alongside `ruff` (a wide rule set, not just the defaults)
+and `mypy --strict` on every push - see [Contributing](#contributing)
+below for the exact commands, or the workflows themselves in
+[`.github/workflows/`](.github/workflows/).
+
 ## What you get
 
 - **Cost and token visibility** - input/output/cache tokens broken
@@ -62,3 +74,22 @@ All logged data lives in `~/.claude/metrics/` (`sessions.jsonl`,
 `subagents.jsonl`, label caches, the rendered `dashboard.html`) -
 independent of the plugin itself. Uninstalling the plugin stops new
 data from being logged but doesn't delete what's already there.
+
+## Contributing
+
+```bash
+pip install -r requirements-dev.txt -r requirements-tui.txt
+npm install                     # jsdom, for the rendering tests
+pytest -q                       # full suite, 100% coverage is a hard gate
+ruff check . && ruff format --check .
+mypy .
+```
+
+No build step and no compiled assets - `dashboard_html.py` and
+`dashboard_tui.py` are the two entry points, both reading from
+`lib/metrics_core/`. PRs are welcome; open an issue first for anything
+beyond a small fix so the direction can be agreed on before the work.
+
+## License
+
+[MIT](LICENSE)
