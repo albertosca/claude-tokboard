@@ -52,6 +52,8 @@ Usage:
     PYTHONPATH=lib:tests python3 scripts/verify-detectors.py
 """
 
+from __future__ import annotations
+
 import hashlib
 import os
 import re

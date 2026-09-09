@@ -55,6 +55,8 @@ Safety
   field is compared byte-for-byte before the rename.
 """
 
+from __future__ import annotations
+
 import argparse
 import collections
 import json
@@ -106,7 +108,7 @@ def print_daily_comparison(
 
 
 def print_summary(
-    stats: "collections.Counter[str]",
+    stats: collections.Counter[str],
     factors: list[float],
     before_total: int,
     after_total: int,

@@ -2,6 +2,8 @@
 stretch of time. Pure date arithmetic, no record handling - the filters
 that apply these windows live in records.py."""
 
+from __future__ import annotations
+
 import collections
 from datetime import datetime, timedelta
 

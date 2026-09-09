@@ -5,6 +5,8 @@ both dashboards (which read the state this module's functions record,
 to show the correction boundary honestly instead of a hardcoded date).
 """
 
+from __future__ import annotations
+
 import bisect
 import collections
 import hashlib
@@ -141,7 +143,7 @@ def token_sum(record: dict[str, Any]) -> int:
 
 def plan_corrections(
     records: list[dict[str, Any]], transcripts: dict[str, str], cutoff: str
-) -> tuple[dict[int, list[int]], "collections.Counter[str]", list[float]]:
+) -> tuple[dict[int, list[int]], collections.Counter[str], list[float]]:
     """Decide which sessions can be recomputed, and to what.
 
     Returns (plan, stats, factors) where plan maps a row index to its new

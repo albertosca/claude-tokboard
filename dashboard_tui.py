@@ -10,6 +10,8 @@ own .venv (see scripts/setup-tui-venv.sh to create it):
     python3 dashboard_tui.py
 """
 
+from __future__ import annotations
+
 import argparse
 import sys
 from concurrent.futures import ThreadPoolExecutor

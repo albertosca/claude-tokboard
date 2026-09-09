@@ -1,5 +1,7 @@
 """Number/date formatting helpers shared by both dashboard entry points."""
 
+from __future__ import annotations
+
 from datetime import datetime
 
 

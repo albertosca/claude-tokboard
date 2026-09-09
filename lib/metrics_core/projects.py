@@ -1,6 +1,8 @@
 """Project identity, grouping, and per-project aggregate helpers -
 shared by both dashboard entry points."""
 
+from __future__ import annotations
+
 import json
 from datetime import datetime
 from pathlib import Path

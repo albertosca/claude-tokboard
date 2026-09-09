@@ -2,6 +2,8 @@
 only part of metrics_core that shells out to `claude -p`. See
 LabelBudget for the per-run cap on real API calls this makes."""
 
+from __future__ import annotations
+
 import json
 import subprocess
 import threading

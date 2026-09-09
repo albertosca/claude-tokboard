@@ -2,6 +2,8 @@
 records - the data-ingestion layer shared by both dashboard entry
 points."""
 
+from __future__ import annotations
+
 import collections
 import json
 from datetime import datetime, timedelta
