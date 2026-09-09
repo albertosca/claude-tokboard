@@ -243,7 +243,7 @@ STYLE = """
         padding: 6px 10px;
         cursor: pointer;
         border-bottom: 1px solid var(--border);
-        font-size: 12px;
+        font-size: 13px;
         width: fit-content;
         min-width: 100%;
       }
@@ -262,11 +262,13 @@ STYLE = """
         text-align: right;
       }
       .session-row .tmux-window {
-        width: 90px;
+        width: 120px;
         flex-shrink: 0;
         overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;
+        color: var(--text-muted);
+        font-style: italic;
       }
       .session-header {
         position: sticky;
@@ -275,7 +277,7 @@ STYLE = """
         background: var(--surface-1);
         font-weight: bold;
         color: var(--text-muted);
-        font-size: 10px;
+        font-size: 11px;
         cursor: default;
         border-bottom: 2px solid var(--border);
       }
@@ -295,7 +297,7 @@ STYLE = """
         white-space: nowrap;
       }
       .session-row .branch-col {
-        width: 70px;
+        width: 110px;
         flex-shrink: 0;
         overflow: hidden;
         text-overflow: ellipsis;

@@ -46,7 +46,12 @@ def _base_record(**overrides: Any) -> dict[str, Any]:
 
 
 def _extract_span(html_out: str, css_class: str) -> str:
-    match = re.search(rf'<span class="{re.escape(css_class)}">(.*?)</span>', html_out)
+    # [^>]* after the class value tolerates a cosmetic attribute like
+    # title="..." (2026-09-09, the tmux-window/branch-col title tooltips) -
+    # same "located by identity, not by being the tag's only attribute"
+    # philosophy as the newer locators below, just applied to this older
+    # helper too rather than leaving two competing strictness levels.
+    match = re.search(rf'<span class="{re.escape(css_class)}"[^>]*>(.*?)</span>', html_out)
     assert match, f'no <span class="{css_class}"> found in {html_out!r}'
     return match.group(1)
 
@@ -214,6 +219,21 @@ def test_render_session_row_emits_no_inline_display_style():
         # widths) - confirming those ARE present rules out a vacuous
         # "no style attribute at all" pass.
         assert 'style="width:' in out
+
+
+def test_render_session_row_tmux_window_carries_an_icon_and_a_title_tooltip():
+    # 2026-09-09: Alberto found the tmux_window value read as a second,
+    # contradictory project name next to the session's own project group.
+    # The icon and title= tooltip mark it as terminal context instead of
+    # identity - branch-col gets the same title= treatment since it can
+    # also truncate.
+    record = _base_record(tmux_window="1:zsh")
+    out = dashboard_html.render_session_row(
+        record, is_active=False, group_colors={}, group_index=0, show_tmux=True
+    )
+    assert _extract_span(out, "tmux-window") == "🗔 1:zsh"
+    assert 'class="tmux-window" title="1:zsh"' in out
+    assert 'class="branch-col" title="main"' in out
 
 
 def test_render_session_row_no_tmux_omits_tmux_span_and_column():

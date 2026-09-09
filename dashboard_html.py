@@ -126,7 +126,17 @@ def render_session_row(
     # answers "does this session have subagents worth checking" without
     # opening every single row's detail panel to find out.
     subagent_badge = f"🤖{subagent_count}" if subagent_count else ""
-    tmux_span = f'<span class="tmux-window">{tmux_window}</span>' if show_tmux else ""
+    # Prefixed with a terminal icon and always carrying the full value in
+    # `title` (2026-09-04) - this is the tmux WINDOW name, not a second
+    # project name, and read next to the project group on its left it was
+    # being mistaken for a contradictory one (e.g. a "my-api" session
+    # showing "scratch" here). The icon plus the muted/italic styling from
+    # the CSS both point at "this is terminal context", not identity.
+    tmux_span = (
+        f'<span class="tmux-window" title="{tmux_window}">🗔 {tmux_window}</span>'
+        if show_tmux
+        else ""
+    )
     # Row visibility is class-driven ONLY (2026-08-13). This row used to be
     # born with an inline style="display:none" that toggleGroup then
     # overwrote with an inline display:flex. An inline declaration beats any
@@ -145,7 +155,8 @@ def render_session_row(
         f'<span class="date-col">{date_str}</span>'
         f"{tmux_span}"
         f'<span class="label-col">{task_label}</span>'
-        f'<span class="tag-col">{tag}</span><span class="branch-col">{branch}</span>'
+        f'<span class="tag-col">{tag}</span>'
+        f'<span class="branch-col" title="{branch}">{branch}</span>'
         f'<span class="tokens-total">{total_tokens}</span>'
         f"{render_composition_bar(record)}"
         f'<span class="duration-col">{duration_str}</span>'
