@@ -634,6 +634,7 @@ STYLE = """
       body[data-highlight~="group-color-5"] .legend-chip:has(.legend-swatch.group-color-5),
       body[data-highlight~="group-color-6"] .legend-chip:has(.legend-swatch.group-color-6),
       body[data-highlight~="group-color-7"] .legend-chip:has(.legend-swatch.group-color-7),
+      body[data-highlight~="group-color-8"] .legend-chip:has(.legend-swatch.group-color-8),
       body[data-highlight~="group-color-9"] .legend-chip:has(.legend-swatch.group-color-9),
       body[data-highlight~="group-color-10"] .legend-chip:has(.legend-swatch.group-color-10),
       body[data-highlight~="group-color-11"] .legend-chip:has(.legend-swatch.group-color-11),
