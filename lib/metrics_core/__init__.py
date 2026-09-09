@@ -38,6 +38,7 @@ from .labels import (
     load_label_cache,
     save_agent_label_cache,
     save_label_cache,
+    warm_summary_source,
 )
 from .periods import DEFAULT_PERIOD_ID, PERIODS, Period, resolve_period
 from .projects import (
@@ -136,5 +137,6 @@ __all__ = [
     "sha256_of",
     "token_sum",
     "verify_fields",
+    "warm_summary_source",
     "write_backfill_state",
 ]

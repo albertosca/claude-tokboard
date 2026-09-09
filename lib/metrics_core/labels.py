@@ -68,6 +68,66 @@ def cold_summary_source(transcript_path: str | None, max_turns: int = 6) -> str 
     return joined or None
 
 
+def warm_summary_source(transcript_path: str | None, max_turns: int = 4) -> str | None:
+    """The LAST max_turns of assistant text, in chronological order.
+
+    A subagent has no internal_name or away_summary (those are session-only
+    concepts), so get_agent_label used to fall back straight to
+    cold_summary_source - the FIRST few turns. For a subagent dispatched by
+    a skill template (task-reviewer, code-reviewer, subagent-driven-
+    development), those first turns are the templated dispatch instructions
+    ("Review one task... Follow the reviewer rubric at .../task-reviewer-
+    prompt.md... Work in the git worktree... Do NOT cd... Do not commit..."),
+    identical across every dispatch of that skill and specific to nothing.
+    Measured directly against this repo's own real subagent transcripts
+    (2026-09-04): 838 agent labels sampled from ~/.claude/metrics/
+    agent_labels.json, 49% were __no_label__ and the labels that did exist
+    clustered into near-duplicates like "Revisão de implementação de
+    tarefa" / "Revisar implementação de tarefa" (14 of ~514 unique real
+    labels) - all from that same boilerplate prefix.
+    The LAST assistant turns are the closest thing a subagent has to a
+    session's away_summary: whatever it actually concluded, concretely
+    ("Spec Compliance: Compliant - test-only diff confirmed empty...",
+    "Caught. Now mutation 4: ... sign flip on duration"). get_agent_label
+    tries this first and falls back to cold_summary_source only when a
+    subagent produced no text at all (aborted before any output).
+    """
+    if not transcript_path or not Path(transcript_path).exists():
+        return None
+    texts: list[str] = []
+    try:
+        with Path(transcript_path).open() as f:
+            lines = f.readlines()
+        for line in reversed(lines):
+            if len(texts) >= max_turns:
+                break
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                entry = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if entry.get("type") != "assistant":
+                continue
+            message = entry.get("message") or {}
+            content = message.get("content")
+            if isinstance(content, str):
+                texts.append(content)
+            elif isinstance(content, list):
+                for block in content:
+                    if isinstance(block, dict) and block.get("type") == "text":
+                        texts.append(block.get("text", ""))
+                        break
+    except Exception:
+        return None
+    # Chronological order for the prompt, even though the scan above ran
+    # newest-first - a label built from "conclusion, then earlier context"
+    # reads worse to the summarizer than "context, then conclusion".
+    joined = " ".join(t for t in reversed(texts) if t).strip()
+    return joined or None
+
+
 # Substrings (checked lowercased) that mean the model refused/couldn't
 # summarize instead of producing a real label ("Não há texto para
 # resumir", "I cannot complete this request...") - found 2026-07-23 in
@@ -312,7 +372,13 @@ def get_agent_label(
         cached = cache[agent_id]
         return None if cached == _NO_LABEL else cached
 
-    source = cold_summary_source(subagent_record.get("agent_transcript_path"))
+    transcript_path = subagent_record.get("agent_transcript_path")
+    # warm_summary_source (the LAST turns - what the subagent actually
+    # concluded) first, cold_summary_source (the FIRST turns - usually a
+    # skill's templated dispatch instructions for a subagent) only when
+    # the subagent produced no text at all. See warm_summary_source's own
+    # docstring for the real-data evidence behind this ordering.
+    source = warm_summary_source(transcript_path) or cold_summary_source(transcript_path)
     if not source:
         cache[agent_id] = _NO_LABEL
         return None

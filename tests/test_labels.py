@@ -826,6 +826,132 @@ def test_get_agent_label_budget_exhausted_leaves_agent_uncached(
     assert calls == []
 
 
+def test_warm_summary_source_reads_the_last_turns_in_chronological_order(tmp_path: Path) -> None:
+    path = tmp_path / "t.jsonl"
+    write_transcript(
+        path,
+        [
+            {"type": "user", "message": {"content": "Review one task. Do NOT cd."}},
+            {"type": "assistant", "message": {"content": "Caught. Now mutation 4."}},
+            {"type": "assistant", "message": {"content": "Caught. Now mutation 5."}},
+            {
+                "type": "assistant",
+                "message": {"content": "Spec Compliance: Compliant. All mutations caught."},
+            },
+        ],
+    )
+    result = mr.warm_summary_source(str(path), max_turns=2)
+    assert result == "Caught. Now mutation 5. Spec Compliance: Compliant. All mutations caught."
+
+
+def test_warm_summary_source_returns_none_for_a_missing_path() -> None:
+    assert mr.warm_summary_source(None) is None
+    assert mr.warm_summary_source("/does/not/exist.jsonl") is None
+
+
+def test_warm_summary_source_returns_none_when_no_assistant_text_exists(tmp_path: Path) -> None:
+    path = tmp_path / "t.jsonl"
+    write_transcript(path, [{"type": "user", "message": {"content": "Review one task."}}])
+    assert mr.warm_summary_source(str(path)) is None
+
+
+def test_warm_summary_source_skips_blank_lines_between_turns(tmp_path: Path) -> None:
+    path = tmp_path / "t.jsonl"
+    path.write_text(
+        '{"type": "assistant", "message": {"content": "turn0"}}\n'
+        "\n"
+        '{"type": "assistant", "message": {"content": "turn1"}}\n'
+    )
+    assert mr.warm_summary_source(str(path)) == "turn0 turn1"
+
+
+def test_warm_summary_source_skips_a_malformed_json_line_between_turns(tmp_path: Path) -> None:
+    path = tmp_path / "t.jsonl"
+    path.write_text(
+        '{"type": "assistant", "message": {"content": "turn0"}}\n'
+        "not json at all\n"
+        '{"type": "assistant", "message": {"content": "turn1"}}\n'
+    )
+    assert mr.warm_summary_source(str(path)) == "turn0 turn1"
+
+
+def test_warm_summary_source_ignores_an_entry_whose_content_is_neither_str_nor_list(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "t.jsonl"
+    write_transcript(
+        path,
+        [
+            {"type": "assistant", "message": {"content": "turn0"}},
+            {"type": "assistant", "message": {"content": 42}},
+        ],
+    )
+    assert mr.warm_summary_source(str(path)) == "turn0"
+
+
+def test_warm_summary_source_returns_none_for_an_unreadable_path(tmp_path: Path) -> None:
+    a_directory = tmp_path / "adir"
+    a_directory.mkdir()
+    assert mr.warm_summary_source(str(a_directory)) is None
+
+
+def test_warm_summary_source_extracts_text_blocks_from_list_content(tmp_path: Path) -> None:
+    path = tmp_path / "t.jsonl"
+    write_transcript(
+        path,
+        [
+            {"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Read"}]}},
+            {
+                "type": "assistant",
+                "message": {"content": [{"type": "text", "text": "Done reviewing."}]},
+            },
+        ],
+    )
+    assert mr.warm_summary_source(str(path)) == "Done reviewing."
+
+
+def test_get_agent_label_prefers_the_warm_source_over_the_cold_one(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    path = tmp_path / "t.jsonl"
+    write_transcript(
+        path,
+        [
+            {"type": "user", "message": {"content": "Review one task. Do NOT cd."}},
+            {"type": "assistant", "message": {"content": "Spec Compliance: Compliant."}},
+        ],
+    )
+    seen_sources: list[str] = []
+
+    def fake_compress(source: str) -> str:
+        seen_sources.append(source)
+        return "a label"
+
+    monkeypatch.setattr(labels_module, "compress_to_label", fake_compress)
+    record = {"agent_id": "a1", "agent_transcript_path": str(path)}
+    label = mr.get_agent_label(record, {}, mr.LabelBudget(None))
+    assert label == "a label"
+    assert seen_sources == ["Spec Compliance: Compliant."]
+
+
+def test_get_agent_label_falls_back_to_cold_source_when_no_assistant_text_exists(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    path = tmp_path / "t.jsonl"
+    write_transcript(path, [{"type": "user", "message": {"content": "Review one task."}}])
+    seen_sources: list[str] = []
+
+    def fake_compress(source: str) -> str:
+        seen_sources.append(source)
+        return "a label"
+
+    monkeypatch.setattr(labels_module, "compress_to_label", fake_compress)
+    record = {"agent_id": "a1", "agent_transcript_path": str(path)}
+    label = mr.get_agent_label(record, {}, mr.LabelBudget(None))
+    assert label == "a label"
+    assert seen_sources == ["Review one task."]
+
+
 def test_get_agent_label_generates_and_caches_on_success(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
