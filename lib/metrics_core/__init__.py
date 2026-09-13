@@ -1,6 +1,8 @@
-"""Shared, dependency-free (pure stdlib) data layer for both the HTML
-and TUI Claude Code metrics dashboards. Presentation code (dashboard_html.py,
-dashboard_tui.py) imports from this package instead of each other."""
+"""Shared, dependency-free (pure stdlib) data layer for the HTML and TUI
+Claude Code metrics dashboards (dashboard_html.py, dashboard_tui.py) and,
+via transcript_ingest, the two logging hooks (hooks/metrics-log.py,
+hooks/subagent-metrics-log.py). Every consumer imports from this package
+instead of each other."""
 
 from .backfill import (
     BACKFILL_STATE_FILE,
@@ -70,6 +72,7 @@ from .records import (
     normalize_project_paths,
     record_token_total,
 )
+from .transcript_ingest import append_record, parse_transcript
 
 __all__ = [
     "AGENT_LABELS_FILE",
@@ -85,6 +88,7 @@ __all__ = [
     "LabelBudget",
     "Period",
     "aggregate_by_day",
+    "append_record",
     "apply_plan",
     "as_of",
     "assign_group_colors",
@@ -125,6 +129,7 @@ __all__ = [
     "load_label_cache",
     "load_records",
     "normalize_project_paths",
+    "parse_transcript",
     "plan_corrections",
     "project_days_running",
     "project_display_label",
