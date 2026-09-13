@@ -21,6 +21,7 @@ from types import ModuleType
 from typing import Any, ClassVar
 
 from textual.app import App, ComposeResult
+from textual.binding import BindingType
 from textual.containers import Horizontal, VerticalScroll
 from textual.message import Message
 from textual.reactive import reactive
@@ -297,10 +298,10 @@ def build_session_tree(
     records: list[dict[str, Any]],
     subagents_by_session: dict[str, list[dict[str, Any]]],
     mr: ModuleType,
-) -> Tree:
+) -> Tree[Any]:
     group_colors = mr.assign_group_colors(records)
     groups = mr.build_project_groups(records, group_colors)
-    tree = Tree("Sessões")
+    tree: Tree[Any] = Tree("Sessões")
     tree.show_root = False
     for group in groups:
         project_path = group["project"]
@@ -344,7 +345,7 @@ def build_session_tree(
     return tree
 
 
-class SessionDetailPanel(VerticalScroll):  # type: ignore[misc]  # textual: base is Any (no stubs)
+class SessionDetailPanel(VerticalScroll):
     def __init__(self, mr: ModuleType, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.mr = mr
@@ -380,10 +381,10 @@ class SessionDetailPanel(VerticalScroll):  # type: ignore[misc]  # textual: base
         self._body.update("\n".join(lines))
 
 
-class CompositionLegend(Static):  # type: ignore[misc]  # textual: base is Any (no stubs)
-    highlighted = reactive(None)
+class CompositionLegend(Static):
+    highlighted: reactive[set[str] | None] = reactive(None)
 
-    class Highlight(Message):  # type: ignore[misc]  # textual: base is Any (no stubs)
+    class Highlight(Message):
         def __init__(self, series: set[str] | None) -> None:
             self.series = series
             super().__init__()
@@ -416,7 +417,7 @@ class CompositionLegend(Static):  # type: ignore[misc]  # textual: base is Any (
         chip_width = self.size.width // 4 if self.size.width else 0
         index = min(x // max(chip_width, 1), 3) if chip_width else 0
         series = self.SERIES[index][0]
-        current = self.highlighted or set()
+        current: set[str] = self.highlighted or set()
         if event.shift:
             self.highlighted = current | {series}
         elif event.ctrl:
@@ -471,7 +472,7 @@ def floor_stacked_bottom_series(bottom_series: list[int], day_totals: list[int])
     return [1 if v == 0 and day_totals[i] > 0 else v for i, v in enumerate(bottom_series)]
 
 
-class TrendChart(PlotextPlot):  # type: ignore[misc]  # textual: base is Any (no stubs)
+class TrendChart(PlotextPlot):
     # PlotextPlot is not focusable by default (2026-08-18): it needs to be
     # so action_cycle_period has something inside the Panorama pane to land
     # focus on after "p", the same way Tree already anchors the Sessões
@@ -563,7 +564,19 @@ class TrendChart(PlotextPlot):  # type: ignore[misc]  # textual: base is Any (no
                 ]
             else:
                 color = palette
-            self.plt.stacked_bar(labels, series_lists, labels=series_labels, color=color)
+            # textual_plotext's stub for stacked_bar only declares the
+            # narrower single-value bar() signature (label: str | None,
+            # color: single value) - the real plotext.stacked_bar it wraps
+            # takes labels (plural, one per series) and a color list, which
+            # is what actually renders a legend/palette per series here.
+            # Confirmed at runtime against the installed plotext.stacked_bar
+            # signature; this is a stub gap, not a bug in the call.
+            self.plt.stacked_bar(  # type: ignore[call-arg]
+                labels,
+                series_lists,
+                labels=series_labels,
+                color=color,  # type: ignore[arg-type]
+            )
             self.plt.title("Tokens por dia (por projeto)")
             max_total = max(
                 (sum(series_data[k][i] for k in series_keys) for i in range(len(days))), default=0
@@ -591,11 +604,13 @@ class TrendChart(PlotextPlot):  # type: ignore[misc]  # textual: base is Any (no
                 ]
             else:
                 color = self.SERIES_COLORS
-            self.plt.stacked_bar(
+            # See the "pane" branch above for why this needs a type: ignore
+            # against textual_plotext's narrower stacked_bar stub.
+            self.plt.stacked_bar(  # type: ignore[call-arg]
                 labels,
                 [input_totals, output_totals, cache_read_totals, cache_creation_totals],
                 labels=["input", "output", "cache read", "cache creation"],
-                color=color,
+                color=color,  # type: ignore[arg-type]
             )
             self.plt.title("Tokens por dia (por tipo de token)")
             max_total = max(
@@ -619,10 +634,10 @@ class TrendChart(PlotextPlot):  # type: ignore[misc]  # textual: base is Any (no
         self.refresh()
 
 
-class ProjectLegend(Static):  # type: ignore[misc]  # textual: base is Any (no stubs)
-    highlighted = reactive(None)
+class ProjectLegend(Static):
+    highlighted: reactive[set[str | None] | None] = reactive(None)
 
-    class Highlight(Message):  # type: ignore[misc]  # textual: base is Any (no stubs)
+    class Highlight(Message):
         def __init__(self, projects: set[str | None] | None) -> None:
             self.projects = projects
             super().__init__()
@@ -656,7 +671,7 @@ class ProjectLegend(Static):  # type: ignore[misc]  # textual: base is Any (no s
         chip_width = self.size.width // len(series_keys) if self.size.width else 0
         index = min(event.x // max(chip_width, 1), len(series_keys) - 1) if chip_width else 0
         key = series_keys[index]
-        current = self.highlighted or set()
+        current: set[str | None] = self.highlighted or set()
         if event.shift:
             self.highlighted = current | {key}
         elif event.ctrl:
@@ -667,7 +682,7 @@ class ProjectLegend(Static):  # type: ignore[misc]  # textual: base is Any (no s
         self.post_message(self.Highlight(self.highlighted))
 
 
-class ProjectRankingList(Static):  # type: ignore[misc]  # textual: base is Any (no stubs)
+class ProjectRankingList(Static):
     expanded = reactive(False)
 
     def __init__(
@@ -766,14 +781,14 @@ def build_arg_parser() -> argparse.ArgumentParser:
     return parser
 
 
-class MetricsTUIApp(App):  # type: ignore[misc]  # textual: base is Any (no stubs)
+class MetricsTUIApp(App[None]):
     CSS = """
     Horizontal { height: 1fr; }
     Tree { width: 62%; }
     SessionDetailPanel { width: 1fr; border-left: solid $panel; padding: 1; }
     .backfill-note { color: $text-muted; height: auto; padding: 0 1; }
     """
-    BINDINGS: ClassVar[list[tuple[str, str, str]]] = [
+    BINDINGS: ClassVar[list[BindingType]] = [
         ("q", "quit", "Sair"),
         ("t", "toggle_chart_mode", "Alterna modo do gráfico"),
         ("m", "toggle_more_projects", "Mais/menos projetos"),

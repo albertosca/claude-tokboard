@@ -20,51 +20,29 @@ strict = true
 # sys.path.insert(0, ".../lib") at runtime rather than a package install;
 # mypy_path mirrors that so `import metrics_core` resolves statically too.
 mypy_path = "lib"
-# textual/textual-plotext ship no type stubs. Two separate installs exist
-# and the distinction matters (2026-09-01): requirements-tui.txt is what
-# scripts/setup-tui-venv.sh auto-provisions into the repo's .venv for END
-# USERS of the plugin, while requirements-dev.txt installs the same two
-# libraries into whichever interpreter runs pytest, because the TUI tests
-# now import dashboard_tui and drive it in-process. So the TUI is no
-# longer "isolated in its own venv" as far as this repo's own tooling is
-# concerned - mypy and pytest both see it directly.
-#
-# follow_imports = "skip" makes mypy treat both packages as Any, which is
-# exactly what it did before 2026-09-01 - back then they were simply not
-# installed anywhere mypy could see, and ignore_missing_imports did the
-# same job. requirements-dev.txt now installs them, both ship py.typed,
-# and mypy consequently started type-checking dashboard_tui.py against
-# them for the first time: 24 findings, none of which this phase's task
-# introduced and none of which is a defect in dashboard_tui.py itself.
-#
-# They split three ways, and the split is why this is a "skip" rather
-# than a licence to edit production code:
-#   * 8 are "unused type: ignore" on the very `# type: ignore[misc]
-#     # textual: base is Any (no stubs)` comments that exist BECAUSE
-#     textual used to be Any - self-cancelling, and their comment text is
-#     now the stale half.
-#   * 4 come from a WRONG upstream stub. textual_plotext's hand-written
-#     plotext/_figure.pyi declares stacked_bar(label=...) with a scalar
-#     `color`, but the vendored runtime it ships alongside takes
-#     `labels=` and accepts a list - verified by inspect.signature, and
-#     by dashboard_tui.py:530 running green under test. Obeying that stub
-#     would BREAK working code.
-#   * the rest are real-but-cosmetic annotation gaps (a bare `current =
-#     None` later assigned a set, unparameterized Tree/App generics).
-#
-# Adopting textual's types is worth doing, but it is a typing change to
-# dashboard_tui.py, and Phase 3e Task 1 is forbidden from touching that
-# file. Deliberately left as follow-up rather than smuggled in here; see
-# the Task 1 report for the full list.
+# textual/textual-plotext ship real types (py.typed) as of the versions
+# pinned here, installed into whichever interpreter runs pytest via
+# requirements-dev.txt (and separately into end users' own .venv via
+# requirements-tui.txt / scripts/setup-tui-venv.sh - two installs, same
+# versions, different audiences). dashboard_tui.py's own real types are
+# adopted (2026-09-13, backlog item 2026-09-01): no override needed for
+# either package. The two type: ignore[call-arg]/[arg-type] pairs left in
+# dashboard_tui.py's stacked_bar() calls are a real upstream stub bug, not
+# local debt - textual_plotext's hand-written plotext/_figure.pyi declares
+# stacked_bar(label=...) with a scalar `color`, but the vendored runtime it
+# wraps takes `labels=` (plural) and a color list, confirmed by
+# inspect.signature against the installed plotext.stacked_bar directly.
+# See docs/superpowers/BACKLOG.md's 2026-09-01 entry for the full history
+# of the 24 findings this phase closed.
 [[tool.mypy.overrides]]
-# plotext.* added here (Phase 3e Task 2, 2026-09-01): tests/test_tui_chart.py
-# imports it directly (import plotext) to derive the "gray" ANSI escape
-# sequence from plotext's own colorize() rather than hard-coding one, so a
-# future palette remap can't silently make that assertion meaningless. Same
-# situation as textual/textual_plotext above - no stubs, no py.typed.
-module = ["textual.*", "textual_plotext.*", "plotext.*"]
+# plotext.* has no stubs of its own (textual_plotext.plotext is a vendored
+# copy of it, which DOES ship stubs, covered above - this is the real
+# upstream package, imported directly by tests/test_tui_chart.py to derive
+# the "gray" ANSI escape sequence from plotext's own colorize() rather than
+# hard-coding one, so a future palette remap can't silently make that
+# assertion meaningless).
+module = ["plotext.*"]
 ignore_missing_imports = true
-follow_imports = "skip"
 
 # pytest test functions returning None implicitly, with no `-> None`
 # annotation, are the idiomatic norm (https://docs.pytest.org/ conventions

@@ -47,6 +47,7 @@ sys.path.insert(0, str(REPO_ROOT))
 
 import metrics_core as mr  # noqa: E402
 from test_tui_state import seeded_tui_home  # noqa: E402
+from textual.widgets import Tree  # noqa: E402
 
 import dashboard_tui as tui  # noqa: E402
 
@@ -305,7 +306,7 @@ async def _drive_tree_selection() -> dict[str, Any]:
     ) as pilot:
         app = pilot.app
         await pilot.pause()
-        tree = app.query_one("Tree")
+        tree = app.query_one(Tree)
         panel = app.query_one(tui.SessionDetailPanel)
 
         results: dict[str, Any] = {"panel_before_any_click": str(panel._body.render())}

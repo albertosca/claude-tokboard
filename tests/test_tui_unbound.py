@@ -94,7 +94,7 @@ for the severity call.
 import importlib.util
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -237,7 +237,11 @@ async def _drive_g_twice() -> dict[str, Any]:
     async with tui.MetricsTUIApp(mr, tui.load_data(args, mr=mr), args=args).run_test(
         size=(140, 45)
     ) as pilot:
-        app = pilot.app
+        # pilot.app types as the generic App[None] base, which knows
+        # nothing about MetricsTUIApp's own active_tab_id attribute - cast
+        # to the concrete subclass rather than widen the real type with a
+        # blanket ignore.
+        app = cast("tui.MetricsTUIApp", pilot.app)
         await pilot.pause()
         await pilot.press("g")
         await pilot.pause()
