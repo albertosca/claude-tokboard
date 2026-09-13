@@ -281,10 +281,8 @@ def apply_period(
     }
 
 
-def load_data(
-    args: argparse.Namespace, mr: ModuleType | None = None, period_id: str | None = None
-) -> dict[str, Any]:
-    """Loads and windows in one call - the original signature, unchanged.
+def load_data(args: argparse.Namespace, mr: ModuleType | None = None) -> dict[str, Any]:
+    """Loads and windows in one call, at the default period.
 
     Kept for callers that just want data for one period (main(), the
     headless drivers, ad-hoc scripts). Anything that re-windows repeatedly
@@ -292,8 +290,7 @@ def load_data(
     calling this in a loop is precisely the defect it was split to fix.
     """
     mr = mr or import_metrics_report()
-    period_id = period_id or mr.DEFAULT_PERIOD_ID
-    return apply_period(load_base_data(args, mr=mr), period_id, mr)
+    return apply_period(load_base_data(args, mr=mr), mr.DEFAULT_PERIOD_ID, mr)
 
 
 def build_session_tree(
