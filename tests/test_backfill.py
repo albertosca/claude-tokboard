@@ -281,6 +281,41 @@ def test_plan_corrections_accepts_a_row_within_tolerance_of_the_raw_sum(tmp_path
     assert stats["corrected"] == 1
 
 
+def test_plan_corrections_accepts_a_row_just_inside_the_tolerance_boundary(tmp_path):
+    # Comparison is `drift > NEITHER_TOLERANCE` (strict). Mid-range values
+    # (this test's sibling above uses 0.5%, the refusal test below uses
+    # 50%) cannot catch NEITHER_TOLERANCE drifting by a few thousandths in
+    # either direction - only a test built close to the boundary can. Not
+    # bit-exact at 0.02 itself: float division rarely lands on a repeating
+    # binary fraction like 0.02 exactly (confirmed: 1020/1000 - 1 evaluates
+    # to 0.020000000000000018, landing on the wrong side of a "==" test
+    # written naively), so this uses 0.0199/0.0201 - a margin of one part
+    # in 200 of the tolerance itself, far tighter than the existing tests
+    # but comfortably clear of float noise at this magnitude. The expected
+    # 10199 is hardcoded, not derived from the constant: a value computed
+    # FROM NEITHER_TOLERANCE would still pass trivially if it moved,
+    # proving nothing.
+    path = tmp_path / "s1.jsonl"
+    write_transcript(path, [("2026-08-01T10:00:00", "msg-1", usage(input_tokens=10000))])
+    # raw_now is 10000; drift = |10199/10000 - 1| = 0.0199, just inside 0.02.
+    records = [record("s1", "2026-08-01T10:00:00", 10199, 0)]
+    plan, stats, _factors = mr.plan_corrections(records, {"s1": str(path)}, cutoff="2026-08-13")
+    assert plan == {0: [10000, 0, 0, 0]}
+    assert stats["corrected"] == 1
+
+
+def test_plan_corrections_refuses_a_row_just_outside_the_tolerance_boundary(tmp_path):
+    # The other side of the same boundary: see the sibling test above for
+    # why 0.0201 rather than exactly 0.02.
+    path = tmp_path / "s1.jsonl"
+    write_transcript(path, [("2026-08-01T10:00:00", "msg-1", usage(input_tokens=10000))])
+    # raw_now is 10000; drift = |10201/10000 - 1| = 0.0201, just past 0.02.
+    records = [record("s1", "2026-08-01T10:00:00", 10201, 0)]
+    plan, stats, _factors = mr.plan_corrections(records, {"s1": str(path)}, cutoff="2026-08-13")
+    assert plan == {}
+    assert stats["untouched: session has a row matching neither formula"] == 1
+
+
 def test_plan_corrections_refuses_the_whole_session_when_one_row_matches_neither_formula(tmp_path):
     # Two sessions worth of rows would each be individually decidable in
     # isolation - row 0 is a clean raw-sum correction (mirrors
