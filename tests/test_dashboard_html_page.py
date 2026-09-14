@@ -158,6 +158,7 @@ def _empty_render_html_kwargs() -> dict[str, Any]:
         "project_first_seen": {},
         "project_last_seen": {},
         "open_projects": set(),
+        "now": _now(),
     }
 
 
@@ -234,7 +235,7 @@ def test_render_html_marks_exactly_one_default_period_active_per_block_family(
     # not chart internals (already covered by test_dashboard_html_charts.py).
     call_order: list[int] = []
 
-    def fake_trend(records: Any, group_colors: Any, period_id: str) -> str:
+    def fake_trend(records: Any, group_colors: Any, period_id: str, now: Any = None) -> str:
         return f"TREND::{period_id}"
 
     def fake_panorama(records: Any, pfs: Any, pls: Any, op: Any, period_id: str) -> str:

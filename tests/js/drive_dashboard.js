@@ -123,7 +123,11 @@ function trendTokensDrawn(periodId) {
   let value = 0;
   let tolerance = 0;
   for (const title of titles) {
-    const match = / - (\S+) tokens$/.exec(title.textContent.trim());
+    // Not anchored to end-of-string ($): the trend chart's last bucket,
+    // while still in progress, appends " (parcial, NN%)" after "tokens"
+    // (2026-09-14, partial-bucket feature) - the value this line extracts
+    // is unaffected either way, so the anchor was only ever incidental.
+    const match = / - (\S+) tokens\b/.exec(title.textContent.trim());
     const parsed = match && parseFormatted(match[1]);
     if (!parsed) return null;
     value += parsed.value;

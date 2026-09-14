@@ -1,6 +1,8 @@
 """Adaptive time-bucket granularity (minute/hour/day/week/month/year)
 for the trend charts in both dashboard entry points."""
 
+from __future__ import annotations
+
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -41,6 +43,55 @@ def choose_granularity(timestamps: list[datetime]) -> str:
     if span <= timedelta(days=365 * 3):
         return "month"
     return "year"
+
+
+def _bucket_end(granularity: str, start: datetime) -> datetime:
+    """The moment a bucket of this granularity, starting at `start`, ends."""
+    if granularity == "minute":
+        return start + timedelta(minutes=1)
+    if granularity == "hour":
+        return start + timedelta(hours=1)
+    if granularity == "day":
+        return start + timedelta(days=1)
+    if granularity == "week":
+        return start + timedelta(days=7)
+    if granularity == "month":
+        return (
+            start.replace(year=start.year + 1, month=1)
+            if start.month == 12
+            else start.replace(month=start.month + 1)
+        )
+    return start.replace(year=start.year + 1)  # year
+
+
+def partial_bucket_fraction(granularity: str, bucket_key: str, now: datetime) -> float | None:
+    """How far into an in-progress bucket `now` falls (0..1), or None if
+    the bucket has already ended.
+
+    Backlog item, 2026-09-02: a trend chart's last bar is always a
+    fraction of its bucket compared to the complete ones beside it, and
+    reads as a decline even when it isn't one - the newest bucket is
+    simply still running. Only ever meaningful for the LAST bucket a
+    caller has: every earlier one has necessarily already ended, by
+    construction of how aggregate_by_day only ever buckets records up to
+    the present moment.
+
+    `now` may be timezone-aware (this repo's convention is
+    `datetime.now().astimezone()`) - stripped to naive local wall-clock
+    time before comparing, since every key_fmt/parse_fmt pair in
+    GRANULARITY_CONFIG round-trips naive local time (bucket keys are
+    produced by strftime-ing an aware moment with formats that carry no
+    UTC offset).
+    """
+    if now.tzinfo is not None:
+        now = now.replace(tzinfo=None)
+    start = datetime.strptime(bucket_key, GRANULARITY_CONFIG[granularity]["parse_fmt"])
+    end = _bucket_end(granularity, start)
+    if now >= end:
+        return None
+    if now <= start:
+        return 0.0
+    return (now - start).total_seconds() / (end - start).total_seconds()
 
 
 def aggregate_by_day(

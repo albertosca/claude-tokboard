@@ -21,6 +21,7 @@ literal attribute sequence broke on a harmless attribute addition.
 import itertools
 import re
 import sys
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -459,6 +460,62 @@ def test_render_trend_chart_bar_tooltips_name_the_slice_the_bucket_and_the_amoun
         f"{dashboard_html.SERIES_NAMES['series-2']} · 2026-08-01 - {mr.format_tokens(40)} tokens",
         f"{dashboard_html.SERIES_NAMES['series-3']} · 2026-08-10 - {mr.format_tokens(300)} tokens",
     ]
+
+
+def test_render_trend_chart_marks_the_last_bucket_as_partial_when_still_in_progress():
+    # Backlog, 2026-09-02: the trend chart's last bar is always a fraction
+    # of a full bucket while that bucket is still running, and reads as a
+    # decline even when it isn't one. `now` is pinned to the exact
+    # midpoint of the last bucket's day (2026-08-10 00:00 -> 2026-08-11
+    # 00:00), giving a clean, hand-verifiable 50%.
+    now = datetime(2026, 8, 10, 12, 0).astimezone()
+    out = dashboard_html.render_trend_chart(
+        _DAY_GRANULARITY_RECORDS, {"/proj/a": "group-color-1"}, "p1", now=now
+    )
+    for prefix in ("chart-pane-", "chart-tokens-"):
+        svg = _svg_block(out, prefix)
+        ticks = [t["text"] for t in _parse_texts(svg) if t.get("text-anchor") == "middle"]
+        assert ticks == ["01/08", "05/08", "10/08 · 50%"]
+
+        rects = _parse_elements(svg, "rect")
+        partial_rects = [r for r in rects if "chart-bar-partial" in r.get("class", "")]
+        assert len(partial_rects) == 1
+        # The overlay sits exactly on top of the one real bar it flags -
+        # _DAY_GRANULARITY_RECORDS has exactly one non-zero segment on
+        # 2026-08-10 in both modes (a single project, a single token type).
+        real_bar = next(
+            r
+            for r in rects
+            if "chart-bar" in r.get("class", "")
+            and "chart-bar-partial" not in r.get("class", "")
+            and r["x"] == partial_rects[0]["x"]
+        )
+        for field in ("x", "y", "width", "height"):
+            assert partial_rects[0][field] == real_bar[field]
+
+        assert any("(parcial, 50%)" in title for title in _titles(svg))
+    _assert_no_coordinate_escapes(_svg_block(out, "chart-pane-"))
+    _assert_no_coordinate_escapes(_svg_block(out, "chart-tokens-"))
+
+
+def test_render_trend_chart_does_not_mark_a_bucket_thats_already_fully_elapsed():
+    # Same fixture, `now` moved past the last bucket's end - the common
+    # case (any period whose last bucket isn't still running today, which
+    # every OTHER test in this module relies on implicitly by never
+    # passing `now` at all).
+    now = datetime(2026, 8, 12, 0, 0).astimezone()
+    out = dashboard_html.render_trend_chart(
+        _DAY_GRANULARITY_RECORDS, {"/proj/a": "group-color-1"}, "p1", now=now
+    )
+    assert "chart-bar-partial" not in out
+    assert "parcial" not in out
+    assert "<pattern" not in out
+    ticks = [
+        t["text"]
+        for t in _parse_texts(_svg_block(out, "chart-pane-"))
+        if t.get("text-anchor") == "middle"
+    ]
+    assert ticks == ["01/08", "05/08", "10/08"]
 
 
 def test_render_trend_chart_shared_denominator_pane_and_tokens_modes_agree_on_bucket_height():

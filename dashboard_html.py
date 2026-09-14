@@ -294,7 +294,10 @@ def render_detail_panel(
 
 
 def render_trend_chart(
-    records: list[dict[str, Any]], group_colors: dict[str | None, str], period_id: str
+    records: list[dict[str, Any]],
+    group_colors: dict[str | None, str],
+    period_id: str,
+    now: datetime | None = None,
 ) -> str:
     granularity, days = mr.aggregate_by_day(records)
     parse_fmt = mr.GRANULARITY_CONFIG[granularity]["parse_fmt"]
@@ -302,6 +305,14 @@ def render_trend_chart(
     n = len(days)
     if n < 2:
         return ""
+
+    # The last bucket is always a fraction of a full one while it's still
+    # running (backlog, 2026-09-02: "the newest bar always reads as a
+    # decline") - flagged here, once, rather than separately in each of
+    # bars_for_pane/bars_for_tokens/the x-axis loop below.
+    partial_frac = mr.partial_bucket_fraction(
+        granularity, days[-1]["day"], now or datetime.now().astimezone()
+    )
 
     day_totals = [sum(mr.record_token_total(r) for r in day["records"]) for day in days]
     # The two tabs now decompose the SAME quantity - total tokens - one
@@ -391,6 +402,8 @@ def render_trend_chart(
         x = padding_left + idx * step + bar_width / 2
         bucket_dt = datetime.strptime(days[idx]["day"], parse_fmt)
         tick_date = bucket_dt.strftime(tick_fmt)
+        if idx == n - 1 and partial_frac is not None:
+            tick_date += f" · {round(partial_frac * 100)}%"
         x_axis.append(
             f'<text x="{x:.1f}" y="{height - 4}" class="chart-axis-label" '
             f'text-anchor="middle">{tick_date}</text>'
@@ -411,8 +424,21 @@ def render_trend_chart(
             'class="chart-highlight-band" />'
         )
 
+    # Tooltip suffix and hatch overlay for the last bucket while it's
+    # still partial - `hatch_url` is None for a complete last bucket, so
+    # every bars_for_* segment's `if hatch_url and i == n - 1` guard below
+    # is skipped entirely and nothing about a complete chart changes.
+    partial_note = f" (parcial, {round(partial_frac * 100)}%)" if partial_frac is not None else ""
+
+    def hatch_overlay(hatch_id: str, x: float, y: float, w: float, h: float) -> str:
+        return (
+            f'<rect x="{x:.1f}" y="{y:.1f}" width="{w:.1f}" height="{h:.1f}" '
+            f'class="chart-bar-partial" fill="url(#{hatch_id})" pointer-events="none" />'
+        )
+
     def bars_for_pane() -> str:
         bars = []
+        hatch_id = f"chart-hatch-pane-{period_id}"
         for i, day in enumerate(days):
             x = padding_left + i * step + (step - bar_width) / 2
             by_project: dict[str | None, int] = {}
@@ -432,18 +458,22 @@ def render_trend_chart(
                 y_cursor -= seg_height
                 group_class = group_colors.get(project, "group-color-none")
                 project_label = mr.project_display_label(project)
+                note = partial_note if i == n - 1 else ""
                 bars.append(
                     f'<rect x="{x:.1f}" y="{y_cursor:.1f}" '
                     f'width="{bar_width:.1f}" height="{seg_height:.1f}" '
                     f'class="chart-bar {group_class}" '
                     f"onclick=\"highlightProject('{group_class}', event)\">"
                     f"<title>{html.escape(project_label)} · {day['day']} - "
-                    f"{mr.format_tokens(value)} tokens</title></rect>"
+                    f"{mr.format_tokens(value)} tokens{note}</title></rect>"
                 )
+                if i == n - 1 and partial_frac is not None:
+                    bars.append(hatch_overlay(hatch_id, x, y_cursor, bar_width, seg_height))
         return "".join(bars)
 
     def bars_for_tokens() -> str:
         bars = []
+        hatch_id = f"chart-hatch-tokens-{period_id}"
         for i, day in enumerate(days):
             x = padding_left + i * step + (step - bar_width) / 2
             segments: list[tuple[str, int]] = [
@@ -459,14 +489,17 @@ def render_trend_chart(
                 seg_height = (value / max_tokens) * plot_height if max_tokens else 0
                 y_cursor -= seg_height
                 type_name = SERIES_NAMES[css_class]
+                note = partial_note if i == n - 1 else ""
                 bars.append(
                     f'<rect x="{x:.1f}" y="{y_cursor:.1f}" '
                     f'width="{bar_width:.1f}" height="{seg_height:.1f}" '
                     f'class="chart-bar {css_class}" '
                     f"onclick=\"highlightTokenType('{css_class}', event)\">"
                     f"<title>{type_name} · {day['day']} - "
-                    f"{mr.format_tokens(value)} tokens</title></rect>"
+                    f"{mr.format_tokens(value)} tokens{note}</title></rect>"
                 )
+                if i == n - 1 and partial_frac is not None:
+                    bars.append(hatch_overlay(hatch_id, x, y_cursor, bar_width, seg_height))
         return "".join(bars)
 
     # width is fixed in CSS pixels (not 100%/responsive): with
@@ -482,16 +515,36 @@ def render_trend_chart(
     # leaving getElementById always resolving to the FIRST period's
     # element regardless of which one is actually visible. Duplicate ids
     # are also invalid HTML on their own.
+    # Diagonal hatch, referenced from bars_for_pane/bars_for_tokens above,
+    # to draw the partial last bucket as visibly "in progress" rather than
+    # a flat, seemingly-final color like every complete bucket beside it.
+    # Only emitted when there IS a partial bucket - an unreferenced
+    # <pattern> is harmless, but every other render_trend_chart call site
+    # (the ~15 existing tests, plus any period whose last bucket has
+    # already fully elapsed) stays byte-identical to before this feature.
+    def hatch_defs(hatch_id: str) -> str:
+        if partial_frac is None:
+            return ""
+        return (
+            f'<defs><pattern id="{hatch_id}" width="6" height="6" '
+            'patternUnits="userSpaceOnUse" patternTransform="rotate(45)">'
+            '<rect x="0" y="0" width="6" height="6" class="chart-hatch-bg" />'
+            '<line x1="0" y1="0" x2="0" y2="6" class="chart-hatch-line" />'
+            "</pattern></defs>"
+        )
+
     pane_svg = (
         f'<svg viewBox="0 0 {width} {height}" class="trend-svg" '
         f'id="chart-pane-{period_id}" preserveAspectRatio="none" '
         f'style="width:{width}px">'
+        f"{hatch_defs(f'chart-hatch-pane-{period_id}')}"
         f"{highlight_html}{build_y_axis(max_pane)}{x_axis_html}{bars_for_pane()}</svg>"
     )
     tokens_svg = (
         f'<svg viewBox="0 0 {width} {height}" class="trend-svg" '
         f'id="chart-tokens-{period_id}" preserveAspectRatio="none" '
         f'style="width:{width}px">'
+        f"{hatch_defs(f'chart-hatch-tokens-{period_id}')}"
         f"{highlight_html}{build_y_axis(max_tokens)}{x_axis_html}{bars_for_tokens()}</svg>"
     )
 
@@ -811,6 +864,7 @@ def render_html(
     project_first_seen: dict[str, str],
     project_last_seen: dict[str, str],
     open_projects: set[str],
+    now: datetime,
 ) -> str:
     group_colors = build_group_colors(chart_records, daily_chart_records)
 
@@ -927,7 +981,7 @@ def render_html(
         hidden_attr = "" if period.id == mr.DEFAULT_PERIOD_ID else " hidden"
         trend_blocks.append(
             f'<div class="period-block" data-period="{period.id}"{hidden_attr}>'
-            + render_trend_chart(scoped_daily, group_colors, period.id)
+            + render_trend_chart(scoped_daily, group_colors, period.id, now=now)
             + "</div>"
         )
         panorama_blocks.append(
@@ -1222,6 +1276,7 @@ def main() -> None:
             project_first_seen,
             project_last_seen,
             open_projects,
+            render_now,
         )
         output_path = Path("~/.claude/metrics/dashboard.html").expanduser()
         with output_path.open("w") as f:

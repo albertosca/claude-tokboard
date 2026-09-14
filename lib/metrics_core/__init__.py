@@ -25,7 +25,12 @@ from .backfill import (
     write_backfill_state,
 )
 from .format import format_date, format_duration, format_tokens
-from .granularity import GRANULARITY_CONFIG, aggregate_by_day, choose_granularity
+from .granularity import (
+    GRANULARITY_CONFIG,
+    aggregate_by_day,
+    choose_granularity,
+    partial_bucket_fraction,
+)
 from .labels import (
     AGENT_LABELS_FILE,
     TASK_LABELS_FILE,
@@ -130,6 +135,7 @@ __all__ = [
     "load_records",
     "normalize_project_paths",
     "parse_transcript",
+    "partial_bucket_fraction",
     "plan_corrections",
     "project_days_running",
     "project_display_label",

@@ -58,6 +58,7 @@ call to exclude them.
 """
 
 import sys
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -281,3 +282,57 @@ def test_render_chart_proceeds_with_two_days_of_data():
     chart = tui.TrendChart(mr, two_day_records)
     chart.render_chart()
     assert hasattr(chart, "pane_series_keys")
+
+
+# ---------------------------------------------------------------------------
+# render_chart's partial-bucket annotation (backlog, 2026-09-02: "the trend
+# chart's last bar is always a partial bucket, and always reads as a
+# decline")
+# ---------------------------------------------------------------------------
+
+
+def _august_session(session_id: str, day: int, tokens: int = 1) -> dict[str, Any]:
+    """Same shape as _session, but in August - so its buckets can be
+    placed relative to a `now` chosen for the tests below, independent of
+    _session's own January fixtures elsewhere in this file."""
+    return {
+        "session_id": session_id,
+        "project_path": "/projects/p",
+        "timestamp_start": f"2026-08-{day:02d}T09:00:00",
+        "timestamp_end": f"2026-08-{day:02d}T10:00:00",
+        "input_tokens": tokens,
+        "output_tokens": 0,
+        "cache_read_tokens": 0,
+        "cache_creation_tokens": 0,
+    }
+
+
+_AUGUST_RECORDS = [
+    _august_session("a", day=1),
+    _august_session("b", day=5),
+    _august_session("c", day=10),
+]
+
+
+def test_render_chart_annotates_the_last_label_when_its_bucket_is_still_running():
+    # `now` pinned to the exact midpoint of the last bucket's day
+    # (2026-08-10 00:00 -> 2026-08-11 00:00), same hand-verified 50% as
+    # test_granularity.py's own partial_bucket_fraction tests. Read via
+    # chart.plt.build() rather than chart.render(): the latter needs a
+    # live App (self.app.theme), which this direct-instantiation style
+    # deliberately avoids, per this file's own module docstring precedent.
+    chart = tui.TrendChart(mr, _AUGUST_RECORDS)
+    chart.render_chart(now=datetime(2026, 8, 10, 12, 0).astimezone())
+    assert "10/08 · 50%" in chart.plt.build()
+
+
+def test_render_chart_does_not_annotate_a_bucket_thats_already_fully_elapsed():
+    # Same fixture, `now` moved past the last bucket's end - the common
+    # case, and what every other test in this file relies on implicitly
+    # by never passing `now` (falling back to the real, always-later
+    # clock, since every fixture here uses a fixed January 2026 date).
+    chart = tui.TrendChart(mr, _AUGUST_RECORDS)
+    chart.render_chart(now=datetime(2026, 8, 12, 0, 0).astimezone())
+    raw = chart.plt.build()
+    assert "10/08" in raw
+    assert "%" not in raw

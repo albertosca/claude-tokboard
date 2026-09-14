@@ -124,6 +124,13 @@ STYLE = """
       .trend-scroll { overflow-x: auto; max-width: 100%; }
       .trend-svg { height: 150px; display: block; margin: 0 auto; }
       .chart-highlight-band { fill: var(--series-1); opacity: 0.06; }
+      /* Diagonal hatch drawn over the trend chart's last (still-running)
+         bucket, so it reads as "in progress" rather than a flat, seemingly
+         final bar like every complete one beside it (backlog, 2026-09-02:
+         "the newest bar always reads as a decline"). */
+      .chart-bar-partial { pointer-events: none; }
+      .chart-hatch-bg { fill: transparent; }
+      .chart-hatch-line { stroke: var(--surface-1); stroke-width: 3; opacity: 0.6; }
       .project-chart-container { padding: 12px 16px; border-bottom: 1px solid var(--border); }
       .project-chart-title { font-size: 13px; margin: 0 0 8px; color: var(--text-secondary); }
       .project-chart-sort-note { font-size: 10px; margin: -4px 0 8px; color: var(--text-muted); }

@@ -507,7 +507,7 @@ class TrendChart(PlotextPlot):
         if self.mode == "pane":
             self.render_chart()
 
-    def render_chart(self) -> None:
+    def render_chart(self, now: datetime | None = None) -> None:
         # aggregate_by_day returns (granularity, days) since
         # dashboard_html.py's adaptive-granularity feature (2026-07-21) -
         # this file wasn't updated when that landed, so it was treating
@@ -524,6 +524,19 @@ class TrendChart(PlotextPlot):
         parse_fmt = self.mr.GRANULARITY_CONFIG[granularity]["parse_fmt"]
         tick_fmt = self.mr.GRANULARITY_CONFIG[granularity]["tick_fmt"]
         labels = [datetime.strptime(d["day"], parse_fmt).strftime(tick_fmt) for d in days]
+        # The last bucket is always a fraction of a full one while it's
+        # still running (backlog, 2026-09-02: "the newest bar always reads
+        # as a decline") - annotated on its own label rather than greyed
+        # out like dashboard_html.py's independent SVG rects can be:
+        # plotext's stacked_bar only takes one color per SERIES, applied
+        # across every bucket (see the ignore-annotated calls below, which
+        # exist for exactly this narrower-than-reality stub), so there is
+        # no per-bar color hook to grey out just this one bar.
+        partial_frac = self.mr.partial_bucket_fraction(
+            granularity, days[-1]["day"], now or datetime.now().astimezone()
+        )
+        if partial_frac is not None:
+            labels[-1] += f" · {round(partial_frac * 100)}%"
         if self.mode == "pane":
             top_keys, has_other = compute_pane_projects(self.mr, self.chart_records)
             series_keys = list(top_keys) + ([PANE_OTHER_KEY] if has_other else [])
