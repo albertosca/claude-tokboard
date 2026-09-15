@@ -381,6 +381,27 @@ class SessionDetailPanel(VerticalScroll):
         self._body.update("\n".join(lines))
 
 
+class QuotaSummary(Static):
+    """A separate widget from CompositionLegend, deliberately - not a
+    second line inside it. CompositionLegend.on_click hit-tests a click
+    purely by event.x against self.size.width // 4 (no event.y check at
+    all), so a second line in the SAME widget would both throw off that
+    math (its width would grow to whatever this line's own text needs)
+    and make a click on this line get misread as a click on a chip."""
+
+    def __init__(self, totals: dict[str, int], mr: ModuleType, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self.totals = totals
+        self.mr = mr
+
+    def render(self) -> str:
+        quota_input, quota_output = self.mr.compute_quota_totals(self.totals)
+        return (
+            f"Quota (aprox.): {self.mr.format_tokens(quota_input)} entrada · "
+            f"{self.mr.format_tokens(quota_output)} saída"
+        )
+
+
 class CompositionLegend(Static):
     highlighted: reactive[set[str] | None] = reactive(None)
 
@@ -849,6 +870,7 @@ class MetricsTUIApp(App[None]):
                 yield SessionDetailPanel(self.mr)
             with TabPane("Panorama", id="tab-panorama"):
                 totals = self.mr.compute_token_type_totals(self.data["records"])
+                yield QuotaSummary(totals, self.mr)
                 yield CompositionLegend(totals, self.mr)
                 yield ProjectLegend(self.mr, self.data["chart_records"])
                 yield TrendChart(self.mr, self.data["daily_chart_records"])
@@ -867,6 +889,7 @@ class MetricsTUIApp(App[None]):
 
     def _sync_legend_visibility(self) -> None:
         mode = self.query_one(TrendChart).mode
+        self.query_one(QuotaSummary).display = mode == "tokens"
         self.query_one(CompositionLegend).display = mode == "tokens"
         self.query_one(ProjectLegend).display = mode == "pane"
 

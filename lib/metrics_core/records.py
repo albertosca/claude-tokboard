@@ -263,6 +263,34 @@ def compute_token_type_totals(records: list[dict[str, Any]]) -> dict[str, int]:
     }
 
 
+def compute_quota_totals(totals: dict[str, int]) -> tuple[int, int]:
+    """(quota_input, quota_output), derived from compute_token_type_totals's
+    own output - the closest DOCUMENTED proxy available for how much of a
+    usage limit a set of records actually consumed.
+
+    Backlog, 2026-09-02: record_token_total's flat 4-field sum can be 96%
+    cache_read on a real heavy day, while the tokens that actually move a
+    rate limit are a small fraction of that - a headline built on the flat
+    sum answers "how much text moved," not "how much of my quota did this
+    eat." Anthropic's Messages API rate-limit docs are explicit about the
+    weighting this uses: input_tokens and cache_creation_input_tokens both
+    count toward the ITPM limit, cache_read_input_tokens does not (for
+    every current model), and output_tokens counts toward a SEPARATE OTPM
+    limit rather than being summed with input at all - hence two numbers
+    here, not one. Source (verified 2026-09-14):
+    https://platform.claude.com/docs/en/api/rate-limits
+
+    This is a proxy, not a claim about Claude Code's own session/weekly
+    usage limit: Anthropic does not publish that formula, and an accurate
+    dollar-cost weighting would additionally need to know which MODEL a
+    record used (input:output price ratios differ sharply by model),
+    which nothing in this pipeline records yet.
+    """
+    quota_input = totals.get("series-1", 0) + totals.get("series-4", 0)
+    quota_output = totals.get("series-2", 0)
+    return quota_input, quota_output
+
+
 def expand_records_to_daily_deltas(raw_records: list[dict[str, Any]]) -> list[dict[str, Any]]:
     # The Stop/SubagentStop hooks append a fresh CUMULATIVE snapshot every
     # turn, not one row per session/subagent - dedupe_sessions/

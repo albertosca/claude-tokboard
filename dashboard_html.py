@@ -69,7 +69,24 @@ def render_composition_legend(totals: dict[str, int]) -> str:
             f'<span class="legend-total" data-series="{css_class}">'
             f"{mr.format_tokens(totals.get(css_class, 0))}</span></span>"
         )
-    return '<div class="comp-legend">' + "".join(chips) + "</div>"
+    # Backlog, 2026-09-02: the flat 4-field total can be 96% cache_read on
+    # a real heavy day, so it answers "how much text moved," not "how much
+    # of my quota did this eat." Plain text, deliberately not wrapped in
+    # its own tag around each number (unlike the chips above) - a `<b>`
+    # wrapper here would add two more literal ">0<" substrings whenever
+    # both quota numbers are 0, silently changing what
+    # test_render_composition_legend_missing_series_defaults_to_zero's
+    # `out.count(">0<") == 4` is actually counting.
+    quota_input, quota_output = mr.compute_quota_totals(totals)
+    quota_line = (
+        '<div class="quota-line" title="Aproximação baseada na regra de '
+        "rate-limit da API da Anthropic (input + cache_creation contam pra "
+        "ITPM, cache_read não conta, output é um limite separado). O "
+        'Claude Code não publica a fórmula exata da própria quota.">'
+        f"Quota (aprox.): {mr.format_tokens(quota_input)} entrada · "
+        f"{mr.format_tokens(quota_output)} saída</div>"
+    )
+    return quota_line + '<div class="comp-legend">' + "".join(chips) + "</div>"
 
 
 def render_composition_bar(record: dict[str, Any]) -> str:

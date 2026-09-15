@@ -116,6 +116,7 @@ async def _drive_mode_toggle() -> dict[str, Any]:
         pane_mode = chart.mode
         composition_visible_pane = app.query_one(tui.CompositionLegend).display
         project_visible_pane = app.query_one(tui.ProjectLegend).display
+        quota_visible_pane = app.query_one(tui.QuotaSummary).display
 
         await pilot.press("t")
         await pilot.pause()
@@ -123,6 +124,7 @@ async def _drive_mode_toggle() -> dict[str, Any]:
         tokens_mode = chart.mode
         composition_visible_tokens = app.query_one(tui.CompositionLegend).display
         project_visible_tokens = app.query_one(tui.ProjectLegend).display
+        quota_visible_tokens = app.query_one(tui.QuotaSummary).display
 
         await pilot.press("t")
         await pilot.pause()
@@ -138,10 +140,12 @@ async def _drive_mode_toggle() -> dict[str, Any]:
             "pane_mode": pane_mode,
             "composition_visible_pane": composition_visible_pane,
             "project_visible_pane": project_visible_pane,
+            "quota_visible_pane": quota_visible_pane,
             "tokens_text": tokens_text,
             "tokens_mode": tokens_mode,
             "composition_visible_tokens": composition_visible_tokens,
             "project_visible_tokens": project_visible_tokens,
+            "quota_visible_tokens": quota_visible_tokens,
             "mode_after_second_toggle": mode_after_second_toggle,
             "pane_text_after_round_trip": pane_text_after_round_trip,
             "mode_after_third_toggle": mode_after_third_toggle,
@@ -296,6 +300,17 @@ def test_chart_mode_controls_which_legend_widget_is_visible(mode_toggle):
     assert mode_toggle["composition_visible_pane"] is False
     assert mode_toggle["project_visible_tokens"] is False
     assert mode_toggle["composition_visible_tokens"] is True
+
+
+def test_chart_mode_also_controls_the_quota_summary_widget(mode_toggle):
+    # QuotaSummary is a separate widget from CompositionLegend (see its own
+    # docstring for why), so its visibility sync is its own line in
+    # _sync_legend_visibility and deserves its own regression test - a typo
+    # keying it off the wrong widget, or forgetting the line entirely,
+    # would leave it always visible (a Static's own default) rather than
+    # following CompositionLegend as intended.
+    assert mode_toggle["quota_visible_pane"] is False
+    assert mode_toggle["quota_visible_tokens"] is True
 
 
 # --- set_highlight / set_project_highlight: own-mode effect, other-mode no-op

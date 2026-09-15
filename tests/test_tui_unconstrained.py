@@ -383,6 +383,19 @@ def test_composition_legend_chips_show_their_own_series_total():
         )
 
 
+def test_quota_summary_sums_input_and_cache_creation_keeps_output_separate():
+    """QuotaSummary.render() must delegate to compute_quota_totals (already
+    covered on its own in tests/test_records.py) rather than reimplement the
+    weighting inline - this pins the widget's own output against a totals
+    dict where getting the weighting wrong (e.g. including cache_read, or
+    summing output into the same figure) produces an assertably different
+    number."""
+    totals = {"series-1": 100, "series-2": 20, "series-3": 999_999_999, "series-4": 5}
+    summary = tui.QuotaSummary(totals, mr)
+    text = summary.render()
+    assert text == "Quota (aprox.): 105 entrada · 20 saída"
+
+
 def test_project_ranking_rows_show_their_own_token_total_not_the_max():
     """dashboard_tui.py:~713 (`self.mr.format_tokens(total)`). Two projects
     with different totals - if the row rendered `format_tokens(max_total)`

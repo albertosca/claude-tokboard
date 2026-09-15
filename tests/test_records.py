@@ -327,6 +327,30 @@ def test_compute_token_type_totals_sums_each_series_independently():
     }
 
 
+# --- compute_quota_totals ---------------------------------------------------
+
+
+def test_compute_quota_totals_sums_input_and_cache_creation_keeps_output_separate():
+    # Per Anthropic's documented API rate-limit rule (input_tokens and
+    # cache_creation_input_tokens both count toward ITPM; output_tokens
+    # counts toward a separate OTPM limit) - the two numbers must NOT be
+    # combined into one.
+    totals = {"series-1": 100, "series-2": 20, "series-3": 999_999, "series-4": 5}
+    assert mr.compute_quota_totals(totals) == (105, 20)
+
+
+def test_compute_quota_totals_excludes_cache_read_entirely():
+    # cache_read_input_tokens (series-3) does not count toward ITPM for any
+    # current model - the exact finding that motivated this function: a day
+    # that is 96% cache_read should barely move the quota-relevant number.
+    totals = {"series-3": 1_000_000_000}
+    assert mr.compute_quota_totals(totals) == (0, 0)
+
+
+def test_compute_quota_totals_missing_series_default_to_zero():
+    assert mr.compute_quota_totals({}) == (0, 0)
+
+
 # --- expand_records_to_daily_deltas -----------------------------------------
 
 

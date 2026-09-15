@@ -172,6 +172,19 @@ def test_render_composition_legend_one_chip_per_series_with_real_totals_in_stabl
 def test_render_composition_legend_missing_series_defaults_to_zero():
     out = dashboard_html.render_composition_legend({})
     assert out.count(">0<") == 4  # all four chips report a total of 0
+    # The quota line's own two zeros are plain text, not tag-wrapped like
+    # the chips' totals - if they were, this count would silently become 6
+    # (see the module's own comment at render_composition_legend).
+    assert "Quota (aprox.): 0 entrada · 0 saída" in out
+
+
+def test_render_composition_legend_quota_line_sums_input_and_cache_creation_only():
+    # Backlog, 2026-09-02: input (series-1) and cache_creation (series-4)
+    # count toward the "entrada" figure; cache_read (series-3) must be
+    # invisible to it entirely; output (series-2) is its own number.
+    totals = {"series-1": 100, "series-2": 20, "series-3": 999_999_999, "series-4": 5}
+    out = dashboard_html.render_composition_legend(totals)
+    assert "Quota (aprox.): 105 entrada · 20 saída" in out
 
 
 # --------------------------------------------------------------------------

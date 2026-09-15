@@ -62,6 +62,7 @@ from .projects import (
 from .records import (
     METRICS_FILE,
     SUBAGENTS_FILE,
+    compute_quota_totals,
     compute_token_type_totals,
     dedupe_by_key,
     dedupe_sessions,
@@ -106,6 +107,7 @@ __all__ = [
     "compute_project_first_seen",
     "compute_project_last_seen",
     "compute_project_totals",
+    "compute_quota_totals",
     "compute_token_type_totals",
     "daily_totals",
     "dedupe_by_key",

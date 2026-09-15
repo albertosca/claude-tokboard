@@ -312,6 +312,13 @@ STYLE = """
       }
       .session-row .duration-col { width: 55px; flex-shrink: 0; text-align: right; }
       .session-row .comp-header { width: 90px; flex-shrink: 0; }
+      .quota-line {
+        padding: 6px 10px 0;
+        font-size: 11px;
+        color: var(--text-secondary);
+        font-family: monospace;
+        font-weight: bold;
+      }
       .comp-legend {
         display: flex;
         gap: 14px;
