@@ -95,16 +95,21 @@ def parse_transcript(path: str) -> dict[str, Any]:
 
                 # Per-message attribution, keyed by the model that produced
                 # the message (the same session routinely uses several).
-                # `<synthetic>` is excluded: it is a pseudo-model that
-                # carries zero in all four fields, so it would only ever
-                # add a permanently-empty series downstream - and because
-                # its contribution is zero, leaving it out keeps the
-                # per-model sums equal to the totals above. Raw model id,
-                # deliberately: shortening is a display concern, and
-                # storing raw means a display change never needs a
-                # re-backfill.
-                model = message.get("model")
-                if isinstance(model, str) and model != "<synthetic>":
+                # A message with no "model" field lands under "unknown"
+                # rather than being skipped: every message must land in
+                # some bucket, so the per-model sums equal the totals above
+                # as a property of this loop's shape, not of what happens
+                # to be present in a given transcript. `<synthetic>` is
+                # excluded: it is a pseudo-model that carries zero in all
+                # four fields, so it would only ever add a
+                # permanently-empty series downstream - and because its
+                # contribution is zero, leaving it out keeps the invariant
+                # intact. Raw model id, deliberately: shortening is a
+                # display concern, and storing raw means a display change
+                # never needs a re-backfill.
+                raw_model = message.get("model")
+                model = raw_model if isinstance(raw_model, str) else "unknown"
+                if model != "<synthetic>":
                     bucket = tokens_by_model.get(model)
                     if bucket is None:
                         bucket = tokens_by_model[model] = dict.fromkeys(TOKEN_FIELDS, 0)

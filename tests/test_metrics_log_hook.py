@@ -523,7 +523,9 @@ def _assistant(message_id: str, model: str, **usage: int) -> str:
     )
 
 
-def test_parse_transcript_attributes_tokens_to_the_message_s_own_model(script, tmp_path):
+def test_parse_transcript_tokens_by_model_attributes_tokens_to_the_message_s_own_model(
+    script, tmp_path
+):
     path = tmp_path / "t.jsonl"
     _write_lines(
         path,
@@ -552,11 +554,14 @@ def test_parse_transcript_attributes_tokens_to_the_message_s_own_model(script, t
     }
 
 
-def test_parse_transcript_per_model_totals_reconcile_with_the_record_totals(script, tmp_path):
+def test_parse_transcript_tokens_by_model_totals_reconcile_with_the_record_totals(script, tmp_path):
     # The spec's primary invariant: for each token field, the per-model
-    # breakdown sums back to the record's own total. This is what catches
-    # mis-attribution, a dropped message, and double counting in one
-    # assertion - unlike asserting the key merely exists.
+    # breakdown sums back to the record's own total. This catches a
+    # dropped message and double counting - it does NOT catch
+    # mis-attribution (every message landing under the wrong model still
+    # sums to the same total), which is exactly what
+    # test_parse_transcript_tokens_by_model_attributes_tokens_to_the_message_s_own_model
+    # exists to catch instead. Neither test subsumes the other.
     path = tmp_path / "t.jsonl"
     _write_lines(
         path,
@@ -573,7 +578,7 @@ def test_parse_transcript_per_model_totals_reconcile_with_the_record_totals(scri
         assert sum(b[field] for b in parsed["tokens_by_model"].values()) == parsed[field], field
 
 
-def test_parse_transcript_replayed_message_counts_once_per_model_too(script, tmp_path):
+def test_parse_transcript_tokens_by_model_replayed_message_counts_once_too(script, tmp_path):
     # The dedup guard must cover the per-model accumulation as well: a
     # resumed/compacted transcript replays earlier turns, and attributing
     # them again would inflate exactly the model that was replayed.
@@ -590,7 +595,7 @@ def test_parse_transcript_replayed_message_counts_once_per_model_too(script, tmp
     )
 
 
-def test_parse_transcript_excludes_the_synthetic_pseudo_model(script, tmp_path):
+def test_parse_transcript_tokens_by_model_excludes_the_synthetic_pseudo_model(script, tmp_path):
     # `<synthetic>` appears in real transcripts carrying zero in all four
     # fields (measured: 534 messages, 0 tokens). It gets no bucket, so it
     # can never render as a permanently-empty series - and because its
@@ -620,13 +625,56 @@ def test_parse_transcript_excludes_the_synthetic_pseudo_model(script, tmp_path):
     assert parsed["turn_count"] == 2
 
 
-def test_parse_transcript_with_no_assistant_entries_has_an_empty_model_map(script, tmp_path):
+def test_parse_transcript_tokens_by_model_is_empty_when_there_are_no_assistant_entries(
+    script, tmp_path
+):
     path = tmp_path / "t.jsonl"
     _write_lines(path, [json.dumps({"type": "user", "message": {"id": "u1"}})])
 
     parsed = script.parse_transcript(str(path))
 
     assert parsed["tokens_by_model"] == {}
+
+
+def test_parse_transcript_tokens_by_model_buckets_a_missing_model_under_unknown(script, tmp_path):
+    # An assistant message with no "model" field must still land somewhere:
+    # dropping it silently would let its tokens vanish from the breakdown
+    # while the record's own totals (and turn_count) keep counting it -
+    # reproduced by review: a message with no model field carrying 1000/2000
+    # tokens disappeared from tokens_by_model entirely under the earlier
+    # `isinstance(model, str) and ...` guard, with no exception and no
+    # reconciliation failure, because that guard skipped the bucket instead
+    # of choosing one. "unknown" makes every message land in *some* bucket,
+    # so the invariant below holds as a property of the loop's shape, not of
+    # what happens to be present in a given transcript.
+    path = tmp_path / "t.jsonl"
+    _write_lines(
+        path,
+        [
+            _assistant("a1", "model-alpha", input_tokens=1, output_tokens=10),
+            json.dumps(
+                {
+                    "type": "assistant",
+                    "timestamp": "2026-01-01T00:00:00Z",
+                    "message": {
+                        "id": "a2",
+                        "usage": {"input_tokens": 1000, "output_tokens": 2000},
+                    },
+                }
+            ),
+        ],
+    )
+
+    parsed = script.parse_transcript(str(path))
+
+    assert parsed["tokens_by_model"]["unknown"] == {
+        "input_tokens": 1000,
+        "output_tokens": 2000,
+        "cache_read_tokens": 0,
+        "cache_creation_tokens": 0,
+    }
+    for field in ("input_tokens", "output_tokens", "cache_read_tokens", "cache_creation_tokens"):
+        assert sum(b[field] for b in parsed["tokens_by_model"].values()) == parsed[field], field
 
 
 # ---------------------------------------------------------------------------
