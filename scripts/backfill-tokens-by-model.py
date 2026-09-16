@@ -623,6 +623,18 @@ def apply_backfill(
         raise
 
     written = target.read_bytes()
+    # The bytes on disk, against the bytes intended - not a count of them.
+    # Canary 2 measured why: with the tail carry-over neutered, the run
+    # printed "1 line(s) (1 rewritten + 1 appended while running)" and exited
+    # 0, a contradiction nobody was comparing. startswith rather than
+    # equality because a live Stop hook may legitimately append in the
+    # microseconds after the rename; nothing else can make this false.
+    if not written.startswith(body + tail):
+        refuse(
+            "POST-WRITE VERIFICATION FAILED: the file on disk is not what was "
+            f"written. The backup taken at the start of this run is {backup}, "
+            "verified by sha256 before anything was touched"
+        )
     appended = tail.count(b"\n")
     total_lines = written.count(b"\n")
     print(
@@ -766,9 +778,14 @@ def main() -> int:
     # propped up by them is the shape of a gate that has stopped looking.
     checked = report.exact + report.tolerated
     if not args.apply:
+        # --file is part of the printed command, not left to the default.
+        # Without it, a subagents dry run hands the operator a line that runs
+        # against sessions.jsonl - and the hazard is asymmetric, so it
+        # survives casual reading: the subagent file's smaller count clears
+        # the session file's floor and writes, while the reverse refuses.
         print(
-            f"\nDRY RUN - nothing written. To write: --apply --expect-checked {checked}"
-            " (and read the oracle line above before you do)."
+            f"\nDRY RUN - nothing written. To write: --file {args.file} --apply "
+            f"--expect-checked {checked} (and read the oracle line above before you do)."
         )
         return 0
 

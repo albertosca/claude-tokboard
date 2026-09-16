@@ -673,7 +673,7 @@ def test_main_reports_the_plan_when_every_reconstruction_agrees(
     # A bare run writes nothing, and hands the operator the exact invocation
     # that would - including the evidence count it just measured, so the
     # number in --expect-checked is one they read rather than one they guess.
-    assert "DRY RUN - nothing written. To write: --apply --expect-checked 1" in out
+    assert "DRY RUN - nothing written. To write: --file sessions --apply --expect-checked 1" in out
     assert not (tmp_path / "metrics" / "backups").exists()
 
 
@@ -1138,3 +1138,137 @@ def test_main_with_apply_and_nothing_to_write_leaves_the_file_alone(
     assert "nothing to write; leaving the file untouched" in out
     assert _metrics_text(tmp_path) == before
     assert not (tmp_path / "backups").exists(), "no write means no backup"
+
+
+def test_apply_refuses_when_the_bytes_on_disk_are_not_the_bytes_it_wrote(
+    script, tmp_path, monkeypatch, capsys
+):
+    # The last thing that can go wrong is the write itself. Counting lines
+    # is not checking: canary 2 produced "1 line(s) (1 rewritten + 1
+    # appended)" - a contradiction in one printed sentence - and still
+    # exited 0. This compares the bytes, and says where the verified backup
+    # is, because by this point the original is already gone.
+    metrics = tmp_path / "sessions.jsonl"
+    rows = [{"session_id": "s1", "input_tokens": 10}]
+    _write_jsonl(metrics, rows)
+
+    def hijack(self: Path, destination: Any) -> None:
+        Path(destination).write_bytes(b'{"session_id": "something-else"}\n')
+
+    monkeypatch.setattr(Path, "replace", hijack)
+
+    with pytest.raises(SystemExit):
+        script.apply_backfill(str(metrics), {0: {"m": _bucket()}}, rows)
+
+    err = capsys.readouterr().err
+    assert "POST-WRITE VERIFICATION FAILED" in err
+    assert ".bak" in err, "a run that has already renamed must name the backup it can fall back to"
+
+
+def test_apply_accepts_a_line_appended_in_the_instant_after_the_rename(
+    script, tmp_path, monkeypatch
+):
+    # The post-write check is startswith, not equality, and this is the only
+    # reason: the file is live, and a Stop hook that appends microseconds
+    # after the rename must not be read as corruption.
+    metrics = tmp_path / "sessions.jsonl"
+    rows = [{"session_id": "s1", "input_tokens": 10}]
+    _write_jsonl(metrics, rows)
+    real_replace = Path.replace
+
+    def append_right_after(self: Path, destination: Any) -> None:
+        real_replace(self, destination)
+        with Path(destination).open("ab") as f:
+            f.write(b'{"session_id": "s-late"}\n')
+
+    monkeypatch.setattr(Path, "replace", append_right_after)
+
+    script.apply_backfill(str(metrics), {0: {"model-alpha": _bucket(input_tokens=10)}}, rows)
+
+    out = [json.loads(line) for line in metrics.read_text().splitlines()]
+    assert out[0]["tokens_by_model"] == {"model-alpha": _bucket(input_tokens=10)}
+    assert out[1] == {"session_id": "s-late"}
+
+
+def _subagent_metrics(tmp_path: Path) -> None:
+    """One subagent row that already carries a map the oracle confirms - so
+    the subagents dry run has an evidence count, and a different one from
+    the sessions run below."""
+    t = _transcript(
+        tmp_path / "agent.jsonl",
+        [("2026-08-01T10:00:00Z", "a1", "model-alpha", {"output_tokens": 7})],
+    )
+    _metrics_file(
+        tmp_path,
+        "subagents",
+        [
+            {
+                "agent_id": "ag1",
+                "agent_transcript_path": t,
+                "timestamp_end": "2026-08-01T10:30:00Z",
+                "output_tokens": 7,
+                "tokens_by_model": {"model-alpha": _bucket(output_tokens=7)},
+            }
+        ],
+    )
+
+
+def _two_native_session_rows(tmp_path: Path) -> None:
+    """A session with one row to write and TWO the oracle can verify, so the
+    two files' evidence counts differ the way the real ones do (135 against
+    96) and a command pasted from the wrong run is not caught by the floor."""
+    t = _transcript(
+        tmp_path / "t.jsonl",
+        [
+            ("2026-08-01T10:00:00Z", "a1", "model-alpha", {"input_tokens": 10}),
+            ("2026-08-01T11:00:00Z", "a2", "model-beta", {"input_tokens": 400}),
+        ],
+    )
+    both = {"model-alpha": _bucket(input_tokens=10), "model-beta": _bucket(input_tokens=400)}
+    _metrics_file(
+        tmp_path,
+        "sessions",
+        [
+            {
+                "session_id": "s1",
+                "transcript_path": t,
+                "timestamp_end": "2026-08-01T10:30:00Z",
+                "input_tokens": 10,
+            },
+            {
+                "session_id": "s1",
+                "transcript_path": t,
+                "timestamp_end": "2026-08-01T10:45:00Z",
+                "input_tokens": 10,
+                "tokens_by_model": {"model-alpha": _bucket(input_tokens=10)},
+            },
+            {
+                "session_id": "s1",
+                "transcript_path": t,
+                "timestamp_end": "2026-08-01T12:00:00Z",
+                "input_tokens": 410,
+                "tokens_by_model": both,
+            },
+        ],
+    )
+
+
+def test_the_dry_run_prints_the_file_it_actually_read(script, tmp_path, monkeypatch, capsys):
+    # The printed command is meant to be pasted. Without --file, a subagents
+    # dry run hands over a line that runs against sessions.jsonl, and the
+    # hazard is ASYMMETRIC: the subagent file's smaller evidence count
+    # clears the session file's floor and writes, while the reverse refuses
+    # loudly. The direction that fails is the one that gets noticed.
+    _two_native_session_rows(tmp_path)
+    _subagent_metrics(tmp_path)
+
+    _argv(monkeypatch, tmp_path)
+    assert script.main() == 0
+    sessions_line = capsys.readouterr().out
+
+    _argv(monkeypatch, tmp_path, "--file", "subagents")
+    assert script.main() == 0
+    subagents_line = capsys.readouterr().out
+
+    assert "To write: --file sessions --apply --expect-checked 2" in sessions_line
+    assert "To write: --file subagents --apply --expect-checked 1" in subagents_line
