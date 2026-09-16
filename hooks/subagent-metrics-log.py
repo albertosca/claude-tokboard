@@ -29,6 +29,7 @@ def build_record(hook_input: dict[str, Any], parsed: dict[str, Any]) -> dict[str
         "cache_read_tokens": parsed["cache_read_tokens"],
         "cache_creation_tokens": parsed["cache_creation_tokens"],
         "tool_call_count": parsed["tool_call_count"],
+        "tokens_by_model": parsed["tokens_by_model"],
         "agent_transcript_path": hook_input.get("agent_transcript_path"),
     }
 

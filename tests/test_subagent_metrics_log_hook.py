@@ -339,6 +339,14 @@ _PARSED_STUB = {
     "cache_read_tokens": 3,
     "cache_creation_tokens": 4,
     "tool_call_count": 6,
+    "tokens_by_model": {
+        "model-alpha": {
+            "input_tokens": 1,
+            "output_tokens": 2,
+            "cache_read_tokens": 3,
+            "cache_creation_tokens": 4,
+        }
+    },
 }
 
 _EXPECTED_RECORD_KEYS = {
@@ -355,6 +363,7 @@ _EXPECTED_RECORD_KEYS = {
     "cache_creation_tokens",
     "tool_call_count",
     "agent_transcript_path",
+    "tokens_by_model",
 }
 
 
@@ -392,6 +401,24 @@ def test_build_record_missing_optional_fields_default_to_none(script):
     assert record["agent_type"] is None
     assert record["project_path"] is None
     assert record["agent_transcript_path"] is None
+
+
+def test_build_record_carries_tokens_by_model_through(script):
+    parsed = dict(_PARSED_STUB)
+    parsed["tokens_by_model"] = {
+        "model-alpha": {
+            "input_tokens": 1,
+            "output_tokens": 10,
+            "cache_read_tokens": 0,
+            "cache_creation_tokens": 0,
+        }
+    }
+
+    record = script.build_record(
+        {"session_id": "sess-1", "agent_id": "agent-42", "cwd": "/work/my-api"}, parsed
+    )
+
+    assert record["tokens_by_model"] == parsed["tokens_by_model"]
 
 
 # ---------------------------------------------------------------------------

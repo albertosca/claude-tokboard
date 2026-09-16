@@ -77,6 +77,7 @@ def build_record(hook_input: dict[str, Any], parsed: dict[str, Any]) -> dict[str
         "cache_creation_tokens": parsed["cache_creation_tokens"],
         "turn_count": parsed["turn_count"],
         "tool_call_count": parsed["tool_call_count"],
+        "tokens_by_model": parsed["tokens_by_model"],
         "tmux_window": get_tmux_window(),
         "internal_name": get_internal_name(session_id),
         "transcript_path": hook_input.get("transcript_path"),

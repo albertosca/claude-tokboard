@@ -692,6 +692,14 @@ _PARSED_STUB = {
     "cache_creation_tokens": 4,
     "turn_count": 5,
     "tool_call_count": 6,
+    "tokens_by_model": {
+        "model-alpha": {
+            "input_tokens": 1,
+            "output_tokens": 2,
+            "cache_read_tokens": 3,
+            "cache_creation_tokens": 4,
+        }
+    },
 }
 
 _EXPECTED_RECORD_KEYS = {
@@ -711,6 +719,7 @@ _EXPECTED_RECORD_KEYS = {
     "tmux_window",
     "internal_name",
     "transcript_path",
+    "tokens_by_model",
 }
 
 
@@ -751,6 +760,30 @@ def test_build_record_tag_is_none_when_env_var_unset(script, monkeypatch):
     record = script.build_record({"session_id": "s", "cwd": "/x"}, _PARSED_STUB)
 
     assert record["tag"] is None
+
+
+def test_build_record_carries_tokens_by_model_through(script, monkeypatch):
+    monkeypatch.setattr(script, "get_tmux_window", lambda: None)
+    monkeypatch.setattr(script, "get_internal_name", lambda session_id, sessions_dir=None: None)
+    parsed = dict(_PARSED_STUB)
+    parsed["tokens_by_model"] = {
+        "model-alpha": {
+            "input_tokens": 1,
+            "output_tokens": 10,
+            "cache_read_tokens": 0,
+            "cache_creation_tokens": 0,
+        },
+        "model-beta": {
+            "input_tokens": 2,
+            "output_tokens": 20,
+            "cache_read_tokens": 0,
+            "cache_creation_tokens": 0,
+        },
+    }
+
+    record = script.build_record({"session_id": "s1", "cwd": "/work/my-api"}, parsed)
+
+    assert record["tokens_by_model"] == parsed["tokens_by_model"]
 
 
 # ---------------------------------------------------------------------------
