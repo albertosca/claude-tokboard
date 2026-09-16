@@ -505,6 +505,131 @@ def test_parse_transcript_duration_is_none_when_timestamps_are_unparseable(scrip
 
 
 # ---------------------------------------------------------------------------
+# parse_transcript: tokens_by_model (per-model attribution)
+# ---------------------------------------------------------------------------
+
+
+def _assistant(message_id: str, model: str, **usage: int) -> str:
+    """One assistant entry carrying a model and a usage block. Mirrors the
+    real transcript shape: usage keys are the API's own names, which are
+    NOT the record's field names (cache_read_input_tokens vs
+    cache_read_tokens)."""
+    return json.dumps(
+        {
+            "type": "assistant",
+            "timestamp": "2026-01-01T00:00:00Z",
+            "message": {"id": message_id, "model": model, "usage": usage},
+        }
+    )
+
+
+def test_parse_transcript_attributes_tokens_to_the_message_s_own_model(script, tmp_path):
+    path = tmp_path / "t.jsonl"
+    _write_lines(
+        path,
+        [
+            _assistant("a1", "model-alpha", input_tokens=1, output_tokens=10),
+            _assistant("a2", "model-beta", input_tokens=2, output_tokens=20),
+            _assistant("a3", "model-alpha", cache_read_input_tokens=100),
+        ],
+    )
+
+    parsed = script.parse_transcript(str(path))
+
+    assert parsed["tokens_by_model"] == {
+        "model-alpha": {
+            "input_tokens": 1,
+            "output_tokens": 10,
+            "cache_read_tokens": 100,
+            "cache_creation_tokens": 0,
+        },
+        "model-beta": {
+            "input_tokens": 2,
+            "output_tokens": 20,
+            "cache_read_tokens": 0,
+            "cache_creation_tokens": 0,
+        },
+    }
+
+
+def test_parse_transcript_per_model_totals_reconcile_with_the_record_totals(script, tmp_path):
+    # The spec's primary invariant: for each token field, the per-model
+    # breakdown sums back to the record's own total. This is what catches
+    # mis-attribution, a dropped message, and double counting in one
+    # assertion - unlike asserting the key merely exists.
+    path = tmp_path / "t.jsonl"
+    _write_lines(
+        path,
+        [
+            _assistant("a1", "model-alpha", input_tokens=1, cache_creation_input_tokens=7),
+            _assistant("a2", "model-beta", output_tokens=20, cache_read_input_tokens=300),
+            _assistant("a3", "model-gamma", input_tokens=5, output_tokens=6),
+        ],
+    )
+
+    parsed = script.parse_transcript(str(path))
+
+    for field in ("input_tokens", "output_tokens", "cache_read_tokens", "cache_creation_tokens"):
+        assert sum(b[field] for b in parsed["tokens_by_model"].values()) == parsed[field], field
+
+
+def test_parse_transcript_replayed_message_counts_once_per_model_too(script, tmp_path):
+    # The dedup guard must cover the per-model accumulation as well: a
+    # resumed/compacted transcript replays earlier turns, and attributing
+    # them again would inflate exactly the model that was replayed.
+    path = tmp_path / "t.jsonl"
+    entry = _assistant("dup", "model-alpha", input_tokens=10, output_tokens=20)
+    _write_lines(path, [entry] * 3)
+
+    parsed = script.parse_transcript(str(path))
+
+    assert parsed["tokens_by_model"]["model-alpha"]["input_tokens"] == 10
+    assert parsed["tokens_by_model"]["model-alpha"]["output_tokens"] == 20
+    assert (
+        sum(b["input_tokens"] for b in parsed["tokens_by_model"].values()) == parsed["input_tokens"]
+    )
+
+
+def test_parse_transcript_excludes_the_synthetic_pseudo_model(script, tmp_path):
+    # `<synthetic>` appears in real transcripts carrying zero in all four
+    # fields (measured: 534 messages, 0 tokens). It gets no bucket, so it
+    # can never render as a permanently-empty series - and because its
+    # contribution is zero, excluding it leaves the invariant intact.
+    path = tmp_path / "t.jsonl"
+    _write_lines(
+        path,
+        [
+            _assistant("a1", "model-alpha", input_tokens=4),
+            _assistant("a2", "<synthetic>"),
+        ],
+    )
+
+    parsed = script.parse_transcript(str(path))
+
+    assert "<synthetic>" not in parsed["tokens_by_model"]
+    assert parsed["tokens_by_model"] == {
+        "model-alpha": {
+            "input_tokens": 4,
+            "output_tokens": 0,
+            "cache_read_tokens": 0,
+            "cache_creation_tokens": 0,
+        }
+    }
+    # The synthetic entry still counts as a turn - this filter is about
+    # attribution only, and must not change any pre-existing number.
+    assert parsed["turn_count"] == 2
+
+
+def test_parse_transcript_with_no_assistant_entries_has_an_empty_model_map(script, tmp_path):
+    path = tmp_path / "t.jsonl"
+    _write_lines(path, [json.dumps({"type": "user", "message": {"id": "u1"}})])
+
+    parsed = script.parse_transcript(str(path))
+
+    assert parsed["tokens_by_model"] == {}
+
+
+# ---------------------------------------------------------------------------
 # build_record
 # ---------------------------------------------------------------------------
 

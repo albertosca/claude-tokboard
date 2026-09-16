@@ -49,6 +49,7 @@ def parse_transcript(path: str) -> dict[str, Any]:
     first_timestamp = None
     last_timestamp = None
     git_branch = None
+    tokens_by_model: dict[str, dict[str, int]] = {}
 
     with Path(path).open() as f:
         for line in f:
@@ -92,6 +93,24 @@ def parse_transcript(path: str) -> dict[str, Any]:
                 cache_read_tokens += usage.get("cache_read_input_tokens", 0) or 0
                 cache_creation_tokens += usage.get("cache_creation_input_tokens", 0) or 0
 
+                # Per-message attribution, keyed by the model that produced
+                # the message (the same session routinely uses several).
+                # `<synthetic>` is excluded: it is a pseudo-model that
+                # carries zero in all four fields, so it would only ever
+                # add a permanently-empty series downstream - and because
+                # its contribution is zero, leaving it out keeps the
+                # per-model sums equal to the totals above. Raw model id,
+                # deliberately: shortening is a display concern, and
+                # storing raw means a display change never needs a
+                # re-backfill.
+                model = message.get("model")
+                if isinstance(model, str) and model != "<synthetic>":
+                    bucket = tokens_by_model.get(model)
+                    if bucket is None:
+                        bucket = tokens_by_model[model] = dict.fromkeys(TOKEN_FIELDS, 0)
+                    for field in TOKEN_FIELDS:
+                        bucket[field] += usage.get(USAGE_KEYS[field], 0) or 0
+
                 content = message.get("content") or []
                 if isinstance(content, list):
                     for block in content:
@@ -116,6 +135,7 @@ def parse_transcript(path: str) -> dict[str, Any]:
         "output_tokens": output_tokens,
         "cache_read_tokens": cache_read_tokens,
         "cache_creation_tokens": cache_creation_tokens,
+        "tokens_by_model": tokens_by_model,
         "turn_count": turn_count,
         "tool_call_count": tool_call_count,
     }
