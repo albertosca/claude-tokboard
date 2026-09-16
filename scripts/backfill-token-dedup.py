@@ -279,7 +279,10 @@ def main() -> int:
     print_summary(stats, factors, before_total, after_total, len(plan), len(raw_lines))
     print_daily_comparison(records, corrected, args.daily_days)
 
-    problems = verify_fields(records, corrected)
+    # apply_plan drops tokens_by_model from every row it corrects (the map
+    # was computed against the totals just replaced), so this is the call
+    # that causes that removal, and the one that declares it.
+    problems = verify_fields(records, corrected, allow_removed_keys=frozenset({"tokens_by_model"}))
     if problems:
         print(f"\nFIELD VERIFICATION FAILED ({len(problems)} problems):", file=sys.stderr)
         for problem in problems[:20]:

@@ -833,3 +833,59 @@ def test_apply_plan_leaves_tokens_by_model_on_rows_it_does_not_correct():
 
     assert out[0]["tokens_by_model"] == {"m": {}}
     assert "tokens_by_model" not in out[1]
+
+
+def test_verify_fields_accepts_a_declared_removed_key():
+    # This is the real shape apply_plan produces: a row that had
+    # tokens_by_model no longer has it.
+    before = [{"session_id": "s1", "input_tokens": 200, "tokens_by_model": {"m": {}}}]
+    after = [{"session_id": "s1", "input_tokens": 100}]
+
+    problems = mr.verify_fields(before, after, allow_removed_keys=frozenset({"tokens_by_model"}))
+
+    assert problems == []
+
+
+def test_verify_fields_still_rejects_an_undeclared_removed_key():
+    # The gate's default must stay closed here too: dropping any other field
+    # is still a bug, not a feature.
+    before = [{"session_id": "s1", "input_tokens": 200, "tokens_by_model": {"m": {}}}]
+    after = [{"session_id": "s1", "input_tokens": 100}]
+
+    problems = mr.verify_fields(before, after)
+
+    assert problems, "an undeclared removed key must be reported"
+
+
+def test_verify_fields_allow_removed_keys_does_not_permit_adding_that_key():
+    # Declaring a key removable grants only removal, not addition.
+    before = [{"session_id": "s1", "input_tokens": 10}]
+    after = [{"session_id": "s1", "input_tokens": 10, "tokens_by_model": {}}]
+
+    problems = mr.verify_fields(before, after, allow_removed_keys=frozenset({"tokens_by_model"}))
+
+    assert problems, "allow_removed_keys must not also permit adding the key"
+
+
+def test_verify_fields_allow_new_keys_does_not_permit_removing_that_key():
+    # Declaring a key addable grants only addition, not removal - the
+    # reverse of the case above.
+    before = [{"session_id": "s1", "input_tokens": 10, "tokens_by_model": {}}]
+    after = [{"session_id": "s1", "input_tokens": 10}]
+
+    problems = mr.verify_fields(before, after, allow_new_keys=frozenset({"tokens_by_model"}))
+
+    assert problems, "allow_new_keys must not also permit removing the key"
+
+
+def test_verify_fields_still_rejects_a_value_change_on_a_declared_addable_key():
+    # A key already present in `old` is never in `added` (added requires
+    # `key not in old`), so declaring it addable does not exempt it from the
+    # value-change check. This is exactly the case sub-project 2 exercises:
+    # rewriting a row that already carries tokens_by_model.
+    before = [{"session_id": "s1", "input_tokens": 10, "tokens_by_model": {"m": {"x": 1}}}]
+    after = [{"session_id": "s1", "input_tokens": 10, "tokens_by_model": {"m": {"x": 2}}}]
+
+    problems = mr.verify_fields(before, after, allow_new_keys=frozenset({"tokens_by_model"}))
+
+    assert problems, "a value change on a pre-existing declared key must still be reported"

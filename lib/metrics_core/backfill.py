@@ -299,20 +299,27 @@ def verify_fields(
     before: list[dict[str, Any]],
     after: list[dict[str, Any]],
     allow_new_keys: frozenset[str] = frozenset(),
+    allow_removed_keys: frozenset[str] = frozenset(),
 ) -> list[str]:
-    """Every non-token field must survive untouched, tokens may only drop."""
+    """Every non-token field must survive untouched, tokens may only drop.
+
+    A key in allow_new_keys may appear where it was absent; a key in
+    allow_removed_keys may disappear where it was present. Each direction is
+    declared separately and grants only that direction - allowing a key's
+    addition does not also allow its removal, nor the reverse.
+    """
     if len(before) != len(after):
         return [f"record count changed: {len(before)} -> {len(after)}"]
     problems = []
     for index, (old, new) in enumerate(zip(before, after, strict=True)):
-        # Declared additive keys are invisible to every check below, so the
-        # gate keeps rejecting an undeclared key, a reordering, and any change
-        # to a pre-existing value - which is what makes this a parameter
-        # rather than a loosening.
-        added = {
-            key: value for key, value in new.items() if key in allow_new_keys and key not in old
-        }
+        # Declared additive and removable keys are invisible to every check
+        # below, so the gate keeps rejecting an undeclared key, a reordering,
+        # and any change to a pre-existing value - which is what makes this a
+        # pair of parameters rather than a loosening.
+        added = {key for key in new if key in allow_new_keys and key not in old}
         new = {key: value for key, value in new.items() if key not in added}
+        removed = {key for key in old if key in allow_removed_keys and key not in new}
+        old = {key: value for key, value in old.items() if key not in removed}
         if set(old.keys()) != set(new.keys()):
             problems.append(f"line {index + 1}: key set changed")
             continue
