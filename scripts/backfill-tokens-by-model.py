@@ -54,9 +54,9 @@ thousands where it is not.
 `timestamp_end`, never the line number the hook actually summed to, so in a
 transcript whose timestamps run backwards against file order no
 timestamp-derived cut can reproduce the hook exactly - and the error it makes
-can only be a SHORTFALL, never an invention. Measured over every oracle
-snapshot on 2026-09-16: 102 of 104 sessions exact, worst residue 0.792%
-downward, and 85 of 85 subagents exact. So the gate accepts equality or a
+can only be a SHORTFALL, never an invention. As this gate itself reported on
+2026-09-16: 126 of 128 sessions exact, worst residue 0.792% downward, and
+93 of 93 subagents exact. So the gate accepts equality or a
 shortfall of at most 1%, and refuses an over-count of any size at all. See
 diff_against_native.
 
@@ -118,12 +118,29 @@ ORACLE_TOLERANCE = 0.01
 
 class OracleReport(NamedTuple):
     """What the acceptance gate found: problems first, because that is what
-    aborts the run; the two counts exist so a sudden jump in `tolerated` is
-    visible instead of being averaged into a pass."""
+    aborts the run; the counts exist so the evidence behind a pass can be
+    read rather than assumed - a jump in `tolerated`, or a total propped up
+    by `vacuous` checks or hollowed out by `unverified` rows, is visible
+    instead of being averaged into a green number."""
 
     problems: list[str]
     exact: int
     tolerated: int
+    vacuous: int
+    unverified: int
+
+
+class NativeRows(NamedTuple):
+    """Rows carrying a native map, split by what the gate can do with them.
+
+    `checkable` are the ones it will actually reconstruct and compare; the
+    other two are the reasons it will not, kept apart because they have
+    different causes and different fixes.
+    """
+
+    checkable: list[tuple[int, str]]
+    undated: list[int]
+    unreachable: list[int]
 
 
 def resolve_transcript(
@@ -148,6 +165,55 @@ def resolve_transcript(
     if Path(recorded).exists():
         return str(recorded)
     return transcripts.get(unit_id)
+
+
+def index_subagent_transcripts(projects_dir: str) -> tuple[dict[str, str], list[str]]:
+    """agent_id -> transcript path, for the files index_transcripts excludes.
+
+    Subagent transcripts sit one level deeper than session ones, at
+    <projects>/<slug>/<session_id>/subagents/<agent_id>.jsonl, and are keyed
+    by AGENT id. index_transcripts deliberately walks only <slug>/*.jsonl and
+    keys by SESSION id - its docstring says the deeper paths belong to
+    subagents.jsonl, not there - so handing it to the subagent half of this
+    script hands over an index that cannot hit on any key. Measured
+    2026-09-16: 44 native subagent snapshots were being skipped as
+    "no transcript" while all 44 files were on disk, migrated into the parent
+    project slug exactly as the session transcripts were.
+
+    The filename carries the agent id with an `agent-` PREFIX that the record
+    itself does not have: the file is `agent-a04a2851b378c2216.jsonl` and the
+    record's agent_id is `a04a2851b378c2216`. Measured 2026-09-16 over the
+    whole tree: 1,005 of 1,005 transcript basenames carry the prefix, 2,124
+    of 2,124 agent_id values do not, and all 1,953 rows with a recorded path
+    have `basename == "agent-" + agent_id`. Keying by the raw basename
+    therefore builds an index that looks populated and never matches - the
+    same class of failure as handing over the session index, one level down.
+
+    An agent id found under more than one slug is AMBIGUITY, not a match:
+    nothing here can tell which copy the record was parsed from, and picking
+    the bigger or the first would be a guess dressed as a resolution. Those
+    ids are left out of the index and returned so the run can name them.
+    """
+    prefix = "agent-"
+    found: dict[str, list[str]] = collections.defaultdict(list)
+    for path in Path(projects_dir).glob("*/*/subagents/*.jsonl"):
+        stem = path.name[: -len(".jsonl")]
+        found[stem.removeprefix(prefix)].append(str(path))
+    index = {agent_id: paths[0] for agent_id, paths in found.items() if len(paths) == 1}
+    ambiguous = sorted(agent_id for agent_id, paths in found.items() if len(paths) > 1)
+    return index, ambiguous
+
+
+def index_for_file(file_name: str, projects_dir: str) -> tuple[dict[str, str], list[str]]:
+    """The by-id transcript index for one metrics file, and its ambiguities.
+
+    The two files key on different ids and store their transcripts at
+    different depths, so they need different indexers. This is the one place
+    that knows which - everything downstream just takes a dict.
+    """
+    if file_name == "subagents":
+        return index_subagent_transcripts(projects_dir)
+    return index_transcripts(projects_dir), []
 
 
 def rows_by_unit(records: list[dict[str, Any]], id_key: str) -> dict[Any, list[int]]:
@@ -261,6 +327,15 @@ def diff_against_native(native: ModelMap, rebuilt: ModelMap) -> tuple[list[str],
             f"only in the reconstruction {only_rebuilt}"
         )
     for model in sorted(set(native) & set(rebuilt)):
+        # The field loop below reads TOKEN_FIELDS and nothing else, so a
+        # bucket carrying a fifth key would compare clean while differing.
+        # The old whole-dict comparison caught that for free; this restores
+        # it explicitly rather than trusting the two shapes to stay equal.
+        if set(native[model]) != set(rebuilt[model]):
+            complaints.append(
+                f"{model}: bucket fields differ - native {sorted(native[model])}, "
+                f"rebuilt {sorted(rebuilt[model])}"
+            )
         for field in TOKEN_FIELDS:
             recorded = native[model].get(field, 0) or 0
             found = rebuilt[model].get(field, 0) or 0
@@ -287,32 +362,51 @@ def diff_against_native(native: ModelMap, rebuilt: ModelMap) -> tuple[list[str],
     return complaints, tolerated
 
 
-def checkable_native_rows(
+def classify_native_rows(
     records: list[dict[str, Any]], transcript_key: str, transcripts: dict[str, str] | None = None
-) -> list[tuple[int, str]]:
-    """(row index, transcript path) for every row the oracle can check.
+) -> NativeRows:
+    """Split the rows that already carry a native map by what can be done
+    with them, keeping the reasons apart.
 
-    A row qualifies when it carries a natively written map AND still has the
-    transcript that map was computed from AND records when it was taken. Rows
-    that carry a map but lost their transcript are not failures - there is
-    simply nothing left to check them against.
+    A row is checkable when it records when it was taken AND its transcript
+    can still be found - through the recorded path, or through the by-id
+    index when that path has gone stale. The other two outcomes are reported
+    as themselves, never merged: a row with no `timestamp_end` has no as-of
+    to reconstruct at, and a row whose transcript cannot be found anywhere
+    is unverified. Both are rows the gate did NOT check, and a gate that
+    folds them into its green count is claiming evidence it does not have.
 
     `transcripts` is the by-id index, and passing it is not optional in
     practice: transcripts migrate between project slugs while their sessions
-    are alive (measured 2026-09-16 - the two snapshots that first exposed the
-    tolerance question moved out of a worktree slug within the hour). Without
-    it those rows drop out of the oracle silently, and a gate that quietly
-    stops checking the hard cases reports a pass it has not earned.
+    are alive (measured 2026-09-16 - the snapshots that first exposed the
+    tolerance question moved out of a worktree slug within the hour, and 44
+    subagent transcripts did the same). Without the index those rows drop out
+    of the oracle silently, and a gate that quietly stops checking the hard
+    cases reports a pass it has not earned.
     """
     id_key = ID_KEY_FOR_TRANSCRIPT_KEY[transcript_key]
     checkable: list[tuple[int, str]] = []
+    undated: list[int] = []
+    unreachable: list[int] = []
     for index, record in enumerate(records):
-        if FIELD not in record or not record.get("timestamp_end"):
+        if FIELD not in record:
+            continue
+        if not record.get("timestamp_end"):
+            undated.append(index)
             continue
         path = resolve_transcript(record, transcripts or {}, transcript_key, record.get(id_key))
-        if path is not None:
+        if path is None:
+            unreachable.append(index)
+        else:
             checkable.append((index, path))
-    return checkable
+    return NativeRows(checkable, undated, unreachable)
+
+
+def checkable_native_rows(
+    records: list[dict[str, Any]], transcript_key: str, transcripts: dict[str, str] | None = None
+) -> list[tuple[int, str]]:
+    """(row index, transcript path) for every row the oracle can check."""
+    return classify_native_rows(records, transcript_key, transcripts).checkable
 
 
 def check_against_native(
@@ -325,21 +419,33 @@ def check_against_native(
     known-good answer for that snapshot. `problems` carries one message per
     snapshot that fails diff_against_native - an over-count of any size, a
     shortfall past ORACLE_TOLERANCE, or a model bucket that exists on only
-    one side - and a non-empty list aborts the whole run. `exact` and
-    `tolerated` split the passes, so the tolerance can be watched rather
-    than merely trusted.
+    one side - and a non-empty list aborts the whole run.
+
+    The remaining counts exist so the evidence can be read rather than
+    assumed. `exact` and `tolerated` split the passes, so the tolerance is
+    watched rather than merely trusted. `vacuous` holds the snapshots that
+    are empty on BOTH sides: they agree, but they prove nothing, and
+    counting them as evidence inflates the total with checks that could not
+    have failed. `unverified` holds the native rows the gate never reached
+    at all - unreconstructable or unfindable - which belong in the report,
+    not in silence.
     """
     id_key = ID_KEY_FOR_TRANSCRIPT_KEY[transcript_key]
     timelines: dict[str, Timeline] = {}
     problems: list[str] = []
     exact = 0
     tolerated = 0
-    for index, path in checkable_native_rows(records, transcript_key, transcripts):
+    vacuous = 0
+    native_rows = classify_native_rows(records, transcript_key, transcripts)
+    for index, path in native_rows.checkable:
         record = records[index]
         timeline = timelines.get(path)
         if timeline is None:
             timeline = timelines[path] = scan_transcript(path)
         rebuilt = model_totals_as_of(timeline, record["timestamp_end"])
+        if not record[FIELD] and not rebuilt:
+            vacuous += 1
+            continue
         complaints, within_tolerance = diff_against_native(record[FIELD], rebuilt)
         if complaints:
             header = (
@@ -350,7 +456,13 @@ def check_against_native(
             tolerated += 1
         else:
             exact += 1
-    return OracleReport(problems, exact, tolerated)
+    return OracleReport(
+        problems,
+        exact,
+        tolerated,
+        vacuous,
+        len(native_rows.undated) + len(native_rows.unreachable),
+    )
 
 
 def print_plan_summary(
@@ -413,23 +525,38 @@ def main() -> int:
     # Indexed before the gate runs, not after: the oracle needs it to follow
     # a transcript that has moved between project slugs, and a row it cannot
     # reach is a row it cannot check.
-    transcripts = index_transcripts(args.projects_dir)
-    print(f"indexed {len(transcripts)} session transcripts under {args.projects_dir}")
+    transcripts, ambiguous = index_for_file(args.file, args.projects_dir)
+    print(f"indexed {len(transcripts)} {args.file[:-1]} transcripts under {args.projects_dir}")
+    if ambiguous:
+        print(
+            f"  {len(ambiguous)} id(s) found under more than one project slug and "
+            f"left unindexed: {ambiguous[:5]}"
+        )
 
     # The gate runs before the plan is computed: if the reconstruction cannot
     # reproduce the snapshots whose answer is already known, nothing it has
     # to say about the rest is worth printing.
-    checkable = checkable_native_rows(records, transcript_key, transcripts)
-    native = sum(1 for record in records if FIELD in record)
+    #
+    # The header states what was MEASURED, not a cause it did not check. An
+    # earlier wording ("still have their transcript") asserted the reason 44
+    # subagent rows were skipped, and was false for every one of them - the
+    # files were on disk and the index was the thing that could not reach
+    # them.
+    native_rows = classify_native_rows(records, transcript_key, transcripts)
+    native = len(native_rows.checkable) + len(native_rows.undated) + len(native_rows.unreachable)
     print(
-        f"oracle: {len(checkable)} of {native} natively written snapshots "
-        f"still have their transcript"
+        f"oracle: {native} natively written snapshots - "
+        f"{len(native_rows.checkable)} checked, "
+        f"{len(native_rows.unreachable)} with no transcript found anywhere, "
+        f"{len(native_rows.undated)} with no timestamp_end"
     )
     report = check_against_native(records, transcript_key, transcripts)
     print(
         f"oracle: {report.exact} exact, {report.tolerated} within the "
         f"{ORACLE_TOLERANCE:.0%} downward tolerance, "
-        f"{len(report.problems)} disagreements"
+        f"{report.vacuous} vacuous (empty on both sides), "
+        f"{len(report.problems)} disagreements, "
+        f"{report.unverified} unverified"
     )
     if report.problems:
         print(f"\nORACLE FAILED ({len(report.problems)} disagreements):", file=sys.stderr)

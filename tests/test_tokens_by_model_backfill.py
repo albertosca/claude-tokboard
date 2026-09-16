@@ -273,6 +273,154 @@ def test_the_oracle_follows_a_transcript_that_moved_between_project_slugs(script
     assert len(script.check_against_native(records, "transcript_path", {"s1": moved}).problems) == 1
 
 
+def _subagent_tree(projects: Path, slug: str, session_id: str, agent_id: str) -> str:
+    """A subagent transcript at the real path shape AND the real filename.
+
+    Both halves are load-bearing. The indexer globs
+    <projects>/<slug>/<session_id>/subagents/, and the file inside is named
+    `agent-<agent_id>.jsonl` while the record's own agent_id has no prefix -
+    measured over the live tree, 1,005 of 1,005 files carry it and 2,124 of
+    2,124 ids do not. An earlier version of this helper named the file after
+    the bare id, which made every test here pass against an indexer that
+    could not match a single real row.
+    """
+    directory = projects / slug / session_id / "subagents"
+    directory.mkdir(parents=True, exist_ok=True)
+    return _transcript(
+        directory / f"agent-{agent_id}.jsonl",
+        [("2026-08-01T10:00:00Z", "a1", "model-alpha", {"input_tokens": 100_000})],
+    )
+
+
+def test_the_oracle_reaches_a_subagent_transcript_through_the_agent_id_index(script, tmp_path):
+    # The gap the session-side fix did NOT close. index_transcripts globs
+    # <slug>/*.jsonl and keys by session_id; a subagent transcript lives a
+    # level deeper and is keyed by agent_id, so that index can never hit for
+    # --file subagents. Measured 2026-09-16: 44 native subagent snapshots
+    # were reported as having no transcript while all 44 files were on disk.
+    #
+    # This test builds the directory shape the indexer actually walks. Handing
+    # a dict in by hand - as the session test above does - would pass whether
+    # or not the glob is right, which is exactly why the gap survived.
+    projects = tmp_path / "projects"
+    moved = _subagent_tree(projects, "parent-slug", "sess-1", "abc123")
+    records = [
+        {
+            # Bare in the record; prefixed on disk. This is the real pairing,
+            # and it is what a hand-built index cannot exercise.
+            "agent_id": "abc123",
+            # The path the record recorded, in the worktree slug that has
+            # since been cleaned up. The file is NOT there.
+            "agent_transcript_path": str(
+                projects / "worktree-slug" / "sess-1" / "subagents" / "agent-abc123.jsonl"
+            ),
+            "timestamp_end": "2026-08-01T10:30:00Z",
+            "tokens_by_model": {"model-alpha": _bucket(input_tokens=100_000)},
+        }
+    ]
+
+    index, ambiguous = script.index_subagent_transcripts(str(projects))
+
+    assert index == {"abc123": moved}, "the index keys on the id the RECORD carries"
+    assert ambiguous == []
+
+    without = script.classify_native_rows(records, "agent_transcript_path")
+    with_index = script.classify_native_rows(records, "agent_transcript_path", index)
+
+    assert (without.checkable, without.unreachable) == ([], [0])
+    assert with_index.checkable == [(0, moved)]
+    report = script.check_against_native(records, "agent_transcript_path", index)
+    assert (report.problems, report.exact, report.unverified) == ([], 1, 0)
+
+
+def test_an_agent_id_under_two_project_slugs_is_ambiguity_not_a_match(script, tmp_path):
+    # Two copies and no way to tell which one the record was parsed from.
+    # Picking the first, or the larger, would be a guess presented as a
+    # resolution - and the row would then be "checked" against a file that
+    # may not be its own. It is left unindexed and named instead.
+    projects = tmp_path / "projects"
+    _subagent_tree(projects, "slug-a", "sess-1", "dup")
+    _subagent_tree(projects, "slug-b", "sess-1", "dup")
+    only_once = _subagent_tree(projects, "slug-a", "sess-1", "unique")
+
+    index, ambiguous = script.index_subagent_transcripts(str(projects))
+
+    assert index == {"unique": only_once}
+    assert ambiguous == ["dup"]
+
+
+def test_the_index_is_chosen_by_metrics_file_not_shared_between_them(script, tmp_path):
+    # Sessions keep their transcript at <slug>/<session_id>.jsonl, subagents a
+    # level deeper under subagents/. One indexer cannot serve both, and the
+    # bug this closes was precisely a session-shaped index being handed to the
+    # subagent half.
+    projects = tmp_path / "projects"
+    (projects / "slug").mkdir(parents=True)
+    session_file = _transcript(
+        projects / "slug" / "sess-1.jsonl",
+        [("2026-08-01T10:00:00Z", "a1", "model-alpha", {"input_tokens": 1})],
+    )
+    agent_file = _subagent_tree(projects, "slug", "sess-1", "xyz")
+
+    sessions_index, sessions_ambiguous = script.index_for_file("sessions", str(projects))
+    subagents_index, _ = script.index_for_file("subagents", str(projects))
+
+    assert sessions_index == {"sess-1": session_file}
+    assert sessions_ambiguous == []
+    assert subagents_index == {"xyz": agent_file}
+
+
+def test_the_oracle_reports_a_bucket_with_a_field_the_reconstruction_lacks(script, tmp_path):
+    # The comparison loop reads TOKEN_FIELDS and nothing else, so a native
+    # bucket with a fifth key would agree on all four and differ in fact. The
+    # whole-dict comparison this replaced caught that for free.
+    t = _one_entry_transcript(tmp_path)
+    native = {"model-alpha": {**_bucket(input_tokens=100_000), "thinking_tokens": 5}}
+    records = [_native_row(t, native)]
+
+    report = script.check_against_native(records, "transcript_path")
+
+    assert len(report.problems) == 1
+    assert "bucket fields differ" in report.problems[0]
+    assert "thinking_tokens" in report.problems[0]
+    assert (report.exact, report.tolerated) == (0, 0)
+
+
+def test_a_snapshot_empty_on_both_sides_is_counted_as_vacuous_not_as_evidence(script, tmp_path):
+    # It agrees, and it could not have done otherwise. Counting it as an
+    # exact match pads the number an operator reads as "how much proof is
+    # behind this write" with checks that cannot fail.
+    empty = _transcript(tmp_path / "empty.jsonl", [])
+    records = [_native_row(empty, {})]
+
+    report = script.check_against_native(records, "transcript_path")
+
+    assert report.problems == []
+    assert (report.exact, report.tolerated, report.vacuous) == (0, 0, 1)
+
+
+def test_a_native_row_the_gate_cannot_reach_is_counted_as_unverified(script, tmp_path):
+    # Never absorbed into the green count, and the two reasons stay apart:
+    # one row has no moment to reconstruct at, the other has no transcript
+    # anywhere.
+    t = _one_entry_transcript(tmp_path)
+    records = [
+        _native_row(t, {"model-alpha": _bucket(input_tokens=100_000)}),
+        {
+            "session_id": "s2",
+            "transcript_path": t,
+            "tokens_by_model": {"model-alpha": _bucket(input_tokens=1)},
+        },
+        _native_row(str(tmp_path / "gone.jsonl"), {"model-alpha": _bucket(input_tokens=1)}),
+    ]
+
+    rows = script.classify_native_rows(records, "transcript_path")
+    report = script.check_against_native(records, "transcript_path")
+
+    assert (rows.undated, rows.unreachable) == ([1], [2])
+    assert (report.exact, report.unverified) == (1, 2)
+
+
 def test_resolve_transcript_relocates_a_moved_file_but_never_invents_one(script, tmp_path):
     # The by-id index exists because one session logged from two working
     # directories lands under two project slugs, so a recorded path can be
@@ -509,8 +657,14 @@ def test_main_reports_the_plan_when_every_reconstruction_agrees(
 
     out = capsys.readouterr().out
     assert exit_code == 0
-    assert "oracle: 1 of 1 natively written snapshots still have their transcript" in out
-    assert "oracle: 1 exact, 0 within the 1% downward tolerance, 0 disagreements" in out
+    assert (
+        "oracle: 1 natively written snapshots - 1 checked, "
+        "0 with no transcript found anywhere, 0 with no timestamp_end" in out
+    )
+    assert (
+        "oracle: 1 exact, 0 within the 1% downward tolerance, "
+        "0 vacuous (empty on both sides), 0 disagreements, 0 unverified" in out
+    )
     assert "Units planned: 1 of 1" in out
     assert "Rows to write: 1 of 2" in out
     assert "Token volume covered: 410 of 410 (100.0%)" in out
@@ -579,8 +733,42 @@ def test_main_plans_the_subagent_file_through_the_same_mechanism(
 
     out = capsys.readouterr().out
     assert exit_code == 0
-    assert "oracle: 0 of 0 natively written snapshots still have their transcript" in out
+    assert "oracle: 0 natively written snapshots - 0 checked" in out
     assert "Units planned: 1 of 1" in out
+
+
+def test_main_names_an_ambiguous_agent_id_instead_of_resolving_it(
+    script, tmp_path, monkeypatch, capsys
+):
+    # The run says out loud which ids it refused to resolve, and the row that
+    # depends on one stays unverified rather than being checked against a
+    # file that might belong to a different agent. Silence here would look
+    # identical to "the transcript is gone".
+    projects = tmp_path / "projects"
+    _subagent_tree(projects, "slug-a", "sess-1", "dup")
+    _subagent_tree(projects, "slug-b", "sess-1", "dup")
+    _metrics_file(
+        tmp_path,
+        "subagents",
+        [
+            {
+                "agent_id": "dup",
+                "agent_transcript_path": str(tmp_path / "gone" / "agent-dup.jsonl"),
+                "timestamp_end": "2026-08-01T10:30:00Z",
+                "tokens_by_model": {"model-alpha": _bucket(input_tokens=100_000)},
+            }
+        ],
+    )
+    _argv(monkeypatch, tmp_path, "--file", "subagents")
+
+    exit_code = script.main()
+
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert "indexed 0 subagent transcripts" in out
+    assert "1 id(s) found under more than one project slug and left unindexed: ['dup']" in out
+    assert "1 with no transcript found anywhere" in out
+    assert "0 disagreements, 1 unverified" in out
 
 
 def test_main_returns_one_when_there_is_no_metrics_file_at_the_given_path(
