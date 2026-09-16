@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from .records import expand_records_to_daily_deltas
-from .transcript_ingest import TOKEN_FIELDS, USAGE_KEYS
+from .transcript_ingest import SYNTHETIC_MODEL, TOKEN_FIELDS, USAGE_KEYS, model_key
 
 # Rows written on or after this date are left alone: the correction is only
 # claimed for the window it was verified on. Override with --cutoff once the
@@ -65,15 +65,17 @@ def index_transcripts(projects_dir: str) -> dict[str, str]:
     return index
 
 
-def scan_transcript(path: str) -> list[tuple[str, bool, tuple[int, ...]]]:
+def scan_transcript(path: str) -> list[tuple[str, bool, tuple[int, ...], str]]:
     """Timeline of assistant entries, flagged as duplicates in FILE order.
 
     Duplicate detection has to follow file order because that is what the
     hook does; the flags are then reused for any as-of cutoff, which is
     sound because a repeated message id was verified to always carry
-    identical usage numbers.
+    identical usage numbers. Each entry also carries the model that
+    produced it (via the shared model_key rule), so callers can build
+    per-model as-of totals without re-reading the transcript.
     """
-    timeline: list[tuple[str, bool, tuple[int, ...]]] = []
+    timeline: list[tuple[str, bool, tuple[int, ...], str]] = []
     seen_ids: set[Any] = set()
     with Path(path).open() as f:
         for line in f:
@@ -93,12 +95,14 @@ def scan_transcript(path: str) -> list[tuple[str, bool, tuple[int, ...]]]:
             is_duplicate = message_id is not None and message_id in seen_ids
             if message_id is not None:
                 seen_ids.add(message_id)
-            timeline.append((entry.get("timestamp") or "", is_duplicate, values))
+            timeline.append(
+                (entry.get("timestamp") or "", is_duplicate, values, model_key(message))
+            )
     return timeline
 
 
 def build_prefix_sums(
-    timeline: list[tuple[str, bool, tuple[int, ...]]],
+    timeline: list[tuple[str, bool, tuple[int, ...], str]],
 ) -> tuple[list[str], list[list[int]], list[list[int]]]:
     """Sorted timestamps plus running deduped/raw totals, for as-of lookups.
 
@@ -111,7 +115,7 @@ def build_prefix_sums(
     stamps = [item[0] for item in ordered]
     deduped: list[list[int]] = [[0] * 4]
     raw: list[list[int]] = [[0] * 4]
-    for _, is_duplicate, values in ordered:
+    for _stamp, is_duplicate, values, _model in ordered:
         previous_d = deduped[-1]
         previous_r = raw[-1]
         raw.append([previous_r[i] + values[i] for i in range(4)])
@@ -128,6 +132,36 @@ def as_of(
     """Cumulative deduped and raw totals for entries at or before a moment."""
     count = len(stamps) if end_timestamp is None else bisect.bisect_right(stamps, end_timestamp)
     return deduped[count], raw[count]
+
+
+def model_totals_as_of(
+    timeline: list[tuple[str, bool, tuple[int, ...], str]], end_timestamp: str | None
+) -> dict[str, dict[str, int]]:
+    """Per-model cumulative totals for entries at or before a moment.
+
+    The per-model counterpart of as_of, and deliberately a linear scan rather
+    than a prefix-sum table: a session owns a few dozen snapshots against a
+    transcript of a few thousand entries, so the table would cost more to
+    build (one dict copy per entry per model) than the scans it saves.
+
+    Replayed entries are skipped via the duplicate flag scan_transcript
+    already computed, so a resumed session cannot inflate the model whose
+    turns were replayed.
+    """
+    totals: dict[str, dict[str, int]] = {}
+    for stamp, is_duplicate, values, model in timeline:
+        if is_duplicate:
+            continue
+        if end_timestamp is not None and stamp > end_timestamp:
+            continue
+        if model == SYNTHETIC_MODEL and not any(values):
+            continue
+        bucket = totals.get(model)
+        if bucket is None:
+            bucket = totals[model] = dict.fromkeys(TOKEN_FIELDS, 0)
+        for index, field in enumerate(TOKEN_FIELDS):
+            bucket[field] += values[index]
+    return totals
 
 
 def token_sum(record: dict[str, Any]) -> int:

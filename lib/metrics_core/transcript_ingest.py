@@ -43,6 +43,25 @@ USAGE_KEYS = {
     "cache_creation_tokens": "cache_creation_input_tokens",
 }
 
+# The pseudo-model Claude Code writes for entries it generated without a
+# model call. Measured over every transcript on one machine (534 entries):
+# always zero in all four token fields. It is filtered by CONTRIBUTION, not
+# by name - see model_key's callers - so a future synthetic entry carrying
+# tokens still reconciles instead of vanishing.
+SYNTHETIC_MODEL = "<synthetic>"
+
+
+def model_key(message: dict[str, Any]) -> str:
+    """The bucket an assistant message's tokens belong to.
+
+    A non-string `model` (absent, null, malformed) becomes "unknown" rather
+    than being skipped: every message must land in some bucket, or the
+    per-model sums stop reconciling with the record's own four totals with
+    no signal that they have.
+    """
+    raw = message.get("model")
+    return raw if isinstance(raw, str) else "unknown"
+
 
 def parse_transcript(path: str) -> dict[str, Any]:
     input_tokens = 0
@@ -117,9 +136,8 @@ def parse_transcript(path: str) -> dict[str, Any]:
                 # measurement holding forever. Raw model id, deliberately:
                 # shortening is a display concern, and storing raw means a
                 # display change never needs a re-backfill.
-                raw_model = message.get("model")
-                model = raw_model if isinstance(raw_model, str) else "unknown"
-                if model != "<synthetic>" or any(
+                model = model_key(message)
+                if model != SYNTHETIC_MODEL or any(
                     usage.get(USAGE_KEYS[field], 0) or 0 for field in TOKEN_FIELDS
                 ):
                     bucket = tokens_by_model.get(model)

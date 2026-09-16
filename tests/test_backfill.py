@@ -129,7 +129,7 @@ def test_scan_transcript_skips_blank_malformed_and_non_assistant_lines(tmp_path)
             + "\n"
         )
     timeline = mr.scan_transcript(str(path))
-    assert timeline == [("2026-08-01T10:00:00", False, (5, 0, 0, 0))]
+    assert timeline == [("2026-08-01T10:00:00", False, (5, 0, 0, 0), "unknown")]
 
 
 def test_scan_transcript_never_flags_entries_with_no_message_id_as_duplicates(tmp_path):
@@ -142,7 +142,7 @@ def test_scan_transcript_never_flags_entries_with_no_message_id_as_duplicates(tm
         ],
     )
     timeline = mr.scan_transcript(str(path))
-    assert [is_dup for _, is_dup, _ in timeline] == [False, False]
+    assert [is_dup for _, is_dup, _, _ in timeline] == [False, False]
 
 
 def test_scan_transcript_flags_a_repeated_message_id_in_file_order(tmp_path):
@@ -156,7 +156,7 @@ def test_scan_transcript_flags_a_repeated_message_id_in_file_order(tmp_path):
         ],
     )
     timeline = mr.scan_transcript(str(path))
-    assert [is_dup for _, is_dup, _ in timeline] == [False, True, False]
+    assert [is_dup for _, is_dup, _, _ in timeline] == [False, True, False]
 
 
 def test_as_of_returns_deduped_and_raw_cumulative_totals_at_a_moment(tmp_path):
@@ -176,6 +176,127 @@ def test_as_of_returns_deduped_and_raw_cumulative_totals_at_a_moment(tmp_path):
     deduped_end, raw_end = mr.as_of(stamps, deduped, raw, None)
     assert deduped_end == [150, 0, 0, 0]
     assert raw_end == [250, 0, 0, 0]
+
+
+def _model_line(stamp: str, message_id: str, model: str, **usage: int) -> str:
+    return json.dumps(
+        {
+            "type": "assistant",
+            "timestamp": stamp,
+            "message": {"id": message_id, "model": model, "usage": usage},
+        }
+    )
+
+
+def test_scan_transcript_carries_each_entrys_model(tmp_path):
+    path = tmp_path / "t.jsonl"
+    path.write_text(
+        "\n".join(
+            [
+                _model_line("2026-08-01T10:00:00", "a1", "model-alpha", input_tokens=1),
+                _model_line("2026-08-01T10:00:01", "a2", "model-beta", output_tokens=2),
+            ]
+        )
+        + "\n"
+    )
+
+    timeline = mr.scan_transcript(str(path))
+
+    assert [entry[3] for entry in timeline] == ["model-alpha", "model-beta"]
+
+
+def test_scan_transcript_maps_a_missing_model_to_unknown(tmp_path):
+    # Same rule parse_transcript applies, reached through the shared helper -
+    # a message with no `model` key must still land in a bucket, or the
+    # reconstruction silently loses its tokens.
+    path = tmp_path / "t.jsonl"
+    path.write_text(
+        json.dumps(
+            {
+                "type": "assistant",
+                "timestamp": "2026-08-01T10:00:00",
+                "message": {"id": "a1", "usage": {"input_tokens": 5}},
+            }
+        )
+        + "\n"
+    )
+
+    timeline = mr.scan_transcript(str(path))
+
+    assert timeline[0][3] == "unknown"
+
+
+def test_model_totals_as_of_sums_per_model_up_to_the_moment(tmp_path):
+    path = tmp_path / "t.jsonl"
+    path.write_text(
+        "\n".join(
+            [
+                _model_line("2026-08-01T10:00:00", "a1", "model-alpha", input_tokens=1),
+                _model_line("2026-08-01T10:00:01", "a2", "model-beta", output_tokens=20),
+                _model_line("2026-08-01T10:00:02", "a3", "model-alpha", input_tokens=100),
+            ]
+        )
+        + "\n"
+    )
+    timeline = mr.scan_transcript(str(path))
+
+    early = mr.model_totals_as_of(timeline, "2026-08-01T10:00:01")
+    assert early == {
+        "model-alpha": {
+            "input_tokens": 1,
+            "output_tokens": 0,
+            "cache_read_tokens": 0,
+            "cache_creation_tokens": 0,
+        },
+        "model-beta": {
+            "input_tokens": 0,
+            "output_tokens": 20,
+            "cache_read_tokens": 0,
+            "cache_creation_tokens": 0,
+        },
+    }
+
+    end = mr.model_totals_as_of(timeline, None)
+    assert end["model-alpha"]["input_tokens"] == 101
+
+
+def test_model_totals_as_of_ignores_replayed_entries(tmp_path):
+    # A resumed/compacted transcript replays earlier turns. The duplicate flag
+    # scan_transcript already computes must suppress them here too, or the
+    # reconstruction inflates exactly the model that was replayed.
+    path = tmp_path / "t.jsonl"
+    line = _model_line("2026-08-01T10:00:00", "dup", "model-alpha", input_tokens=10)
+    path.write_text("\n".join([line, line, line]) + "\n")
+    timeline = mr.scan_transcript(str(path))
+
+    assert mr.model_totals_as_of(timeline, None)["model-alpha"]["input_tokens"] == 10
+
+
+def test_model_totals_as_of_skips_synthetic_only_when_it_contributes_nothing(tmp_path):
+    path = tmp_path / "t.jsonl"
+    path.write_text(
+        "\n".join(
+            [
+                _model_line("2026-08-01T10:00:00", "a1", "<synthetic>"),
+                _model_line("2026-08-01T10:00:01", "a2", "<synthetic>", input_tokens=7),
+            ]
+        )
+        + "\n"
+    )
+    timeline = mr.scan_transcript(str(path))
+
+    totals = mr.model_totals_as_of(timeline, None)
+
+    # The zero-token synthetic entry gets no bucket; the one carrying tokens
+    # does, so the per-model sums still reconcile with the record's totals.
+    assert totals == {
+        "<synthetic>": {
+            "input_tokens": 7,
+            "output_tokens": 0,
+            "cache_read_tokens": 0,
+            "cache_creation_tokens": 0,
+        }
+    }
 
 
 # --- plan_corrections --------------------------------------------------
