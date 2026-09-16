@@ -15,15 +15,8 @@ from pathlib import Path
 from typing import Any, cast
 
 from .records import expand_records_to_daily_deltas
+from .transcript_ingest import TOKEN_FIELDS, USAGE_KEYS
 
-TOKEN_FIELDS = ("input_tokens", "output_tokens", "cache_read_tokens", "cache_creation_tokens")
-# transcript usage key for each of our field names
-USAGE_KEYS = {
-    "input_tokens": "input_tokens",
-    "output_tokens": "output_tokens",
-    "cache_read_tokens": "cache_read_input_tokens",
-    "cache_creation_tokens": "cache_creation_input_tokens",
-}
 # Rows written on or after this date are left alone: the correction is only
 # claimed for the window it was verified on. Override with --cutoff once the
 # fixed hook is actually deployed (see the report - as of 2026-08-18 the

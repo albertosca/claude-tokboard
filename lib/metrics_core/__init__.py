@@ -7,7 +7,6 @@ instead of each other."""
 from .backfill import (
     BACKFILL_STATE_FILE,
     DEFAULT_CUTOFF,
-    TOKEN_FIELDS,
     apply_plan,
     as_of,
     build_prefix_sums,
@@ -78,7 +77,7 @@ from .records import (
     normalize_project_paths,
     record_token_total,
 )
-from .transcript_ingest import append_record, parse_transcript
+from .transcript_ingest import TOKEN_FIELDS, append_record, parse_transcript
 
 __all__ = [
     "AGENT_LABELS_FILE",

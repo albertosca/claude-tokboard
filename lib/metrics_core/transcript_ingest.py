@@ -24,6 +24,19 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+# The record's four token field names, and which transcript `usage` key
+# feeds each one. Defined here rather than in backfill.py because this is
+# the module that reads a transcript in the first place - backfill.py
+# reconstructs exactly this mapping and imports it from here, so the hot
+# hook path never has to import the heavy offline module to get at it.
+TOKEN_FIELDS = ("input_tokens", "output_tokens", "cache_read_tokens", "cache_creation_tokens")
+USAGE_KEYS = {
+    "input_tokens": "input_tokens",
+    "output_tokens": "output_tokens",
+    "cache_read_tokens": "cache_read_input_tokens",
+    "cache_creation_tokens": "cache_creation_input_tokens",
+}
+
 
 def parse_transcript(path: str) -> dict[str, Any]:
     input_tokens = 0
