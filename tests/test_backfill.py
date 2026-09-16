@@ -761,3 +761,75 @@ def test_describe_backfill_state_omits_the_retention_boundary_when_absent():
     state = {"cutoff": "2026-08-19", "applied_at": "2026-08-19T12:00:00", "corrected_rows": 3411}
     text = mr.describe_backfill_state(state)
     assert "pra corrigir" not in text
+
+
+def test_verify_fields_still_rejects_an_undeclared_new_key():
+    # The gate's default must stay closed: this is what stops a backfill
+    # from quietly adding a field nobody reviewed.
+    before = [{"session_id": "s1", "input_tokens": 10}]
+    after = [{"session_id": "s1", "input_tokens": 10, "tokens_by_model": {}}]
+
+    problems = mr.verify_fields(before, after)
+
+    assert problems, "an undeclared added key must be reported"
+
+
+def test_verify_fields_accepts_a_declared_new_key():
+    before = [{"session_id": "s1", "input_tokens": 10}]
+    after = [{"session_id": "s1", "input_tokens": 10, "tokens_by_model": {}}]
+
+    problems = mr.verify_fields(before, after, allow_new_keys=frozenset({"tokens_by_model"}))
+
+    assert problems == []
+
+
+def test_verify_fields_declaring_one_key_does_not_admit_another():
+    before = [{"session_id": "s1", "input_tokens": 10}]
+    after = [{"session_id": "s1", "input_tokens": 10, "something_else": 1}]
+
+    problems = mr.verify_fields(before, after, allow_new_keys=frozenset({"tokens_by_model"}))
+
+    assert problems, "only the declared key may be added"
+
+
+def test_apply_plan_drops_tokens_by_model_from_rows_it_corrects():
+    # The map was computed against the totals this correction supersedes, so
+    # keeping it would leave sum(tokens_by_model) disagreeing with the four
+    # fields - with verify_fields approving, since the map is not a token
+    # field. Absent means "unknown", which is the honest state here.
+    records = [
+        {
+            "session_id": "s1",
+            "input_tokens": 200,
+            "output_tokens": 0,
+            "cache_read_tokens": 0,
+            "cache_creation_tokens": 0,
+            "tokens_by_model": {
+                "model-alpha": {
+                    "input_tokens": 200,
+                    "output_tokens": 0,
+                    "cache_read_tokens": 0,
+                    "cache_creation_tokens": 0,
+                }
+            },
+        }
+    ]
+
+    out = mr.apply_plan(records, {0: [100, 0, 0, 0]})
+
+    assert out[0]["input_tokens"] == 100
+    assert "tokens_by_model" not in out[0]
+    # The input is never mutated - the caller still holds the pre-correction row.
+    assert "tokens_by_model" in records[0]
+
+
+def test_apply_plan_leaves_tokens_by_model_on_rows_it_does_not_correct():
+    records = [
+        {"session_id": "s1", "input_tokens": 5, "tokens_by_model": {"m": {}}},
+        {"session_id": "s2", "input_tokens": 7, "tokens_by_model": {"m": {}}},
+    ]
+
+    out = mr.apply_plan(records, {1: [3, 0, 0, 0]})
+
+    assert out[0]["tokens_by_model"] == {"m": {}}
+    assert "tokens_by_model" not in out[1]

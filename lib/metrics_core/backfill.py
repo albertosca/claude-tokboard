@@ -271,6 +271,10 @@ def apply_plan(records: list[dict[str, Any]], plan: dict[int, list[int]]) -> lis
             updated = dict(record)
             for position, field in enumerate(TOKEN_FIELDS):
                 updated[field] = plan[index][position]
+            # The per-model map was computed against the totals just replaced, so
+            # it is now wrong and nothing here can recompute it (that needs the
+            # transcript). Absent is how this schema spells "unknown".
+            updated.pop("tokens_by_model", None)
             corrected.append(updated)
         else:
             corrected.append(record)
@@ -291,12 +295,24 @@ def daily_totals(records: list[dict[str, Any]], days: int | None) -> list[tuple[
     return [(day, totals[day]) for day in ordered]
 
 
-def verify_fields(before: list[dict[str, Any]], after: list[dict[str, Any]]) -> list[str]:
+def verify_fields(
+    before: list[dict[str, Any]],
+    after: list[dict[str, Any]],
+    allow_new_keys: frozenset[str] = frozenset(),
+) -> list[str]:
     """Every non-token field must survive untouched, tokens may only drop."""
     if len(before) != len(after):
         return [f"record count changed: {len(before)} -> {len(after)}"]
     problems = []
     for index, (old, new) in enumerate(zip(before, after, strict=True)):
+        # Declared additive keys are invisible to every check below, so the
+        # gate keeps rejecting an undeclared key, a reordering, and any change
+        # to a pre-existing value - which is what makes this a parameter
+        # rather than a loosening.
+        added = {
+            key: value for key, value in new.items() if key in allow_new_keys and key not in old
+        }
+        new = {key: value for key, value in new.items() if key not in added}
         if set(old.keys()) != set(new.keys()):
             problems.append(f"line {index + 1}: key set changed")
             continue
