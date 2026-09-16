@@ -194,15 +194,15 @@ def test_partial_bucket_fraction_covers_every_granularitys_bucket_length():
     ) == pytest.approx(1.5 / 7)
 
     # month, not spanning a year boundary (March 2026 has 31 days)
-    assert mr.partial_bucket_fraction(
-        "month", "2026-03", datetime(2026, 3, 16)
-    ) == pytest.approx(15 / 31)
+    assert mr.partial_bucket_fraction("month", "2026-03", datetime(2026, 3, 16)) == pytest.approx(
+        15 / 31
+    )
 
     # month, December -> January rollover - the one non-uniform branch of
     # _bucket_end (December has 31 days)
-    assert mr.partial_bucket_fraction(
-        "month", "2025-12", datetime(2025, 12, 16)
-    ) == pytest.approx(15 / 31)
+    assert mr.partial_bucket_fraction("month", "2025-12", datetime(2025, 12, 16)) == pytest.approx(
+        15 / 31
+    )
 
     # year: 2026 is not a leap year (365 days), 2028 is (366 days)
     assert mr.partial_bucket_fraction("year", "2026", datetime(2026, 7, 2, 12)) == pytest.approx(
