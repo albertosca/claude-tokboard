@@ -18,6 +18,17 @@ def snapshot(duration_seconds: int, timestamp_end: str, **tokens: int) -> dict[s
     return r
 
 
+def _bucket(**tokens: int) -> dict[str, int]:
+    """One model's inner mapping inside a record's tokens_by_model, with
+    every one of the four fields present - the shape parse_transcript
+    writes, where an unused field is an explicit zero rather than absent."""
+    b = dict.fromkeys(
+        ("input_tokens", "output_tokens", "cache_read_tokens", "cache_creation_tokens"), 0
+    )
+    b.update(tokens)
+    return b
+
+
 # --- load_records --------------------------------------------------------
 
 
@@ -419,6 +430,67 @@ def test_expand_floors_a_decreasing_token_count_at_zero():
     ]
     result = mr.expand_records_to_daily_deltas(raw)
     assert result[1]["input_tokens"] == 0
+
+
+def test_expand_differences_tokens_by_model_instead_of_copying_the_cumulative_map():
+    # tokens_by_model is a CUMULATIVE snapshot like the four totals, so a
+    # verbatim copy would make each delta carry the session's running
+    # per-model map: summing across the deltas would then overcount (1.4x
+    # on this very fixture) and disagree with the four differenced totals
+    # these same records carry, which is what the trend chart reads.
+    raw = [
+        {
+            "session_id": "s1",
+            **snapshot(10, "2026-08-01T10:10:00", input_tokens=100),
+            "tokens_by_model": {"model-alpha": _bucket(input_tokens=100)},
+        },
+        {
+            "session_id": "s1",
+            **snapshot(20, "2026-08-02T10:20:00", input_tokens=250),
+            "tokens_by_model": {"model-alpha": _bucket(input_tokens=250)},
+        },
+    ]
+
+    result = mr.expand_records_to_daily_deltas(raw)
+
+    assert [r["tokens_by_model"]["model-alpha"]["input_tokens"] for r in result] == [100, 150]
+    # The reconciliation the four totals already satisfy, now for the map:
+    # summing the deltas returns the session's final cumulative value.
+    assert sum(r["tokens_by_model"]["model-alpha"]["input_tokens"] for r in result) == 250
+    assert sum(r["input_tokens"] for r in result) == 250
+
+
+def test_expand_differences_a_model_that_first_appears_in_a_later_snapshot_against_zero():
+    # A session picks up a second model partway through. Its first delta is
+    # its whole cumulative value (previous is zero), not a KeyError and not
+    # zero.
+    raw = [
+        {
+            "session_id": "s1",
+            **snapshot(10, "t1", input_tokens=100),
+            "tokens_by_model": {"model-alpha": _bucket(input_tokens=100)},
+        },
+        {
+            "session_id": "s1",
+            **snapshot(20, "t2", input_tokens=340),
+            "tokens_by_model": {
+                "model-alpha": _bucket(input_tokens=250),
+                "model-beta": _bucket(input_tokens=90),
+            },
+        },
+    ]
+
+    result = mr.expand_records_to_daily_deltas(raw)
+
+    assert result[0]["tokens_by_model"] == {"model-alpha": _bucket(input_tokens=100)}
+    assert result[1]["tokens_by_model"] == {
+        "model-alpha": _bucket(input_tokens=150),
+        "model-beta": _bucket(input_tokens=90),
+    }
+    for field in ("input_tokens", "output_tokens", "cache_read_tokens", "cache_creation_tokens"):
+        assert sum(b[field] for r in result for b in r["tokens_by_model"].values()) == sum(
+            r[field] for r in result
+        ), field
 
 
 # --- fold_subagent_tokens_into_sessions -------------------------------------

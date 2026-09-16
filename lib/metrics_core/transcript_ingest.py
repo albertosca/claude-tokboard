@@ -27,8 +27,14 @@ from typing import Any
 # The record's four token field names, and which transcript `usage` key
 # feeds each one. Defined here rather than in backfill.py because this is
 # the module that reads a transcript in the first place - backfill.py
-# reconstructs exactly this mapping and imports it from here, so the hot
-# hook path never has to import the heavy offline module to get at it.
+# reconstructs exactly this mapping and imports it from here, so there is
+# one copy and the dependency points from the heavy offline module to the
+# light ingest module, never the reverse.
+#
+# That is a direction guarantee, NOT an import-cost one: a hook importing
+# `metrics_core` (which is how both hooks import parse_transcript) still
+# pulls backfill.py, bisect and hashlib in, because the package's
+# __init__.py imports .backfill for the dashboards. Measured 2026-09-16.
 TOKEN_FIELDS = ("input_tokens", "output_tokens", "cache_read_tokens", "cache_creation_tokens")
 USAGE_KEYS = {
     "input_tokens": "input_tokens",
@@ -99,17 +105,23 @@ def parse_transcript(path: str) -> dict[str, Any]:
                 # rather than being skipped: every message must land in
                 # some bucket, so the per-model sums equal the totals above
                 # as a property of this loop's shape, not of what happens
-                # to be present in a given transcript. `<synthetic>` is
-                # excluded: it is a pseudo-model that carries zero in all
-                # four fields, so it would only ever add a
-                # permanently-empty series downstream - and because its
-                # contribution is zero, leaving it out keeps the invariant
-                # intact. Raw model id, deliberately: shortening is a
-                # display concern, and storing raw means a display change
-                # never needs a re-backfill.
+                # to be present in a given transcript. `<synthetic>` is the
+                # one skip, and it is conditional for exactly that reason:
+                # it is a pseudo-model measured as carrying zero in all four
+                # fields, so bucketing it would only ever add a
+                # permanently-empty series downstream - but a `<synthetic>`
+                # message that did carry tokens would break the invariant
+                # silently (its usage is already in the four totals above),
+                # so it is bucketed as soon as it carries anything. The
+                # invariant is therefore structural, not contingent on that
+                # measurement holding forever. Raw model id, deliberately:
+                # shortening is a display concern, and storing raw means a
+                # display change never needs a re-backfill.
                 raw_model = message.get("model")
                 model = raw_model if isinstance(raw_model, str) else "unknown"
-                if model != "<synthetic>":
+                if model != "<synthetic>" or any(
+                    usage.get(USAGE_KEYS[field], 0) or 0 for field in TOKEN_FIELDS
+                ):
                     bucket = tokens_by_model.get(model)
                     if bucket is None:
                         bucket = tokens_by_model[model] = dict.fromkeys(TOKEN_FIELDS, 0)

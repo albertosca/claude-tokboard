@@ -597,9 +597,10 @@ def test_parse_transcript_tokens_by_model_replayed_message_counts_once_too(scrip
 
 def test_parse_transcript_tokens_by_model_excludes_the_synthetic_pseudo_model(script, tmp_path):
     # `<synthetic>` appears in real transcripts carrying zero in all four
-    # fields (measured: 534 messages, 0 tokens). It gets no bucket, so it
-    # can never render as a permanently-empty series - and because its
-    # contribution is zero, excluding it leaves the invariant intact.
+    # fields (measured: 534 messages, 0 tokens). Carrying nothing, it gets
+    # no bucket, so it can never render as a permanently-empty series. The
+    # exclusion is conditional on that emptiness, not on the model id - see
+    # the test below for the one that does carry tokens.
     path = tmp_path / "t.jsonl"
     _write_lines(
         path,
@@ -623,6 +624,37 @@ def test_parse_transcript_tokens_by_model_excludes_the_synthetic_pseudo_model(sc
     # The synthetic entry still counts as a turn - this filter is about
     # attribution only, and must not change any pre-existing number.
     assert parsed["turn_count"] == 2
+
+
+def test_parse_transcript_tokens_by_model_buckets_a_synthetic_message_that_carries_tokens(
+    script, tmp_path
+):
+    # The exclusion above is a zero-contribution filter, not a deny-list: a
+    # `<synthetic>` message carrying tokens has its usage summed into the
+    # record's four totals like any other, so skipping its bucket would
+    # break the reconciliation invariant with no error and no signal
+    # (reproduced by review: record input_tokens 1005, per-model sum 5).
+    # Bucketing it only when it carries something keeps the invariant
+    # structural while still never creating an empty series.
+    path = tmp_path / "t.jsonl"
+    _write_lines(
+        path,
+        [
+            _assistant("a1", "model-alpha", input_tokens=5),
+            _assistant("a2", "<synthetic>", input_tokens=1000, cache_read_input_tokens=7),
+        ],
+    )
+
+    parsed = script.parse_transcript(str(path))
+
+    assert parsed["tokens_by_model"]["<synthetic>"] == {
+        "input_tokens": 1000,
+        "output_tokens": 0,
+        "cache_read_tokens": 7,
+        "cache_creation_tokens": 0,
+    }
+    for field in ("input_tokens", "output_tokens", "cache_read_tokens", "cache_creation_tokens"):
+        assert sum(b[field] for b in parsed["tokens_by_model"].values()) == parsed[field], field
 
 
 def test_parse_transcript_tokens_by_model_is_empty_when_there_are_no_assistant_entries(

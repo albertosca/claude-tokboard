@@ -345,6 +345,7 @@ def expand_records_to_daily_deltas(raw_records: list[dict[str, Any]]) -> list[di
     for snapshots in by_id.values():
         snapshots.sort(key=lambda r: r.get("duration_seconds") or 0)
         previous = dict.fromkeys(token_fields, 0)
+        previous_by_model: dict[str, dict[str, int]] = {}
         for snapshot in snapshots:
             delta_record = dict(snapshot)
             for field in token_fields:
@@ -355,6 +356,33 @@ def expand_records_to_daily_deltas(raw_records: list[dict[str, Any]]) -> list[di
                 # row shouldn't be able to produce a negative delta.
                 delta_record[field] = max(current - previous[field], 0)
                 previous[field] = current
+            # tokens_by_model is cumulative too, so it has to be differenced
+            # exactly like the four fields above, floor included. The plain
+            # `dict(snapshot)` copy that every other key gets would leave
+            # each delta carrying the session's RUNNING per-model map beside
+            # its own per-day totals, so summing the per-model numbers across
+            # a session's deltas overcounts (measured on a two-snapshot
+            # session, 100 -> 250: the four totals sum to 250, the copied map
+            # to 350) - and these delta records are what the day-based trend
+            # chart reads, so a per-model mode would disagree with the
+            # existing per-project and per-token-type modes on the same day.
+            # A model first seen in a later snapshot differences against zero;
+            # previous_by_model keeps a model it has seen even if a later
+            # snapshot omits it, so a reappearance is never counted twice.
+            snapshot_by_model = snapshot.get("tokens_by_model")
+            if snapshot_by_model:
+                delta_by_model: dict[str, dict[str, int]] = {}
+                for model, bucket in snapshot_by_model.items():
+                    previous_bucket = previous_by_model.setdefault(
+                        model, dict.fromkeys(token_fields, 0)
+                    )
+                    delta_bucket: dict[str, int] = {}
+                    for field in token_fields:
+                        current = bucket.get(field, 0) or 0
+                        delta_bucket[field] = max(current - previous_bucket[field], 0)
+                        previous_bucket[field] = current
+                    delta_by_model[model] = delta_bucket
+                delta_record["tokens_by_model"] = delta_by_model
             # Dated by THIS snapshot's own timestamp_end (when this chunk
             # of usage was actually recorded), not the session's fixed
             # timestamp_start - that's the entire point of this function.
