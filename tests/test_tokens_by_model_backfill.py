@@ -133,7 +133,10 @@ def test_check_against_native_is_silent_when_the_reconstruction_agrees(script, t
         }
     ]
 
-    assert script.check_against_native(records, "transcript_path") == []
+    report = script.check_against_native(records, "transcript_path")
+
+    assert report.problems == []
+    assert (report.exact, report.tolerated) == (1, 0)
 
 
 def test_check_against_native_reports_a_disagreement(script, tmp_path):
@@ -152,10 +155,122 @@ def test_check_against_native_reports_a_disagreement(script, tmp_path):
         }
     ]
 
-    problems = script.check_against_native(records, "transcript_path")
+    problems = script.check_against_native(records, "transcript_path").problems
 
     assert len(problems) == 1
     assert "s1" in problems[0]
+
+
+def _native_row(
+    transcript: str, native: dict[str, dict[str, int]], stamp: str = "2026-08-01T10:30:00Z"
+) -> dict[str, Any]:
+    return {
+        "session_id": "s1",
+        "transcript_path": transcript,
+        "timestamp_end": stamp,
+        "tokens_by_model": native,
+    }
+
+
+def _one_entry_transcript(tmp_path: Path) -> str:
+    """A transcript worth exactly 100,000 input tokens to model-alpha."""
+    return _transcript(
+        tmp_path / "t.jsonl",
+        [("2026-08-01T10:00:00Z", "a1", "model-alpha", {"input_tokens": 100_000})],
+    )
+
+
+def test_the_oracle_accepts_a_shortfall_inside_the_tolerance_and_counts_it_apart(script, tmp_path):
+    # A record stores timestamp_end, never the line the hook summed to, so a
+    # transcript whose timestamps run backwards against file order cannot be
+    # cut exactly - and the residue is always a shortfall. 0.5% is accepted,
+    # but it is NOT counted as exact: a run where the tolerated count jumps
+    # is the only warning that the residue has stopped being residue.
+    t = _one_entry_transcript(tmp_path)
+    records = [_native_row(t, {"model-alpha": _bucket(input_tokens=100_500)})]
+
+    report = script.check_against_native(records, "transcript_path")
+
+    assert report.problems == []
+    assert (report.exact, report.tolerated) == (0, 1)
+
+
+def test_the_oracle_reports_a_shortfall_past_the_tolerance(script, tmp_path):
+    # 2% low. Same direction as the accepted case, an order of magnitude
+    # bigger, and the floor is what separates them.
+    t = _one_entry_transcript(tmp_path)
+    records = [_native_row(t, {"model-alpha": _bucket(input_tokens=102_000)})]
+
+    report = script.check_against_native(records, "transcript_path")
+
+    assert len(report.problems) == 1
+    assert "past the 1% floor" in report.problems[0]
+    assert (report.exact, report.tolerated) == (0, 0)
+
+
+def test_the_oracle_reports_an_over_count_however_small(script, tmp_path):
+    # THE test the asymmetry exists for. 0.01% HIGH - two hundred times
+    # smaller than the shortfall accepted above, and refused anyway, because
+    # this repo's worst backfill outcome was inventing 1.9 billion tokens and
+    # a fabricated bar is loud where a sub-1% shortfall is invisible. If this
+    # test ever passes with a symmetric comparison, the tolerance has quietly
+    # become "close enough" in both directions.
+    t = _one_entry_transcript(tmp_path)
+    records = [_native_row(t, {"model-alpha": _bucket(input_tokens=99_990)})]
+
+    report = script.check_against_native(records, "transcript_path")
+
+    assert len(report.problems) == 1
+    assert "ABOVE native" in report.problems[0]
+    assert "never tolerated" in report.problems[0]
+    assert (report.exact, report.tolerated) == (0, 0)
+
+
+def test_the_oracle_reports_a_model_bucket_that_exists_on_only_one_side(script, tmp_path):
+    # A missing or invented series is not a rounding difference, so it is
+    # reported in both directions and never tolerated - even when the numbers
+    # attached to it are tiny enough to sit inside the 1% floor.
+    t = _one_entry_transcript(tmp_path)
+    missing_from_reconstruction = [
+        _native_row(
+            t,
+            {
+                "model-alpha": _bucket(input_tokens=100_000),
+                "model-ghost": _bucket(input_tokens=1),
+            },
+        )
+    ]
+    invented_by_reconstruction = [
+        _native_row(t, {}),
+    ]
+
+    absent = script.check_against_native(missing_from_reconstruction, "transcript_path")
+    extra = script.check_against_native(invented_by_reconstruction, "transcript_path")
+
+    assert len(absent.problems) == 1
+    assert "only in the native map ['model-ghost']" in absent.problems[0]
+    assert len(extra.problems) == 1
+    assert "only in the reconstruction ['model-alpha']" in extra.problems[0]
+    assert (absent.tolerated, extra.tolerated) == (0, 0)
+
+
+def test_the_oracle_follows_a_transcript_that_moved_between_project_slugs(script, tmp_path):
+    # Measured on real data 2026-09-16: both snapshots that first exposed the
+    # tolerance question had their transcripts migrate out of a worktree
+    # project slug within the hour, leaving the recorded path dead. Without
+    # the by-id index the oracle stops checking exactly those rows and
+    # reports a pass it has not earned - a green that means "I looked away",
+    # which is worse than a red.
+    moved = _one_entry_transcript(tmp_path)
+    dead_path = str(tmp_path / "old-slug" / "t.jsonl")
+    records = [_native_row(dead_path, {"model-alpha": _bucket(input_tokens=1)})]
+
+    assert script.checkable_native_rows(records, "transcript_path") == []
+
+    with_index = script.checkable_native_rows(records, "transcript_path", {"s1": moved})
+
+    assert with_index == [(0, moved)]
+    assert len(script.check_against_native(records, "transcript_path", {"s1": moved}).problems) == 1
 
 
 def test_resolve_transcript_relocates_a_moved_file_but_never_invents_one(script, tmp_path):
@@ -274,7 +389,7 @@ def test_check_against_native_stays_silent_about_rows_it_cannot_check(script, tm
     ]
 
     assert script.checkable_native_rows(records, "transcript_path") == []
-    assert script.check_against_native(records, "transcript_path") == []
+    assert script.check_against_native(records, "transcript_path").problems == []
 
 
 def test_a_transcript_shared_by_many_snapshots_is_scanned_once(script, tmp_path, monkeypatch):
@@ -305,7 +420,7 @@ def test_a_transcript_shared_by_many_snapshots_is_scanned_once(script, tmp_path,
         }
         for stamp in stamps
     ]
-    assert script.check_against_native(native_rows, "transcript_path") == []
+    assert script.check_against_native(native_rows, "transcript_path").problems == []
     assert scans == [t]
 
     pending_rows = [
@@ -395,7 +510,7 @@ def test_main_reports_the_plan_when_every_reconstruction_agrees(
     out = capsys.readouterr().out
     assert exit_code == 0
     assert "oracle: 1 of 1 natively written snapshots still have their transcript" in out
-    assert "oracle: all 1 reconstructions agree with the native value" in out
+    assert "oracle: 1 exact, 0 within the 1% downward tolerance, 0 disagreements" in out
     assert "Units planned: 1 of 1" in out
     assert "Rows to write: 1 of 2" in out
     assert "Token volume covered: 410 of 410 (100.0%)" in out

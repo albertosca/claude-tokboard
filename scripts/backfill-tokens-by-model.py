@@ -44,11 +44,21 @@ Why the native records are the acceptance gate
 Capture went live mid-session, so a number of units own snapshots from both
 sides of the deploy: early ones without the map, later ones with a map the
 hook computed itself, at the time, from the live transcript. Those snapshots
-are an oracle the reconstruction must reproduce exactly, drawn from
-production data and free to collect. check_against_native() runs FIRST,
-before a plan is even computed, and a single disagreement aborts the run: a
-reconstructor that is wrong about one snapshot where the answer is known has
-no claim on the thousands where it is not.
+are an oracle the reconstruction is measured against, drawn from production
+data and free to collect. check_against_native() runs FIRST, before a plan is
+even computed, and a single disagreement aborts the run: a reconstructor that
+is wrong about one snapshot where the answer is known has no claim on the
+thousands where it is not.
+
+"Disagreement" is bounded, and bounded in one direction only. A record stores
+`timestamp_end`, never the line number the hook actually summed to, so in a
+transcript whose timestamps run backwards against file order no
+timestamp-derived cut can reproduce the hook exactly - and the error it makes
+can only be a SHORTFALL, never an invention. Measured over every oracle
+snapshot on 2026-09-16: 102 of 104 sessions exact, worst residue 0.792%
+downward, and 85 of 85 subagents exact. So the gate accepts equality or a
+shortfall of at most 1%, and refuses an over-count of any size at all. See
+diff_against_native.
 
 This half of the backfill writes nothing at all - there is no write path in
 this file, by design. A --apply flag, with the backup/verify/rename
@@ -62,7 +72,7 @@ import argparse
 import collections
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
@@ -73,6 +83,7 @@ from metrics_core.backfill import (
     token_sum,
 )
 from metrics_core.records import load_records
+from metrics_core.transcript_ingest import TOKEN_FIELDS
 
 METRICS_DIR = str(Path("~/.claude/metrics").expanduser())
 PROJECTS_DIR = str(Path("~/.claude/projects").expanduser())
@@ -98,6 +109,21 @@ ID_KEY_FOR_TRANSCRIPT_KEY: dict[str, str] = {
 
 ModelMap = dict[str, dict[str, int]]
 Timeline = list[tuple[str, bool, tuple[int, ...], str]]
+
+# How far BELOW a natively written value a reconstruction may land and still
+# be accepted, per model and per token field. Strictly one-directional: see
+# diff_against_native for why an over-count is refused at any magnitude.
+ORACLE_TOLERANCE = 0.01
+
+
+class OracleReport(NamedTuple):
+    """What the acceptance gate found: problems first, because that is what
+    aborts the run; the two counts exist so a sudden jump in `tolerated` is
+    visible instead of being averaged into a pass."""
+
+    problems: list[str]
+    exact: int
+    tolerated: int
 
 
 def resolve_transcript(
@@ -197,12 +223,72 @@ def plan_backfill(
                 timeline = timelines[path] = scan_transcript(path)
             plan[index] = model_totals_as_of(timeline, records[index]["timestamp_end"])
         stats["planned"] += len(pending)
-        stats["untouched: snapshot already has the field"] += native
+        if native:
+            # Guarded so the disposition table never prints a reason with a
+            # count of zero: an operator reading it before authorising a
+            # write should see only categories that happened.
+            stats["untouched: snapshot already has the field"] += native
     return plan, stats
 
 
+def diff_against_native(native: ModelMap, rebuilt: ModelMap) -> tuple[list[str], bool]:
+    """(complaints, tolerated) for one snapshot's reconstruction.
+
+    The gate is deliberately ASYMMETRIC. A reconstruction may land up to
+    ORACLE_TOLERANCE BELOW the natively written value and still pass; landing
+    even fractionally above it fails at any magnitude.
+
+    That is not a double standard, it is the lesson this repo already paid
+    for: the dedup backfill's worst outcome was INVENTING 1.9 billion tokens
+    on a single day, and a per-model bar chart shows a fabricated bar
+    loudly while a sub-1% shortfall is invisible. The measured residue is
+    also structurally one-directional - a record stores `timestamp_end`, not
+    the line the hook actually summed to, so in a transcript whose timestamps
+    run backwards against file order an as-of cut can only ever MISS entries
+    the hook counted, never add ones it did not.
+
+    A model bucket present on one side and absent on the other is never a
+    tolerance case: that is a missing or invented series, not a rounding
+    difference, and it is reported whatever the numbers say.
+    """
+    complaints: list[str] = []
+    tolerated = False
+    only_native = sorted(set(native) - set(rebuilt))
+    only_rebuilt = sorted(set(rebuilt) - set(native))
+    if only_native or only_rebuilt:
+        complaints.append(
+            f"model buckets differ: only in the native map {only_native}, "
+            f"only in the reconstruction {only_rebuilt}"
+        )
+    for model in sorted(set(native) & set(rebuilt)):
+        for field in TOKEN_FIELDS:
+            recorded = native[model].get(field, 0) or 0
+            found = rebuilt[model].get(field, 0) or 0
+            if found == recorded:
+                continue
+            if found > recorded:
+                complaints.append(
+                    f"{model}.{field}: native {recorded:,}, rebuilt {found:,} - "
+                    f"ABOVE native by {found - recorded:,}; an over-count is never tolerated"
+                )
+                continue
+            # found < recorded, so recorded is at least 1 and the share is
+            # well defined without a zero guard.
+            shortfall = recorded - found
+            share = shortfall / recorded
+            if share <= ORACLE_TOLERANCE:
+                tolerated = True
+            else:
+                complaints.append(
+                    f"{model}.{field}: native {recorded:,}, rebuilt {found:,} - "
+                    f"below native by {shortfall:,} ({share:.3%}), past the "
+                    f"{ORACLE_TOLERANCE:.0%} floor"
+                )
+    return complaints, tolerated
+
+
 def checkable_native_rows(
-    records: list[dict[str, Any]], transcript_key: str
+    records: list[dict[str, Any]], transcript_key: str, transcripts: dict[str, str] | None = None
 ) -> list[tuple[int, str]]:
     """(row index, transcript path) for every row the oracle can check.
 
@@ -210,45 +296,61 @@ def checkable_native_rows(
     transcript that map was computed from AND records when it was taken. Rows
     that carry a map but lost their transcript are not failures - there is
     simply nothing left to check them against.
+
+    `transcripts` is the by-id index, and passing it is not optional in
+    practice: transcripts migrate between project slugs while their sessions
+    are alive (measured 2026-09-16 - the two snapshots that first exposed the
+    tolerance question moved out of a worktree slug within the hour). Without
+    it those rows drop out of the oracle silently, and a gate that quietly
+    stops checking the hard cases reports a pass it has not earned.
     """
     id_key = ID_KEY_FOR_TRANSCRIPT_KEY[transcript_key]
     checkable: list[tuple[int, str]] = []
     for index, record in enumerate(records):
         if FIELD not in record or not record.get("timestamp_end"):
             continue
-        path = resolve_transcript(record, {}, transcript_key, record.get(id_key))
+        path = resolve_transcript(record, transcripts or {}, transcript_key, record.get(id_key))
         if path is not None:
             checkable.append((index, path))
     return checkable
 
 
-def check_against_native(records: list[dict[str, Any]], transcript_key: str) -> list[str]:
-    """One message per snapshot whose reconstruction disagrees with its own
-    natively written tokens_by_model; empty when every one agrees.
+def check_against_native(
+    records: list[dict[str, Any]], transcript_key: str, transcripts: dict[str, str] | None = None
+) -> OracleReport:
+    """The acceptance gate: every snapshot that already carries a natively
+    written tokens_by_model, reconstructed and compared against it.
 
-    This is the acceptance gate. The map the hook wrote at the time, from the
-    live transcript, is the known-good answer for that snapshot, so a
-    difference here says the reconstruction is wrong about a case where the
-    truth is available - and therefore untrustworthy on the far larger set
-    where it is not.
+    The map the hook wrote at the time, from the live transcript, is the
+    known-good answer for that snapshot. `problems` carries one message per
+    snapshot that fails diff_against_native - an over-count of any size, a
+    shortfall past ORACLE_TOLERANCE, or a model bucket that exists on only
+    one side - and a non-empty list aborts the whole run. `exact` and
+    `tolerated` split the passes, so the tolerance can be watched rather
+    than merely trusted.
     """
     id_key = ID_KEY_FOR_TRANSCRIPT_KEY[transcript_key]
     timelines: dict[str, Timeline] = {}
     problems: list[str] = []
-    for index, path in checkable_native_rows(records, transcript_key):
+    exact = 0
+    tolerated = 0
+    for index, path in checkable_native_rows(records, transcript_key, transcripts):
         record = records[index]
         timeline = timelines.get(path)
         if timeline is None:
             timeline = timelines[path] = scan_transcript(path)
         rebuilt = model_totals_as_of(timeline, record["timestamp_end"])
-        if rebuilt != record[FIELD]:
-            problems.append(
-                f"line {index + 1}: {id_key}={record.get(id_key)!r} "
-                f"as of {record['timestamp_end']}\n"
-                f"      native {record[FIELD]}\n"
-                f"    rebuilt {rebuilt}"
+        complaints, within_tolerance = diff_against_native(record[FIELD], rebuilt)
+        if complaints:
+            header = (
+                f"line {index + 1}: {id_key}={record.get(id_key)!r} as of {record['timestamp_end']}"
             )
-    return problems
+            problems.append("\n".join([header, *(f"    {line}" for line in complaints)]))
+        elif within_tolerance:
+            tolerated += 1
+        else:
+            exact += 1
+    return OracleReport(problems, exact, tolerated)
 
 
 def print_plan_summary(
@@ -308,19 +410,30 @@ def main() -> int:
     records = load_records(str(path))
     print(f"read {len(records)} rows from {path}")
 
-    # The gate runs before anything else is computed: if the reconstruction
-    # cannot reproduce the snapshots whose answer is already known, nothing
-    # it has to say about the rest is worth printing.
-    checkable = checkable_native_rows(records, transcript_key)
+    # Indexed before the gate runs, not after: the oracle needs it to follow
+    # a transcript that has moved between project slugs, and a row it cannot
+    # reach is a row it cannot check.
+    transcripts = index_transcripts(args.projects_dir)
+    print(f"indexed {len(transcripts)} session transcripts under {args.projects_dir}")
+
+    # The gate runs before the plan is computed: if the reconstruction cannot
+    # reproduce the snapshots whose answer is already known, nothing it has
+    # to say about the rest is worth printing.
+    checkable = checkable_native_rows(records, transcript_key, transcripts)
     native = sum(1 for record in records if FIELD in record)
     print(
         f"oracle: {len(checkable)} of {native} natively written snapshots "
         f"still have their transcript"
     )
-    problems = check_against_native(records, transcript_key)
-    if problems:
-        print(f"\nORACLE FAILED ({len(problems)} disagreements):", file=sys.stderr)
-        for problem in problems:
+    report = check_against_native(records, transcript_key, transcripts)
+    print(
+        f"oracle: {report.exact} exact, {report.tolerated} within the "
+        f"{ORACLE_TOLERANCE:.0%} downward tolerance, "
+        f"{len(report.problems)} disagreements"
+    )
+    if report.problems:
+        print(f"\nORACLE FAILED ({len(report.problems)} disagreements):", file=sys.stderr)
+        for problem in report.problems:
             print(f"  {problem}", file=sys.stderr)
         print(
             "\nnothing was written and nothing will be: a reconstruction that "
@@ -329,10 +442,6 @@ def main() -> int:
             file=sys.stderr,
         )
         return 1
-    print(f"oracle: all {len(checkable)} reconstructions agree with the native value")
-
-    transcripts = index_transcripts(args.projects_dir)
-    print(f"indexed {len(transcripts)} session transcripts under {args.projects_dir}")
 
     plan, stats = plan_backfill(records, transcripts, transcript_key)
     print_plan_summary(records, plan, stats, id_key)
