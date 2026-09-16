@@ -60,19 +60,41 @@ can only be a SHORTFALL, never an invention. As this gate itself reported on
 shortfall of at most 1%, and refuses an over-count of any size at all. See
 diff_against_native.
 
-This half of the backfill writes nothing at all - there is no write path in
-this file, by design. A --apply flag, with the backup/verify/rename
-machinery scripts/backfill-token-dedup.py already carries, is a separate
-change.
+Why --apply demands a number the operator read for themselves
+-------------------------------------------------------------
+A bare run is a dry run. Writing needs --apply AND --expect-checked N, and
+the run refuses if the oracle verified fewer than N snapshots - or zero of
+them, whatever N says. The floor exists because this gate has twice reported
+green while quietly measuring less than anyone believed: once over an empty
+index, and once reaching 49 of 93 subagent rows while printing a verdict
+that read exactly as green as 93 of 93. Both runs would have exited 0. An
+oracle that stops reaching its rows looks identical to one that passed, so
+the count of rows it actually verified is made an argument the operator must
+copy off the dry run they just read, rather than a number the run gets to
+shrink on its own. Vacuous checks - empty on both sides - are excluded from
+that count on purpose: they agree and prove nothing.
+
+The write itself reuses the machinery scripts/backfill-token-dedup.py
+already proved: back up and verify the copy by sha256, re-verify at rename
+time that the rows the plan was built from are still the file's prefix,
+carry over verbatim anything appended while the run was in flight, pass the
+whole result through verify_fields with tokens_by_model declared as the only
+permitted addition, and rename into place rather than editing in place.
 """
 
 from __future__ import annotations
 
 import argparse
 import collections
+import json
+import os
+import shutil
+import stat
 import sys
+import tempfile
+from datetime import datetime
 from pathlib import Path
-from typing import Any, NamedTuple
+from typing import Any, NamedTuple, NoReturn
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
@@ -80,7 +102,10 @@ from metrics_core.backfill import (
     index_transcripts,
     model_totals_as_of,
     scan_transcript,
+    sha256_bytes,
+    sha256_of,
     token_sum,
+    verify_fields,
 )
 from metrics_core.records import load_records
 from metrics_core.transcript_ingest import TOKEN_FIELDS
@@ -465,6 +490,149 @@ def check_against_native(
     )
 
 
+def refuse(message: str) -> NoReturn:
+    """Abort the write with a reason on stderr and a non-zero exit.
+
+    Every guard below refuses the same way, so no caller can mistake a
+    refusal for a return value it forgot to check.
+    """
+    print(message, file=sys.stderr)
+    raise SystemExit(1)
+
+
+def record_of(line: bytes) -> dict[str, Any] | None:
+    """One file line as the record it holds, or None if it is not one.
+
+    None is a comparison value, not an error path: an unparseable or blank
+    line inside the prefix means the file is not what the plan was built
+    from, and the prefix check below refuses on that the same way it refuses
+    a line whose contents changed. load_records SKIPS such lines, so a blank
+    line in the prefix would shift every row index the plan holds by one -
+    exactly the misalignment that must never reach a write.
+    """
+    try:
+        record: dict[str, Any] = json.loads(line.decode("utf-8"))
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return None
+    return record
+
+
+def tail_after_prefix(target: Path, records: list[dict[str, Any]]) -> bytes:
+    """Everything the live file holds beyond the rows the plan was built
+    from - after refusing if those rows are no longer its prefix.
+
+    Read as LATE as possible, for the same reason the dedup backfill reads
+    it late: the metrics file is append-only and live, every running
+    session's Stop hook appends to it, and it grew by more than 200 lines
+    during the session that specified this. Anything past the prefix is
+    returned as raw bytes and copied through untouched, including a
+    half-written final line a hook is in the middle of appending.
+
+    The check is by RECORD, not by bytes: the records came from
+    load_records, which is free to have parsed whitespace differently than
+    this reads it back. What must hold is that row index i of the plan still
+    names the same record it named when the plan was computed.
+    """
+    current = target.read_bytes()
+    usable = current.rfind(b"\n") + 1
+    lines = current[:usable].split(b"\n")[:-1]
+    prefix = lines[: len(records)]
+    if [record_of(line) for line in prefix] != records:
+        refuse(
+            f"refusing to write: the file changed under us - its first {len(records)} "
+            "line(s) are no longer the records this plan was built from, so every "
+            "row index in the plan may now name a different record"
+        )
+    return current[sum(len(line) + 1 for line in prefix) :]
+
+
+def apply_backfill(
+    path: str,
+    plan: dict[int, ModelMap],
+    records: list[dict[str, Any]],
+    backup_dir: str | None = None,
+) -> None:
+    """Write the planned maps into the metrics file, or write nothing at all.
+
+    The one irreversible step in this backfill, so it mirrors the order
+    scripts/backfill-token-dedup.py proved on this same file:
+
+    1. back up, and verify the copy by sha256 - an unverified backup is not
+       a backup;
+    2. add the planned key and nothing else, then put the whole result
+       through verify_fields with tokens_by_model declared as the only
+       permitted addition, which still rejects an undeclared key, a
+       reordering, and any change to a value that was already there;
+    3. write the body to a temporary file beside the target;
+    4. re-read the live file as late as possible, refuse unless the planned
+       rows are still its prefix, and append whatever arrived after them
+       verbatim;
+    5. rename into place, never edit in place.
+
+    Any refusal leaves the target byte-for-byte as it was, and removes the
+    temporary file on the way out.
+    """
+    target = Path(path)
+    out_of_range = sorted(index for index in plan if not 0 <= index < len(records))
+    if out_of_range:
+        refuse(
+            f"refusing to write: the plan names row(s) {out_of_range[:5]}, which are "
+            f"not rows of the {len(records)} records it was built from"
+        )
+
+    backups = Path(backup_dir) if backup_dir else target.parent / "backups"
+    backups.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now().strftime("%Y-%m-%d-%H%M%S")
+    backup = backups / f"{target.name}.tokens-by-model-{stamp}.bak"
+    shutil.copy2(str(target), str(backup))
+    source_sha = sha256_of(str(target))
+    backup_sha = sha256_of(str(backup))
+    if source_sha != backup_sha:
+        # Can legitimately differ if a hook appended between the copy and the
+        # re-read; either way an unverified backup is not a backup.
+        refuse(f"BACKUP VERIFICATION FAILED\n  source {source_sha}\n  backup {backup_sha}")
+    print(f"\nbackup verified: {backup}\n  sha256 {backup_sha}")
+
+    corrected = [
+        {**record, FIELD: plan[index]} if index in plan else record
+        for index, record in enumerate(records)
+    ]
+    problems = verify_fields(records, corrected, allow_new_keys=frozenset({FIELD}))
+    if problems:
+        detail = "\n".join(f"  {problem}" for problem in problems[:20])
+        refuse(f"FIELD VERIFICATION FAILED ({len(problems)} problems):\n{detail}")
+    print(f"field-by-field verification: {FIELD} added to {len(plan)} row(s), nothing else changed")
+
+    mode = stat.S_IMODE(target.stat().st_mode)
+    body = b"".join(json.dumps(record).encode("utf-8") + b"\n" for record in corrected)
+    handle, temporary_name = tempfile.mkstemp(
+        dir=target.parent, prefix=f".{target.name}.", suffix=".new"
+    )
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(handle, "wb") as f:
+            f.write(body)
+            tail = tail_after_prefix(target, records)
+            f.write(tail)
+            f.flush()
+            os.fsync(f.fileno())
+        temporary.chmod(mode)
+        temporary.replace(target)
+    except BaseException:
+        temporary.unlink(missing_ok=True)
+        raise
+
+    written = target.read_bytes()
+    appended = tail.count(b"\n")
+    total_lines = written.count(b"\n")
+    print(
+        f"wrote {target}: {total_lines} line(s) "
+        f"({len(records)} rewritten + {appended} appended while running)"
+    )
+    print(f"  mode {oct(stat.S_IMODE(target.stat().st_mode))}")
+    print(f"  sha256 {sha256_bytes(written)}")
+
+
 def print_plan_summary(
     records: list[dict[str, Any]],
     plan: dict[int, ModelMap],
@@ -511,6 +679,25 @@ def main() -> int:
     )
     parser.add_argument("--metrics-dir", default=METRICS_DIR)
     parser.add_argument("--projects-dir", default=PROJECTS_DIR)
+    parser.add_argument(
+        "--backup-dir",
+        default=None,
+        help="where the pre-write backup goes (default: a backups/ beside the metrics file)",
+    )
+    parser.add_argument(
+        "--apply",
+        action="store_true",
+        help="write the reconstructed maps; without it this is a dry run",
+    )
+    parser.add_argument(
+        "--expect-checked",
+        type=int,
+        default=None,
+        help=(
+            "how many natively written snapshots the oracle is expected to verify, "
+            "read off the dry run; --apply refuses below it. Required with --apply"
+        ),
+    )
     args = parser.parse_args()
 
     id_key, transcript_key = UNIT_KEYS[args.file]
@@ -572,7 +759,51 @@ def main() -> int:
 
     plan, stats = plan_backfill(records, transcripts, transcript_key)
     print_plan_summary(records, plan, stats, id_key)
-    print("\nREAD-ONLY - this script has no write path; --apply is a later change.")
+
+    # The evidence this run actually collected: snapshots reconstructed and
+    # compared against a native map that had something in it. Vacuous checks
+    # are left out on purpose - they agree and prove nothing, and a total
+    # propped up by them is the shape of a gate that has stopped looking.
+    checked = report.exact + report.tolerated
+    if not args.apply:
+        print(
+            f"\nDRY RUN - nothing written. To write: --apply --expect-checked {checked}"
+            " (and read the oracle line above before you do)."
+        )
+        return 0
+
+    if args.expect_checked is None:
+        print(
+            "--apply requires --expect-checked N: the number of natively written "
+            "snapshots the oracle verified in the dry run you just read (exact plus "
+            "within-tolerance; vacuous checks do not count). It exists so a human "
+            "looks at how much evidence this run has, rather than letting a "
+            "quietly-shrinking oracle wave a write through.",
+            file=sys.stderr,
+        )
+        return 1
+    if checked == 0:
+        print(
+            "refusing to write: the oracle verified 0 snapshots, so this run has no "
+            "evidence at all that the reconstruction is right. A gate that has "
+            "stopped reaching its rows prints the same green as one that passed.",
+            file=sys.stderr,
+        )
+        return 1
+    if checked < args.expect_checked:
+        print(
+            f"refusing to write: the oracle verified {checked} snapshot(s), fewer than "
+            f"the {args.expect_checked} this run was told to expect. Either it has "
+            "stopped reaching rows it used to reach, or --expect-checked is stale - "
+            "both are worth stopping for.",
+            file=sys.stderr,
+        )
+        return 1
+
+    if not plan:
+        print("\nnothing to write; leaving the file untouched")
+        return 0
+    apply_backfill(str(path), plan, records, args.backup_dir)
     return 0
 
 

@@ -9,6 +9,7 @@ transcripts under tmp_path and never touches a real metrics file.
 import collections
 import importlib.util
 import json
+import os
 import sys
 import types
 from collections.abc import Iterable
@@ -669,7 +670,11 @@ def test_main_reports_the_plan_when_every_reconstruction_agrees(
     assert "Rows to write: 1 of 2" in out
     assert "Token volume covered: 410 of 410 (100.0%)" in out
     assert "Earliest snapshot that would be written: 2026-08-01T10:30:00Z" in out
-    assert "READ-ONLY" in out
+    # A bare run writes nothing, and hands the operator the exact invocation
+    # that would - including the evidence count it just measured, so the
+    # number in --expect-checked is one they read rather than one they guess.
+    assert "DRY RUN - nothing written. To write: --apply --expect-checked 1" in out
+    assert not (tmp_path / "metrics" / "backups").exists()
 
 
 def test_main_aborts_and_plans_nothing_when_a_reconstruction_disagrees(
@@ -805,3 +810,331 @@ def test_module_guard_calls_main_and_exits_with_its_return_code(tmp_path, monkey
         spec.loader.exec_module(module)
 
     assert excinfo.value.code == 1
+
+
+def _write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
+    path.write_text("".join(json.dumps(row) + "\n" for row in rows))
+
+
+def test_apply_writes_only_the_planned_key_and_preserves_everything_else(script, tmp_path):
+    metrics = tmp_path / "sessions.jsonl"
+    rows = [
+        {"session_id": "s1", "input_tokens": 10, "tag": "keep-me"},
+        {"session_id": "s2", "input_tokens": 20, "tag": "untouched"},
+    ]
+    _write_jsonl(metrics, rows)
+    plan = {0: {"model-alpha": _bucket(input_tokens=10)}}
+
+    script.apply_backfill(str(metrics), plan, rows)
+
+    out = [json.loads(line) for line in metrics.read_text().splitlines()]
+    assert out[0]["tokens_by_model"] == {"model-alpha": _bucket(input_tokens=10)}
+    assert out[0]["input_tokens"] == 10
+    assert out[0]["tag"] == "keep-me"
+    assert "tokens_by_model" not in out[1]
+    assert out[1] == rows[1]
+
+
+def test_apply_carries_over_lines_appended_while_it_ran(script, tmp_path):
+    # The metrics file is append-only and live: another session's Stop hook
+    # appends while this runs. Anything appended after the records were read
+    # must survive verbatim.
+    metrics = tmp_path / "sessions.jsonl"
+    rows = [{"session_id": "s1", "input_tokens": 10}]
+    _write_jsonl(metrics, rows)
+    late = {"session_id": "s99", "input_tokens": 1}
+    with metrics.open("a") as f:
+        f.write(json.dumps(late) + "\n")
+
+    script.apply_backfill(str(metrics), {0: {"model-alpha": _bucket(input_tokens=10)}}, rows)
+
+    out = [json.loads(line) for line in metrics.read_text().splitlines()]
+    assert len(out) == 2
+    assert out[1] == late, "the concurrently appended record must survive untouched"
+
+
+def test_apply_refuses_when_the_prefix_changed_under_it(script, tmp_path):
+    # If the rows we read are no longer the file's prefix, our plan's row
+    # indexes point at different records - writing would corrupt them.
+    metrics = tmp_path / "sessions.jsonl"
+    _write_jsonl(metrics, [{"session_id": "s1", "input_tokens": 10}])
+    stale = [{"session_id": "DIFFERENT", "input_tokens": 999}]
+
+    with pytest.raises(SystemExit):
+        script.apply_backfill(str(metrics), {0: {"m": _bucket()}}, stale)
+
+    out = [json.loads(line) for line in metrics.read_text().splitlines()]
+    assert out[0]["session_id"] == "s1", "the file must be left untouched"
+
+
+def _metrics_text(tmp_path: Path) -> str:
+    return (tmp_path / "metrics" / "sessions.jsonl").read_text()
+
+
+def _refused_to_write(tmp_path: Path) -> bool:
+    """True when the row the plan would have written is still without the
+    field. Asserting the STRING is absent from the whole file proves nothing
+    here: the native snapshot the oracle checks carries it by construction,
+    so that assertion passes whether or not the write happened."""
+    first = json.loads(_metrics_text(tmp_path).splitlines()[0])
+    return "tokens_by_model" not in first
+
+
+def test_apply_refuses_when_a_prefix_line_is_no_longer_readable_as_a_record(
+    script, tmp_path, capsys
+):
+    # load_records SKIPS a blank or malformed line, so one appearing inside
+    # the prefix shifts every row index the plan holds by one. The prefix
+    # check treats an unreadable line as a mismatch rather than parsing
+    # around it, because writing through that shift is what would corrupt
+    # rows the plan never named.
+    metrics = tmp_path / "sessions.jsonl"
+    row = {"session_id": "s1", "input_tokens": 10}
+    metrics.write_text('{"session_id": "s1", "input_to\n' + json.dumps(row) + "\n")
+
+    with pytest.raises(SystemExit):
+        script.apply_backfill(str(metrics), {0: {"m": _bucket()}}, [row])
+
+    assert "the file changed under us" in capsys.readouterr().err
+    assert metrics.read_text().startswith('{"session_id": "s1", "input_to\n')
+
+
+def test_apply_refuses_a_plan_that_names_a_row_the_records_do_not_have(script, tmp_path, capsys):
+    # A plan built against a different read of the file would silently
+    # address rows by the wrong index. Nothing downstream could tell.
+    metrics = tmp_path / "sessions.jsonl"
+    rows = [{"session_id": "s1", "input_tokens": 10}]
+    _write_jsonl(metrics, rows)
+
+    with pytest.raises(SystemExit):
+        script.apply_backfill(str(metrics), {7: {"m": _bucket()}}, rows)
+
+    assert "the plan names row(s) [7]" in capsys.readouterr().err
+    assert json.loads(metrics.read_text()) == rows[0]
+    assert not (tmp_path / "backups").exists(), "it must refuse before it copies anything"
+
+
+def test_apply_refuses_when_the_backup_does_not_verify(script, tmp_path, monkeypatch, capsys):
+    # An unverified backup is not a backup, and this is the only step that
+    # makes the write reversible at all.
+    metrics = tmp_path / "sessions.jsonl"
+    rows = [{"session_id": "s1", "input_tokens": 10}]
+    _write_jsonl(metrics, rows)
+    monkeypatch.setattr(
+        script, "sha256_of", lambda path: "backup-digest" if path.endswith(".bak") else "source"
+    )
+
+    with pytest.raises(SystemExit):
+        script.apply_backfill(str(metrics), {0: {"m": _bucket()}}, rows)
+
+    err = capsys.readouterr().err
+    assert "BACKUP VERIFICATION FAILED" in err
+    assert "backup-digest" in err
+    assert json.loads(metrics.read_text()) == rows[0], "the file must be left untouched"
+
+
+def test_apply_refuses_when_verification_sees_a_change_it_did_not_declare(script, tmp_path, capsys):
+    # tokens_by_model is declared as an ADDITION only. A plan that would
+    # overwrite a map already on the row is a change to a pre-existing
+    # value, and the declaration does not cover it.
+    metrics = tmp_path / "sessions.jsonl"
+    rows = [
+        {
+            "session_id": "s1",
+            "input_tokens": 10,
+            "tokens_by_model": {"model-alpha": _bucket(input_tokens=10)},
+        }
+    ]
+    _write_jsonl(metrics, rows)
+
+    with pytest.raises(SystemExit):
+        script.apply_backfill(str(metrics), {0: {"model-beta": _bucket(input_tokens=99)}}, rows)
+
+    err = capsys.readouterr().err
+    assert "FIELD VERIFICATION FAILED (1 problems)" in err
+    assert "tokens_by_model changed" in err
+    assert json.loads(metrics.read_text()) == rows[0], "the file must be left untouched"
+
+
+def test_apply_leaves_no_temporary_file_behind_when_the_rename_fails(script, tmp_path, monkeypatch):
+    # The temporary lives beside the target, in the same directory the
+    # metrics files and their backups live in. One left behind after a
+    # failed run is litter in a directory whose contents are read by name.
+    metrics = tmp_path / "sessions.jsonl"
+    rows = [{"session_id": "s1", "input_tokens": 10}]
+    _write_jsonl(metrics, rows)
+
+    def boom(source: Any, destination: Any) -> None:
+        raise RuntimeError("rename failed")
+
+    monkeypatch.setattr(os, "replace", boom)
+
+    with pytest.raises(RuntimeError, match="rename failed"):
+        script.apply_backfill(str(metrics), {0: {"m": _bucket()}}, rows)
+
+    assert json.loads(metrics.read_text()) == rows[0], "the file must be left untouched"
+    assert list(tmp_path.glob(".sessions.jsonl.*")) == []
+
+
+def test_apply_honours_an_explicit_backup_directory(script, tmp_path):
+    # --backup-dir exists so the backup can be sent somewhere other than
+    # beside an irreplaceable file; the copy must still be a real one.
+    metrics = tmp_path / "sessions.jsonl"
+    rows = [{"session_id": "s1", "input_tokens": 10}]
+    _write_jsonl(metrics, rows)
+    elsewhere = tmp_path / "somewhere" / "else"
+    before = metrics.read_bytes()
+
+    script.apply_backfill(str(metrics), {0: {"m": _bucket()}}, rows, str(elsewhere))
+
+    backups = list(elsewhere.glob("sessions.jsonl.tokens-by-model-*.bak"))
+    assert len(backups) == 1
+    assert backups[0].read_bytes() == before, "the backup is the file as it was, not as it became"
+
+
+def _applying_argv(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, *extra: str) -> None:
+    _argv(monkeypatch, tmp_path, "--backup-dir", str(tmp_path / "backups"), *extra)
+
+
+def _one_writable_session(tmp_path: Path) -> None:
+    """A session whose first snapshot needs the field and whose second
+    already carries it - so the oracle has exactly one row to verify and the
+    plan has exactly one row to write."""
+    t = _transcript(
+        tmp_path / "t.jsonl",
+        [
+            ("2026-08-01T10:00:00Z", "a1", "model-alpha", {"input_tokens": 10}),
+            ("2026-08-01T11:00:00Z", "a2", "model-beta", {"input_tokens": 400}),
+        ],
+    )
+    _metrics_file(
+        tmp_path,
+        "sessions",
+        [
+            {
+                "session_id": "s1",
+                "transcript_path": t,
+                "timestamp_end": "2026-08-01T10:30:00Z",
+                "input_tokens": 10,
+            },
+            {
+                "session_id": "s1",
+                "transcript_path": t,
+                "timestamp_end": "2026-08-01T12:00:00Z",
+                "input_tokens": 410,
+                "tokens_by_model": {
+                    "model-alpha": _bucket(input_tokens=10),
+                    "model-beta": _bucket(input_tokens=400),
+                },
+            },
+        ],
+    )
+
+
+def test_main_refuses_to_apply_without_an_expected_evidence_count(
+    script, tmp_path, monkeypatch, capsys
+):
+    # The floor is not a formality. This gate has twice reported green while
+    # measuring less than anyone believed, and both runs would have exited 0
+    # - so the operator has to state, in the invocation, how much evidence
+    # the dry run they just read actually held.
+    _one_writable_session(tmp_path)
+    _applying_argv(monkeypatch, tmp_path, "--apply")
+
+    exit_code = script.main()
+
+    captured = capsys.readouterr()
+    assert exit_code == 1
+    assert "--apply requires --expect-checked N" in captured.err
+    assert _refused_to_write(tmp_path)
+
+
+def test_main_refuses_to_apply_when_the_oracle_verified_nothing(
+    script, tmp_path, monkeypatch, capsys
+):
+    # Zero is refused whatever --expect-checked says, including the 0 that
+    # would otherwise satisfy the comparison. A run with no native rows has
+    # collected no evidence at all, and an empty index looks exactly like
+    # this from the outside.
+    t = _transcript(
+        tmp_path / "t.jsonl",
+        [("2026-08-01T10:00:00Z", "a1", "model-alpha", {"input_tokens": 10})],
+    )
+    _metrics_file(
+        tmp_path,
+        "sessions",
+        [
+            {
+                "session_id": "s1",
+                "transcript_path": t,
+                "timestamp_end": "2026-08-01T10:30:00Z",
+                "input_tokens": 10,
+            }
+        ],
+    )
+    _applying_argv(monkeypatch, tmp_path, "--apply", "--expect-checked", "0")
+
+    exit_code = script.main()
+
+    captured = capsys.readouterr()
+    assert exit_code == 1
+    assert "the oracle verified 0 snapshots" in captured.err
+    assert _refused_to_write(tmp_path)
+
+
+def test_main_refuses_to_apply_when_the_oracle_verified_fewer_than_expected(
+    script, tmp_path, monkeypatch, capsys
+):
+    # The shape of the defect this exists for: the oracle still passes, it
+    # has simply stopped reaching rows it used to reach, and its verdict
+    # reads exactly as green as a full run's.
+    _one_writable_session(tmp_path)
+    _applying_argv(monkeypatch, tmp_path, "--apply", "--expect-checked", "2")
+
+    exit_code = script.main()
+
+    captured = capsys.readouterr()
+    assert exit_code == 1
+    assert "the oracle verified 1 snapshot(s), fewer than the 2" in captured.err
+    assert _refused_to_write(tmp_path)
+
+
+def test_main_writes_when_the_oracle_cleared_the_expected_evidence_floor(
+    script, tmp_path, monkeypatch, capsys
+):
+    _one_writable_session(tmp_path)
+    _applying_argv(monkeypatch, tmp_path, "--apply", "--expect-checked", "1")
+
+    exit_code = script.main()
+
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert "backup verified" in out
+    assert "tokens_by_model added to 1 row(s)" in out
+    assert "2 line(s) (2 rewritten + 0 appended while running)" in out
+    written = [json.loads(line) for line in _metrics_text(tmp_path).splitlines()]
+    assert written[0]["tokens_by_model"] == {"model-alpha": _bucket(input_tokens=10)}
+    assert written[0]["input_tokens"] == 10, "the totals the map explains are not touched"
+    assert len(list((tmp_path / "backups").glob("*.bak"))) == 1
+
+
+def test_main_with_apply_and_nothing_to_write_leaves_the_file_alone(
+    script, tmp_path, monkeypatch, capsys
+):
+    # Every row already has the field: the oracle has something to verify,
+    # the plan has nothing to do, and the right outcome is not to rewrite an
+    # irreplaceable file to produce identical bytes.
+    t = _one_entry_transcript(tmp_path)
+    _metrics_file(
+        tmp_path, "sessions", [_native_row(t, {"model-alpha": _bucket(input_tokens=100_000)})]
+    )
+    before = _metrics_text(tmp_path)
+    _applying_argv(monkeypatch, tmp_path, "--apply", "--expect-checked", "1")
+
+    exit_code = script.main()
+
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert "nothing to write; leaving the file untouched" in out
+    assert _metrics_text(tmp_path) == before
+    assert not (tmp_path / "backups").exists(), "no write means no backup"
