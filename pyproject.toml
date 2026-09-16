@@ -89,6 +89,7 @@ module = [
     "test_projects",
     "test_records",
     "test_subagent_metrics_log_hook",
+    "test_tokens_by_model_backfill",
     "test_tui_chart",
     "test_tui_data_shapes",
     "test_tui_unconstrained",
