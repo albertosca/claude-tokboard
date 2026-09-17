@@ -585,13 +585,243 @@ def test_plan_summary_of_an_empty_plan_over_a_file_with_no_tokens(script, capsys
     # The degenerate end of the report: nothing to write, and no volume to
     # take a share of. The percentage must not divide by zero on the way to
     # saying so.
-    script.print_plan_summary([{"session_id": "s1"}], {}, collections.Counter(), "session_id")
+    script.print_plan_summary(
+        [{"session_id": "s1"}],
+        {},
+        collections.Counter(),
+        "session_id",
+        script.Refusals(set(), set()),
+    )
 
     out = capsys.readouterr().out
     assert "Units planned: 0 of 1" in out
     assert "Rows to write: 0 of 1" in out
     assert "Token volume covered: 0 of 0 (-)" in out
     assert "Earliest snapshot" not in out
+    assert "declined by the reconciliation gate" not in out
+
+
+# --- the second gate: every planned row against its own four totals ---------
+#
+# The oracle can only sample rows that already carry a native map, and all of
+# those were written on deploy day, after the transcript-entry dedup was live.
+# The rows this run would WRITE are historical and many store PRE-DEDUP,
+# duplicate-inflated totals, so the oracle stays green while the run writes a
+# map that contradicts the numbers beside it. Measured on the real files at
+# the time this gate was added: 194 of 769 planned subagent rows (171 of 622
+# units) more than 1% short, and 7 session rows ABOVE their own totals.
+
+
+def _planned_unit(
+    tmp_path: Path, transcript_tokens: int, *, totals: int, unit: str = "s1"
+) -> tuple[list[dict[str, Any]], str]:
+    """One session with one plannable snapshot: a transcript worth
+    `transcript_tokens` and a row whose stored total says `totals`."""
+    t = _transcript(
+        tmp_path / f"{unit}.jsonl",
+        [
+            (
+                "2026-08-01T10:00:00Z",
+                f"{unit}-a1",
+                "model-alpha",
+                {"input_tokens": transcript_tokens},
+            )
+        ],
+    )
+    return [
+        {
+            "session_id": unit,
+            "transcript_path": t,
+            "timestamp_end": "2026-08-01T10:30:00Z",
+            "input_tokens": totals,
+        }
+    ], t
+
+
+def _refuse(
+    script: types.ModuleType, records: list[dict[str, Any]]
+) -> tuple[dict[int, Any], Any, Any]:
+    plan, stats = script.plan_backfill(records, {}, "transcript_path")
+    plan, refusals = script.refuse_unwritable_units(records, plan, stats, "session_id")
+    return plan, stats, refusals
+
+
+def test_a_unit_whose_map_falls_short_of_its_own_totals_is_skipped_and_counted(script, tmp_path):
+    # The defect the oracle is structurally blind to: the stored total is a
+    # pre-dedup sum that counted a replayed turn twice, the reconstruction
+    # dedupes, and the map lands 90% under the number printed beside it.
+    records, _ = _planned_unit(tmp_path, 10_000, totals=100_000)
+
+    plan, stats, refusals = _refuse(script, records)
+
+    assert plan == {}, "a row whose map does not reach its totals is not written"
+    assert refusals.unreconciled == {"s1"}
+    assert refusals.nonmonotonic == set()
+    assert stats == collections.Counter({script.RECONCILE_REASON: 1})
+    assert "planned" not in stats, "the disposition table never prints a reason counting zero"
+
+
+def test_a_unit_whose_map_exceeds_its_own_totals_is_skipped_at_any_magnitude(script, tmp_path):
+    # One token above, which no tolerance covers in either gate: an as-of cut
+    # can miss entries the totals counted, so a map that comes out ABOVE them
+    # is not residue, and a fabricated bar is the failure this repo has
+    # already paid 1.9 billion invented tokens for.
+    records, _ = _planned_unit(tmp_path, 10_001, totals=10_000)
+
+    plan, stats, refusals = _refuse(script, records)
+
+    assert plan == {}
+    assert refusals.unreconciled == {"s1"}
+    assert stats == collections.Counter({script.RECONCILE_REASON: 1})
+
+
+def test_a_unit_whose_map_reconciles_exactly_is_written_untouched(script, tmp_path):
+    records, _ = _planned_unit(tmp_path, 10_000, totals=10_000)
+
+    plan, stats, refusals = _refuse(script, records)
+
+    assert plan == {0: {"model-alpha": _bucket(input_tokens=10_000)}}
+    assert (refusals.unreconciled, refusals.nonmonotonic) == (set(), set())
+    assert stats == collections.Counter({"planned": 1})
+
+
+def test_a_shortfall_inside_the_tolerance_is_written_like_the_oracle_accepts_it(script, tmp_path):
+    # 0.5% under, the structural residue of cutting by timestamp_end on a
+    # transcript whose timestamps run backwards against file order. The same
+    # bound the oracle uses, for the same reason.
+    records, _ = _planned_unit(tmp_path, 99_500, totals=100_000)
+
+    plan, _stats, refusals = _refuse(script, records)
+
+    assert set(plan) == {0}
+    assert refusals.unreconciled == set()
+
+
+def test_a_unit_whose_per_model_series_would_go_down_is_skipped_and_counted(script, tmp_path):
+    # expand_records_to_daily_deltas orders a unit's snapshots by
+    # duration_seconds, not by timestamp_end, and floors each per-model delta
+    # at zero. Here the two orders disagree, so the map differenced in
+    # duration order falls from 410 to 10 - usage silently dropped, and a
+    # phantom day the next time the series climbs back.
+    t = _transcript(
+        tmp_path / "t.jsonl",
+        [
+            ("2026-08-01T10:00:00Z", "a1", "model-alpha", {"input_tokens": 10}),
+            ("2026-08-01T11:00:00Z", "a2", "model-alpha", {"input_tokens": 400}),
+        ],
+    )
+    records = [
+        {
+            "session_id": "s1",
+            "transcript_path": t,
+            "timestamp_end": "2026-08-01T12:00:00Z",
+            "duration_seconds": 100,
+            "input_tokens": 410,
+        },
+        {
+            "session_id": "s1",
+            "transcript_path": t,
+            "timestamp_end": "2026-08-01T10:30:00Z",
+            "duration_seconds": 200,
+            "input_tokens": 10,
+        },
+    ]
+
+    plan, stats, refusals = _refuse(script, records)
+
+    assert plan == {}, "both rows reconcile with their own totals; the SERIES is what refuses"
+    assert refusals.nonmonotonic == {"s1"}
+    assert refusals.unreconciled == set()
+    assert stats == collections.Counter({script.MONOTONIC_REASON: 2})
+
+
+def test_a_model_missing_from_a_later_snapshot_is_not_a_decrease(script, tmp_path):
+    # The expander keeps the last value it saw for a model rather than
+    # differencing against zero, so an omission produces no delta at all and
+    # nothing can be floored away. Refusing it would decline units over a
+    # regression that cannot happen.
+    records = [
+        {"session_id": "s1", "duration_seconds": 100},
+        {"session_id": "s1", "duration_seconds": 200},
+    ]
+    maps = {
+        0: {"model-alpha": _bucket(input_tokens=10), "model-beta": _bucket(input_tokens=5)},
+        1: {"model-alpha": _bucket(input_tokens=20)},
+    }
+
+    assert script.series_goes_down(records, [0, 1], maps) is False
+
+
+def test_one_refused_unit_does_not_take_a_conforming_one_down_with_it(script, tmp_path):
+    # Per unit, all-or-nothing - not per file. Declining the units whose
+    # stored totals are inflated is the point; abandoning the good ones with
+    # them would be the same over-reaction the oracle's abort is reserved for.
+    good, _ = _planned_unit(tmp_path, 10_000, totals=10_000, unit="good")
+    bad, _ = _planned_unit(tmp_path, 10_000, totals=100_000, unit="bad")
+    records = good + bad
+
+    plan, stats, refusals = _refuse(script, records)
+
+    assert set(plan) == {0}
+    assert refusals.unreconciled == {"bad"}
+    assert stats == collections.Counter({"planned": 1, script.RECONCILE_REASON: 1})
+
+
+def test_a_refused_units_native_rows_stay_counted_where_they_already_were(script, tmp_path):
+    # The disposition table must keep summing to the row count. A refused
+    # unit's PLANNED rows move to their reason; its native rows were already
+    # counted as untouched and are untouched either way.
+    t = _transcript(
+        tmp_path / "t.jsonl",
+        [
+            ("2026-08-01T10:00:00Z", "a1", "model-alpha", {"input_tokens": 10}),
+            ("2026-08-01T11:00:00Z", "a2", "model-alpha", {"input_tokens": 400}),
+        ],
+    )
+    records = [
+        {
+            "session_id": "s1",
+            "transcript_path": t,
+            "timestamp_end": "2026-08-01T10:30:00Z",
+            "input_tokens": 99_999,
+        },
+        {
+            "session_id": "s1",
+            "transcript_path": t,
+            "timestamp_end": "2026-08-01T12:00:00Z",
+            "input_tokens": 410,
+            "tokens_by_model": {"model-alpha": _bucket(input_tokens=410)},
+        },
+    ]
+
+    plan, stats, _refusals = _refuse(script, records)
+
+    assert plan == {}
+    assert stats == collections.Counter(
+        {script.RECONCILE_REASON: 1, "untouched: snapshot already has the field": 1}
+    )
+    assert sum(stats.values()) == len(records)
+
+
+def test_the_summary_reports_the_declined_units_and_what_declining_them_costs(script, capsys):
+    # Reported apart from the disposition table and apart from each other:
+    # these are units the reconstruction got RIGHT and the stored data cannot
+    # host, which is a different fact about the file than a missing
+    # transcript.
+    records = [
+        {"session_id": "a", "input_tokens": 700},
+        {"session_id": "b", "input_tokens": 300},
+    ]
+
+    script.print_plan_summary(
+        records, {}, collections.Counter(), "session_id", script.Refusals({"a"}, {"b"})
+    )
+
+    out = capsys.readouterr().out
+    assert (
+        "Units declined by the reconciliation gate: 2 (1 whose map does not reconcile "
+        "with their own totals, 1 whose per-model series goes down), holding 1,000 token(s)"
+    ) in out
 
 
 def _metrics_file(tmp_path: Path, name: str, records: list[dict[str, Any]]) -> Path:
@@ -675,6 +905,56 @@ def test_main_reports_the_plan_when_every_reconstruction_agrees(
     # number in --expect-checked is one they read rather than one they guess.
     assert "DRY RUN - nothing written. To write: --file sessions --apply --expect-checked 1" in out
     assert not (tmp_path / "metrics" / "backups").exists()
+
+
+def test_the_reported_volume_counts_only_what_would_actually_be_written(
+    script, tmp_path, monkeypatch, capsys
+):
+    # The dry run used to count a refused unit's volume as covered, because
+    # "covered" was read off the plan before the reconciliation gate narrowed
+    # it - overstating the subagent file by 982 million tokens and the session
+    # file by 4.13 billion. Here the declined unit holds 99% of the file.
+    good = _transcript(
+        tmp_path / "good.jsonl",
+        [("2026-08-01T10:00:00Z", "g1", "model-alpha", {"input_tokens": 10_000})],
+    )
+    bad = _transcript(
+        tmp_path / "bad.jsonl",
+        [("2026-08-01T10:00:00Z", "b1", "model-alpha", {"input_tokens": 10_000})],
+    )
+    _metrics_file(
+        tmp_path,
+        "sessions",
+        [
+            {
+                "session_id": "good",
+                "transcript_path": good,
+                "timestamp_end": "2026-08-01T10:30:00Z",
+                "input_tokens": 10_000,
+            },
+            {
+                "session_id": "bad",
+                "transcript_path": bad,
+                "timestamp_end": "2026-08-01T10:30:00Z",
+                "input_tokens": 1_000_000,
+            },
+        ],
+    )
+    _argv(monkeypatch, tmp_path)
+
+    exit_code = script.main()
+
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert "Units planned: 1 of 2" in out
+    assert "Rows to write: 1 of 2" in out
+    assert "Token volume covered: 10,000 of 1,010,000 (1.0%)" in out
+    assert (
+        "Units declined by the reconciliation gate: 1 (1 whose map does not reconcile "
+        "with their own totals, 0 whose per-model series goes down), holding 1,000,000 "
+        "token(s)"
+    ) in out
+    assert f"     1  {script.RECONCILE_REASON}" in out
 
 
 def test_main_aborts_and_plans_nothing_when_a_reconstruction_disagrees(
@@ -1029,6 +1309,43 @@ def _one_writable_session(tmp_path: Path) -> None:
             },
         ],
     )
+
+
+def test_apply_writes_the_conforming_unit_and_leaves_the_refused_one_with_no_map(
+    script, tmp_path, monkeypatch, capsys
+):
+    # The outcome the whole reconciliation gate exists for, checked on the
+    # bytes that reach disk rather than on the plan: a row whose map would
+    # contradict the totals printed beside it must come out of --apply with
+    # no map at all, which is how this schema spells "unknown".
+    _one_writable_session(tmp_path)
+    metrics = tmp_path / "metrics" / "sessions.jsonl"
+    inflated = _transcript(
+        tmp_path / "bad.jsonl",
+        [("2026-08-01T10:00:00Z", "b1", "model-alpha", {"input_tokens": 1_000})],
+    )
+    with metrics.open("a") as handle:
+        handle.write(
+            json.dumps(
+                {
+                    "session_id": "bad",
+                    "transcript_path": inflated,
+                    "timestamp_end": "2026-08-01T10:30:00Z",
+                    "input_tokens": 500_000,
+                }
+            )
+            + "\n"
+        )
+    _applying_argv(monkeypatch, tmp_path, "--apply", "--expect-checked", "1")
+
+    exit_code = script.main()
+
+    assert exit_code == 0
+    written = [json.loads(line) for line in metrics.read_text().splitlines()]
+    assert written[0]["tokens_by_model"] == {"model-alpha": _bucket(input_tokens=10)}
+    assert "tokens_by_model" not in written[2], "the inflated row must be left alone"
+    assert written[2]["input_tokens"] == 500_000, "and its totals must be untouched"
+    assert "Rows to write: 1 of 3" in capsys.readouterr().out
 
 
 def test_main_refuses_to_apply_without_an_expected_evidence_count(

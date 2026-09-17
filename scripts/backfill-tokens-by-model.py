@@ -60,6 +60,25 @@ can only be a SHORTFALL, never an invention. As this gate itself reported on
 shortfall of at most 1%, and refuses an over-count of any size at all. See
 diff_against_native.
 
+Why the oracle is not the only gate
+----------------------------------
+The oracle can only sample rows that already carry a native map, and every
+one of those was written on deploy day - long after the transcript-entry
+dedup went live, so their stored totals are clean. The rows this run would
+WRITE are historical, and many of them store PRE-DEDUP, duplicate-inflated
+totals while the reconstruction dedupes. The oracle is therefore disjoint in
+AGE from the defect and stays green while the run writes a map that
+contradicts the four totals beside it - the one outcome this script exists
+to prevent. So a second gate, reconcile_against_totals, runs over EVERY
+planned row: each of the four fields, the map's sum against that same row's
+own total, under the oracle's one-directional bound. It needs no transcript
+and no index; the row carries both halves. A unit any of whose planned rows
+fails is dropped from the plan and counted - not aborted on, because those
+rows are inflated in the stored data, not wrong in the reconstruction. The
+same refusal covers a unit whose reconstructed per-model series would go
+DOWN between snapshots, which the day-by-day differencing would floor away
+and re-emit as a phantom day.
+
 Why --apply demands a number the operator read for themselves
 -------------------------------------------------------------
 A bare run is a dry run. Writing needs --apply AND --expect-checked N, and
@@ -139,6 +158,25 @@ Timeline = list[tuple[str, bool, tuple[int, ...], str]]
 # be accepted, per model and per token field. Strictly one-directional: see
 # diff_against_native for why an over-count is refused at any magnitude.
 ORACLE_TOLERANCE = 0.01
+
+# The two dispositions the second gate adds to the dry run's table. Named
+# once so the table, the tests and the refusal all spell them identically.
+RECONCILE_REASON = "untouched: a snapshot's map does not reconcile with its own totals"
+MONOTONIC_REASON = "untouched: the per-model series would go down between snapshots"
+
+
+class Refusals(NamedTuple):
+    """The units the second gate took back off the plan, by reason.
+
+    Two sets rather than one count, because the two say different things
+    about the data: `unreconciled` means the totals stored beside the map are
+    inflated (pre-dedup rows the dedup backfill never reached), while
+    `nonmonotonic` means the stored series itself resets mid-way. They are
+    disjoint - a unit that fails both is reported under the first.
+    """
+
+    unreconciled: set[Any]
+    nonmonotonic: set[Any]
 
 
 class OracleReport(NamedTuple):
@@ -320,6 +358,151 @@ def plan_backfill(
             # write should see only categories that happened.
             stats["untouched: snapshot already has the field"] += native
     return plan, stats
+
+
+def reconcile_against_totals(record: dict[str, Any], rebuilt: ModelMap) -> list[str]:
+    """Complaints for one planned row: its map against the four totals that
+    are already sitting beside it in that same row.
+
+    This is the second gate, and it exists because the oracle structurally
+    cannot be the only one. The oracle can only sample rows that already
+    carry a native map, and those were all written on deploy day - after the
+    dedup of duplicated transcript entries was live, so their totals are
+    clean. The rows this run would WRITE are historical, and a quarter of
+    the subagent ones store PRE-DEDUP, duplicate-inflated totals while the
+    reconstruction dedupes. So the oracle stays green over healthy rows while
+    the run writes a map that contradicts the four numbers next to it, and
+    writing a correct map beside totals it disagrees with is the single
+    outcome this whole script exists to prevent. The oracle's sample is
+    disjoint in AGE from the defect, which no amount of sampling fixes.
+
+    The bound is the oracle's, for the oracle's reason: equal, or short by at
+    most ORACLE_TOLERANCE, and never above by any amount. An as-of cut can
+    miss entries the totals counted; it can never invent ones they did not.
+
+    Needs no transcript and no index - the row carries both halves.
+    """
+    complaints: list[str] = []
+    for field in TOKEN_FIELDS:
+        recorded = record.get(field, 0) or 0
+        found = sum(bucket.get(field, 0) or 0 for bucket in rebuilt.values())
+        if found == recorded:
+            continue
+        if found > recorded:
+            complaints.append(
+                f"{field}: row totals {recorded:,}, map sums to {found:,} - "
+                f"ABOVE the row's own total by {found - recorded:,}"
+            )
+            continue
+        # found < recorded, so recorded is at least 1 and the share is well
+        # defined without a zero guard.
+        shortfall = recorded - found
+        share = shortfall / recorded
+        if share > ORACLE_TOLERANCE:
+            complaints.append(
+                f"{field}: row totals {recorded:,}, map sums to {found:,} - "
+                f"below by {shortfall:,} ({share:.3%}), past the "
+                f"{ORACLE_TOLERANCE:.0%} floor"
+            )
+    return complaints
+
+
+def series_goes_down(
+    records: list[dict[str, Any]], indexes: list[int], maps: dict[int, ModelMap]
+) -> bool:
+    """Whether a unit's planned per-model series ever decreases.
+
+    expand_records_to_daily_deltas orders a unit's snapshots by
+    duration_seconds and differences the per-model map exactly as it
+    differences the four totals, flooring each field at zero - so a series
+    that goes DOWN silently drops usage, and the drop reappears as a phantom
+    day the next time the series climbs back. scripts/backfill-token-dedup.py
+    refuses on precisely that for the four totals; this is the same refusal
+    for the field this script adds.
+
+    find_nonmonotonic_sessions is NOT reused: it groups on a hardcoded
+    `session_id`, so it cannot see subagent units at all, and it compares the
+    four token totals rather than the per-model buckets - the series this
+    script writes and the only one it can regress.
+
+    A model absent from a later snapshot is not a decrease: the expander
+    keeps the last value it saw for that model rather than differencing
+    against zero, so an omission produces no delta at all. Only a value that
+    comes back LOWER than the last one seen for the same model can be
+    floored away.
+    """
+    seen: dict[str, dict[str, int]] = {}
+    for index in sorted(indexes, key=lambda i: records[i].get("duration_seconds") or 0):
+        for model, bucket in maps[index].items():
+            previous = seen.setdefault(model, dict.fromkeys(TOKEN_FIELDS, 0))
+            for field in TOKEN_FIELDS:
+                current = bucket.get(field, 0) or 0
+                if current < previous[field]:
+                    return True
+                previous[field] = current
+    return False
+
+
+def refuse_unwritable_units(
+    records: list[dict[str, Any]],
+    plan: dict[int, ModelMap],
+    stats: collections.Counter[str],
+    id_key: str,
+) -> tuple[dict[int, ModelMap], Refusals]:
+    """The plan with every unit that cannot be written honestly taken back
+    off it, and the reasons, counted.
+
+    A refused unit is SKIPPED, never aborted on: unlike an oracle
+    disagreement, these rows are not evidence that the reconstruction is
+    wrong. They are evidence that the totals STORED beside them are inflated
+    - pre-dedup sums the dedup backfill never reached - and the honest
+    outcome is to decline those units and write the rest, not to abandon
+    thousands of good rows over history nothing here can repair.
+
+    All-or-nothing per unit, the same rule plan_backfill already applies: a
+    unit written half way leaves a seam that the day-by-day differencing
+    reads as a burst of usage.
+
+    `stats` is updated in place so the dry run's disposition table keeps
+    summing to the row count - a refused unit's planned rows move from
+    "planned" to their reason, while its native rows stay counted where they
+    already were, because they are untouched either way.
+    """
+    grouped = rows_by_unit(records, id_key)
+    unreconciled: set[Any] = set()
+    nonmonotonic: set[Any] = set()
+    for unit_id in {records[index].get(id_key) for index in plan}:
+        indexes = grouped[unit_id]
+        maps = {index: plan.get(index) or records[index].get(FIELD) or {} for index in indexes}
+        if any(
+            reconcile_against_totals(records[index], maps[index])
+            for index in indexes
+            if index in plan
+        ):
+            # First reason wins, so the two sets stay disjoint and the counts
+            # printed from them add up to the units actually refused.
+            unreconciled.add(unit_id)
+        elif series_goes_down(records, indexes, maps):
+            nonmonotonic.add(unit_id)
+
+    dropped: collections.Counter[str] = collections.Counter()
+    kept: dict[int, ModelMap] = {}
+    for index, model_map in plan.items():
+        unit_id = records[index].get(id_key)
+        if unit_id in unreconciled:
+            dropped[RECONCILE_REASON] += 1
+        elif unit_id in nonmonotonic:
+            dropped[MONOTONIC_REASON] += 1
+        else:
+            kept[index] = model_map
+    for reason, count in dropped.items():
+        stats[reason] += count
+        stats["planned"] -= count
+    if dropped and not stats["planned"]:
+        # Same rule as plan_backfill's: a disposition table should list only
+        # categories that happened, never a reason with a count of zero.
+        del stats["planned"]
+    return kept, Refusals(unreconciled, nonmonotonic)
 
 
 def diff_against_native(native: ModelMap, rebuilt: ModelMap) -> tuple[list[str], bool]:
@@ -650,6 +833,7 @@ def print_plan_summary(
     plan: dict[int, ModelMap],
     stats: collections.Counter[str],
     id_key: str,
+    refusals: Refusals,
 ) -> None:
     """The dry run's report: what would be written, and what would not.
 
@@ -657,6 +841,13 @@ def print_plan_summary(
     is that unit's whole consumption - so "covered" is the share of all
     tokens ever logged in this file that the backfill could attribute to a
     model, which is the number worth knowing, not the share of rows.
+
+    "Covered" is read off the plan AFTER refuse_unwritable_units has narrowed
+    it, so it counts only what would actually be written. Counting the raw
+    plan overstated it by 981,659,264 tokens on the subagent file and
+    4,134,787,999 on the session file (measured 2026-09-17, the two dry runs
+    either side of this gate) - volume attributed to units whose map does not
+    reach their own totals and which are therefore declined.
     """
     print("\nRow disposition")
     for reason, count in sorted(stats.items(), key=lambda item: -item[1]):
@@ -670,6 +861,21 @@ def print_plan_summary(
     covered = sum(total for unit_id, total in totals.items() if unit_id in planned_units)
     overall = sum(totals.values())
     share = f"{covered / overall:.1%}" if overall else "-"
+
+    refused = refusals.unreconciled | refusals.nonmonotonic
+    if refused:
+        # Printed apart from the disposition table, and apart from each
+        # other: these are units the reconstruction got RIGHT and the stored
+        # data cannot host, which is a different fact about the file than a
+        # missing transcript, and the volume is how much of the file it
+        # costs to decline them.
+        declined = sum(total for unit_id, total in totals.items() if unit_id in refused)
+        print(
+            f"\nUnits declined by the reconciliation gate: {len(refused)} "
+            f"({len(refusals.unreconciled)} whose map does not reconcile with their "
+            f"own totals, {len(refusals.nonmonotonic)} whose per-model series goes "
+            f"down), holding {declined:,} token(s)"
+        )
 
     print(f"\nUnits planned: {len(planned_units)} of {len(totals)}")
     print(f"Rows to write: {len(plan)} of {len(records)}")
@@ -770,7 +976,11 @@ def main() -> int:
         return 1
 
     plan, stats = plan_backfill(records, transcripts, transcript_key)
-    print_plan_summary(records, plan, stats, id_key)
+    # The second gate, over every row the plan would write rather than over
+    # the oracle's sample. It narrows the plan instead of aborting: see
+    # refuse_unwritable_units.
+    plan, refusals = refuse_unwritable_units(records, plan, stats, id_key)
+    print_plan_summary(records, plan, stats, id_key, refusals)
 
     # The evidence this run actually collected: snapshots reconstructed and
     # compared against a native map that had something in it. Vacuous checks
