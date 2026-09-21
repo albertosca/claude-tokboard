@@ -66,15 +66,18 @@ def load_base_data(args: argparse.Namespace, mr: ModuleType | None = None) -> di
     # dashboard_html.py for the fan-out safeguard that keeps it from
     # collapsing unrelated projects into a shared container directory.
     records = mr.load_records(mr.METRICS_FILE)
+    # Declared in ~/.claude/metrics/config.json; empty when there is no
+    # config, which leaves normalize_project_paths exactly as it was.
+    project_roots = mr.load_project_roots()
     # Captured before dedupe_sessions discards every snapshot but one per
     # session_id - expand_records_to_daily_deltas needs the FULL raw
     # history to correctly spread a long-running session's token growth
     # across the days it actually happened (2026-08-06 fix), instead of
     # dumping it all onto the session's fixed start day.
-    raw_session_records = mr.normalize_project_paths(list(records))
+    raw_session_records = mr.normalize_project_paths(list(records), project_roots)
     raw_session_records = mr.filter_records(raw_session_records, tag=args.tag, project=args.project)
     records = mr.dedupe_sessions(records)
-    records = mr.normalize_project_paths(records)
+    records = mr.normalize_project_paths(records, project_roots)
     records = mr.filter_records(records, tag=args.tag, project=args.project)
     all_time_records = records
 
@@ -108,7 +111,15 @@ def load_base_data(args: argparse.Namespace, mr: ModuleType | None = None) -> di
     # concern: two THREADS racing the same cache key could otherwise
     # interleave a real label with a failed one, and negative-caching would
     # then permanently lock in whichever thread wrote last.
-    raw_subagent_records = mr.load_records(mr.SUBAGENTS_FILE)
+    # Subagent paths go through the same normalization as session paths
+    # (2026-09-21). They did not, until a legend entry turned out to be a
+    # subagent's literal working directory - subagent deltas feed the trend
+    # chart below, so their raw cwds reached the legend unchanged. Run over
+    # the subagent stream on its own rather than over a merged list, the
+    # same way the raw/deduped session streams are normalized separately.
+    raw_subagent_records = mr.normalize_project_paths(
+        mr.load_records(mr.SUBAGENTS_FILE), project_roots
+    )
     subagent_records = mr.dedupe_subagents(raw_subagent_records)
     # See expand_records_to_daily_deltas's docstring: used ONLY by the
     # trend chart, so every other view (composition legend, project

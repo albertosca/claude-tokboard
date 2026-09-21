@@ -62,6 +62,22 @@ quota. Pass `--label-budget N` to either dashboard's underlying script
 to turn it on (`N` new labels per run; already-cached labels are
 always free).
 
+## Naming your projects (optional)
+
+A session is logged with whatever directory Claude Code's cwd happened to be, which is often a subdirectory of the project rather than its root - so a session run from `my-api/docs/vendor` shows up in the chart legend as "vendor". The path alone cannot say where the project stops, and resolving it against the filesystem does not work either: directories get renamed and deleted, and the history outlives them.
+
+So you declare it, in `~/.claude/metrics/config.json`:
+
+```json
+{
+  "project_roots": ["/Users/username/code", "/Users/username/work"]
+}
+```
+
+A direct child of a declared root is a project, however deep the session's cwd went. `~` is expanded. Worktrees keep their own entry, labelled `project / worktree`, so you can still tell which branch of a project the work happened in.
+
+Without this file nothing changes: the dashboards fall back to a heuristic that can only roll a path up one level, and it leaves the rest alone.
+
 ## tmux integration (optional, auto-detected)
 
 If you run Claude Code inside tmux, session rows show which tmux

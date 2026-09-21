@@ -643,3 +643,90 @@ def test_filter_sessions_by_window_skips_a_record_with_no_parseable_start():
     )
     records = [{"timestamp_start": None, "timestamp_end": "2026-08-01T10:00:00"}]
     assert mr.filter_sessions_by_window(records, window) == []
+
+
+# --- normalize_project_paths, declared project roots ------------------
+#
+# The fan-out heuristic above can only roll a path up ONE level, and only
+# when its parent looks like a lone project rather than a container. That
+# leaves a session logged from `<project>/docs/vendor` naming itself
+# "vendor" in the legend, which is what Alberto reported on 2026-09-21
+# ("a legenda por vezes ta pegando nomes de subagents... e so pra pegar o
+# nome do diretorio base daquele projeto, sempre"). The cwd alone cannot
+# say where the project stops - so the containers are DECLARED, and a
+# direct child of one is a project no matter how deep the cwd went.
+
+
+def _p(path: str, session_id: str = "s") -> dict[str, Any]:
+    return {"session_id": session_id, "project_path": path}
+
+
+def test_declared_root_collapses_any_depth_to_the_direct_child():
+    records = [
+        _p("/home/me/code/my-api/docs/vendor", "a"),
+        _p("/home/me/code/blog-site/a/b/c/d", "b"),
+    ]
+    result = mr.normalize_project_paths(records, project_roots=["/home/me/code"])
+    assert [r["project_path"] for r in result] == [
+        "/home/me/code/my-api",
+        "/home/me/code/blog-site",
+    ]
+
+
+def test_declared_root_beats_the_fan_out_heuristic_that_would_swallow_a_project():
+    # Two children is the heuristic's collapse boundary, so without the
+    # declared root these two would be rolled INTO the container itself -
+    # the exact 2026-07-21 failure its comment records.
+    records = [_p("/home/me/code/my-api", "a"), _p("/home/me/code", "b")]
+    result = mr.normalize_project_paths(records, project_roots=["/home/me/code"])
+    assert [r["project_path"] for r in result] == ["/home/me/code/my-api", "/home/me/code"]
+
+
+def test_the_container_itself_is_not_turned_into_a_project():
+    records = [_p("/home/me/code", "a"), _p("/home/me/code/", "b")]
+    result = mr.normalize_project_paths(records, project_roots=["/home/me/code"])
+    assert [r["project_path"] for r in result] == ["/home/me/code", "/home/me/code/"]
+
+
+def test_a_declared_root_keeps_the_worktree_it_contains_distinguishable():
+    # Collapsing to the direct child would erase which worktree the work
+    # happened in. The label is "project / worktree" precisely so both
+    # survive, and the color still groups them together.
+    records = [_p("/home/me/code/my-api/.worktrees/feature-x/deep/dir", "a")]
+    result = mr.normalize_project_paths(records, project_roots=["/home/me/code"])
+    assert result[0]["project_path"] == "/home/me/code/my-api/.worktrees/feature-x"
+    assert mr.project_display_label(result[0]["project_path"]) == "my-api / feature-x"
+    assert mr.color_group_key(result[0]["project_path"]) == "/home/me/code/my-api"
+
+
+def test_paths_outside_every_declared_root_still_go_through_the_heuristic():
+    records = [_p("/elsewhere/proj/hooks", "a"), _p("/elsewhere/proj", "b")]
+    result = mr.normalize_project_paths(records, project_roots=["/home/me/code"])
+    assert [r["project_path"] for r in result] == ["/elsewhere/proj", "/elsewhere/proj"]
+
+
+def test_no_declared_roots_leaves_every_path_exactly_as_before():
+    records = [_p("/home/me/code/my-api/docs/vendor", "a")]
+    assert mr.normalize_project_paths(records)[0]["project_path"] == (
+        "/home/me/code/my-api/docs/vendor"
+    )
+
+
+def test_a_trailing_slash_on_a_declared_root_is_not_a_different_root():
+    records = [_p("/home/me/code/my-api/docs", "a")]
+    result = mr.normalize_project_paths(records, project_roots=["/home/me/code/"])
+    assert result[0]["project_path"] == "/home/me/code/my-api"
+
+
+def test_the_longest_matching_root_wins_when_roots_nest():
+    records = [_p("/home/me/code/client/my-api/docs", "a")]
+    result = mr.normalize_project_paths(
+        records, project_roots=["/home/me/code", "/home/me/code/client"]
+    )
+    assert result[0]["project_path"] == "/home/me/code/client/my-api"
+
+
+def test_a_doubled_slash_in_the_cwd_still_names_the_project():
+    records = [_p("/home/me/code//my-api/docs", "a")]
+    result = mr.normalize_project_paths(records, project_roots=["/home/me/code"])
+    assert result[0]["project_path"] == "/home/me/code/my-api"

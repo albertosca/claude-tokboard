@@ -65,6 +65,22 @@ cacheada, então gasta sua própria cota. Passe `--label-budget N` pro
 script de qualquer um dos dois dashboards pra ligar (`N` rótulos novos
 por execução; rótulos já cacheados são sempre de graça).
 
+## Nomeando seus projetos (opcional)
+
+Uma sessão é registrada com o diretório em que o Claude Code estava, que muitas vezes é um subdiretório do projeto e não a raiz dele - então uma sessão rodada de `minha-api/docs/vendor` aparece na legenda do gráfico como "vendor". O caminho sozinho não diz onde o projeto termina, e resolver contra o sistema de arquivos também não resolve: diretórios são renomeados e apagados, e o histórico sobrevive a eles.
+
+Então você declara, em `~/.claude/metrics/config.json`:
+
+```json
+{
+  "project_roots": ["/Users/username/code", "/Users/username/work"]
+}
+```
+
+Um filho direto de uma raiz declarada é um projeto, por mais fundo que a sessão tenha ido. O `~` é expandido. Worktrees mantêm entrada própria, rotulada `projeto / worktree`, então você continua sabendo em qual branch do projeto o trabalho aconteceu.
+
+Sem esse arquivo nada muda: os dashboards caem numa heurística que só consegue subir um nível, e deixam o resto como está.
+
 ## Integração com tmux (opcional, detectada automaticamente)
 
 Se você roda o Claude Code dentro do tmux, as linhas de sessão mostram

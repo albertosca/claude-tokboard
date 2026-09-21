@@ -8,6 +8,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from .paths import WORKTREE_MARKERS, split_worktree
 from .records import record_token_total
 
 
@@ -39,13 +40,11 @@ def project_display_label(project_path: str | None) -> str:
     if not project_path:
         return "sem projeto"
     normalized = project_path.rstrip("/")
-    marker = "/.claude/worktrees/"
-    if marker in normalized:
-        parent_path, _, remainder = normalized.partition(marker)
-        worktree_name = remainder.split("/")[0]
-        if worktree_name:
-            parent_label = Path(parent_path.rstrip("/")).name or parent_path
-            return f"{parent_label} / {worktree_name}"
+    split = split_worktree(normalized)
+    if split is not None:
+        parent_path, worktree_name = split
+        parent_label = Path(parent_path.rstrip("/")).name or parent_path
+        return f"{parent_label} / {worktree_name}"
     return Path(normalized).name or normalized
 
 
@@ -57,10 +56,10 @@ def color_group_key(project_path: str | None) -> str | None:
     if not project_path:
         return project_path
     normalized = project_path.rstrip("/")
-    marker = "/.claude/worktrees/"
-    if marker in normalized:
-        parent_path, _, _ = normalized.partition(marker)
-        return parent_path
+    for marker in WORKTREE_MARKERS:
+        if marker in normalized:
+            parent_path, _, _ = normalized.partition(marker)
+            return parent_path
     return project_path
 
 

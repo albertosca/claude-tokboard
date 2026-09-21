@@ -6,10 +6,12 @@ from __future__ import annotations
 
 import collections
 import json
+from collections.abc import Sequence
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, cast
 
+from .paths import split_worktree, worktree_marker_of
 from .transcript_ingest import TOKEN_FIELDS
 
 METRICS_FILE = str(Path("~/.claude/metrics/sessions.jsonl").expanduser())
@@ -61,7 +63,9 @@ def dedupe_by_key(records: list[dict[str, Any]], key_field: str) -> list[dict[st
     return [best_by_id[key] for key in order] + no_id_records
 
 
-def normalize_project_paths(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def normalize_project_paths(
+    records: list[dict[str, Any]], project_roots: Sequence[str] = ()
+) -> list[dict[str, Any]]:
     # A session's project_path is whatever directory Claude Code's cwd
     # happened to be, not necessarily the project's real root - working
     # from a subdirectory (2026-07-21: found 45 sessions logged from
@@ -98,11 +102,45 @@ def normalize_project_paths(records: list[dict[str, Any]]) -> list[dict[str, Any
     # own path here and merged later, by color_group_key, which
     # preserves the "parent / worktree-name" label instead of collapsing
     # to a bare parent name.
+    #
+    # The heuristic can only ever roll a path up ONE level, so a session
+    # logged from `<project>/docs/vendor` still names itself "vendor".
+    # Nothing in a bare cwd says where the project stops - so `project_roots`
+    # lets the reader DECLARE the directories their projects live in
+    # (2026-09-21). A direct child of a declared root is a project however
+    # deep the cwd went, and that answer is taken instead of the heuristic,
+    # never on top of it: the container would otherwise be exactly the kind
+    # of many-children parent the heuristic already refuses to collapse into,
+    # and the two would disagree.
     known_paths: set[str] = {
         cast(str, r.get("project_path")) for r in records if r.get("project_path")
     }
     marker = "/.claude/worktrees/"
     max_children_to_collapse = 2
+
+    roots = sorted((r.rstrip("/") for r in project_roots if r.rstrip("/")), key=len, reverse=True)
+
+    def declared_root_of(path: str) -> str | None:
+        """The project a declared root says this path belongs to, or None
+        if no root contains it. The longest root wins, so roots may nest."""
+        normalized = path.rstrip("/")
+        for root in roots:
+            if not normalized.startswith(root + "/"):
+                continue
+            # Empty segments dropped rather than guarded against: a
+            # doubled slash in a cwd is real, and after the rstrip above a
+            # path that starts with `root + "/"` always has at least one
+            # non-empty segment left, so there is no empty case to guard.
+            head = next(seg for seg in normalized[len(root) + 1 :].split("/") if seg)
+            project = f"{root}/{head}"
+            # A worktree keeps its own path: collapsing to the project
+            # would erase WHICH worktree, and color_group_key already
+            # merges it into the project's colour anyway.
+            split = split_worktree(normalized)
+            if split is not None and split[0] == project:
+                return f"{project}{worktree_marker_of(normalized)}{split[1]}"
+            return project
+        return None
 
     parent_of: dict[str, str] = {}
     for path in known_paths:
@@ -116,6 +154,10 @@ def normalize_project_paths(records: list[dict[str, Any]]) -> list[dict[str, Any
 
     canonical: dict[str, str] = {}
     for path in known_paths:
+        declared = declared_root_of(path)
+        if declared is not None:
+            canonical[path] = declared
+            continue
         if marker in path:
             canonical[path] = path
             continue

@@ -238,3 +238,38 @@ def test_build_project_groups_colors_a_worktree_only_group():
     groups = mr.build_project_groups(records, colors)
     assert groups[0]["class"] == colors[WORKTREE]
     assert groups[0]["class"] != "group-color-none"
+
+
+# --- the second worktree marker --------------------------------------
+#
+# `git worktree add` has no opinion about where worktrees live. Claude
+# Code's own command puts them under `<root>/.claude/worktrees/`, which is
+# the only shape recognised until now, but a plain `.worktrees/` at the
+# repo root is just as common - and a worktree there was showing up in the
+# legend under its own bare name, reading like a subagent rather than a
+# branch of a project (reported 2026-09-21).
+
+PLAIN_WORKTREE = "/home/me/proj/.worktrees/feature-x"
+
+
+def test_project_display_label_names_a_plain_worktree_after_its_parent_too():
+    assert mr.project_display_label(PLAIN_WORKTREE) == "proj / feature-x"
+    assert mr.project_display_label(PLAIN_WORKTREE + "/nested/deeper") == "proj / feature-x"
+
+
+def test_color_group_key_of_a_plain_worktree_is_its_parent_project():
+    assert mr.color_group_key(PLAIN_WORKTREE) == "/home/me/proj"
+
+
+def test_a_directory_merely_named_worktrees_is_not_a_worktree_marker():
+    # The marker is a path SEGMENT. A project whose own name ends in
+    # ".worktrees", or a file called that, must not be split.
+    assert mr.project_display_label("/home/me/my.worktrees") == "my.worktrees"
+    assert mr.color_group_key("/home/me/my.worktrees") == "/home/me/my.worktrees"
+
+
+def test_the_claude_marker_still_wins_inside_a_plain_worktrees_directory():
+    # Both markers present: the Claude one is more specific and is what
+    # the path was actually created by, so it decides.
+    both = "/home/me/proj/.worktrees/a/.claude/worktrees/b"
+    assert mr.project_display_label(both) == "a / b"

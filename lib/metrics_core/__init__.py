@@ -47,6 +47,13 @@ from .labels import (
     save_label_cache,
     warm_summary_source,
 )
+from .paths import (
+    CONFIG_FILE,
+    WORKTREE_MARKERS,
+    load_project_roots,
+    split_worktree,
+    worktree_marker_of,
+)
 from .periods import DEFAULT_PERIOD_ID, PERIODS, Period, resolve_period
 from .projects import (
     assign_group_colors,
@@ -84,6 +91,7 @@ from .transcript_ingest import TOKEN_FIELDS, append_record, parse_transcript
 __all__ = [
     "AGENT_LABELS_FILE",
     "BACKFILL_STATE_FILE",
+    "CONFIG_FILE",
     "DEFAULT_CUTOFF",
     "DEFAULT_PERIOD_ID",
     "GRANULARITY_CONFIG",
@@ -92,6 +100,7 @@ __all__ = [
     "SUBAGENTS_FILE",
     "TASK_LABELS_FILE",
     "TOKEN_FIELDS",
+    "WORKTREE_MARKERS",
     "LabelBudget",
     "Period",
     "aggregate_by_day",
@@ -136,6 +145,7 @@ __all__ = [
     "load_agent_label_cache",
     "load_backfill_state",
     "load_label_cache",
+    "load_project_roots",
     "load_records",
     "model_display_label",
     "model_totals_as_of",
@@ -152,8 +162,10 @@ __all__ = [
     "scan_transcript",
     "sha256_bytes",
     "sha256_of",
+    "split_worktree",
     "token_sum",
     "verify_fields",
     "warm_summary_source",
+    "worktree_marker_of",
     "write_backfill_state",
 ]

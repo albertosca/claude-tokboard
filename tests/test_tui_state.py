@@ -62,6 +62,7 @@ sys.path.insert(0, str(REPO_ROOT))
 import metrics_core as mr  # noqa: E402
 import metrics_core.backfill as backfill_module  # noqa: E402
 import metrics_core.labels as labels_module  # noqa: E402
+import metrics_core.paths as paths_module  # noqa: E402
 from fixtures.build_fixture import build_fixture  # noqa: E402
 from textual.widgets import Footer, TabbedContent  # noqa: E402
 
@@ -94,6 +95,10 @@ def isolate_tui_from_the_real_filesystem(mp: pytest.MonkeyPatch, home: Path) -> 
     mp.setattr(labels_module, "TASK_LABELS_FILE", str(metrics / "task_labels.json"))
     mp.setattr(labels_module, "AGENT_LABELS_FILE", str(metrics / "agent_labels.json"))
     mp.setattr(backfill_module, "BACKFILL_STATE_FILE", str(metrics / "backfill_state.json"))
+    # Same reasoning, added 2026-09-21 with the declared project roots: the
+    # reader's REAL ~/.claude/metrics/config.json would otherwise rename
+    # projects underneath every test that builds its own HOME.
+    mp.setattr(paths_module, "CONFIG_FILE", str(metrics / "config.json"))
 
     # --label-budget 0 must never reach a real `claude -p` call. Failing
     # loudly here - the same mechanism tests/test_dashboard_html_page.py

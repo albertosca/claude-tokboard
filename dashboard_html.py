@@ -1176,6 +1176,9 @@ def main() -> None:
     args = parser.parse_args()
 
     records = mr.load_records(mr.METRICS_FILE)
+    # Declared in ~/.claude/metrics/config.json; empty when there is no
+    # config, which leaves normalize_project_paths exactly as it was.
+    project_roots = mr.load_project_roots()
     # Captured before dedupe_sessions discards every snapshot but one per
     # session_id - expand_records_to_daily_deltas needs the FULL raw
     # history to correctly spread a long-running session's token growth
@@ -1183,10 +1186,10 @@ def main() -> None:
     # and tag/project-filtered independently so it stays consistent with
     # the main `records` pipeline below, without depending on dedup ever
     # having run.
-    raw_session_records = mr.normalize_project_paths(list(records))
+    raw_session_records = mr.normalize_project_paths(list(records), project_roots)
     raw_session_records = mr.filter_records(raw_session_records, tag=args.tag, project=args.project)
     records = mr.dedupe_sessions(records)
-    records = mr.normalize_project_paths(records)
+    records = mr.normalize_project_paths(records, project_roots)
     records = mr.filter_records(records, tag=args.tag, project=args.project)
     all_time_records = records
 
@@ -1215,7 +1218,15 @@ def main() -> None:
         records = records[-args.limit :]
 
     if args.html:
-        raw_subagent_records = mr.load_records(mr.SUBAGENTS_FILE)
+        # Subagent paths go through the same normalization as session paths
+        # (2026-09-21). They did not, until a legend entry turned out to be a
+        # subagent's literal working directory - subagent deltas feed the trend
+        # chart below, so their raw cwds reached the legend unchanged. Run over
+        # the subagent stream on its own rather than over a merged list, the
+        # same way the raw/deduped session streams are normalized separately.
+        raw_subagent_records = mr.normalize_project_paths(
+            mr.load_records(mr.SUBAGENTS_FILE), project_roots
+        )
         subagent_records = mr.dedupe_subagents(raw_subagent_records)
         # See expand_records_to_daily_deltas's docstring: raw (pre-dedup)
         # session + subagent snapshots, delta-attributed to the day each
@@ -1381,7 +1392,9 @@ def main() -> None:
         print(output_path)
         return
 
-    subagent_records = mr.dedupe_subagents(mr.load_records(mr.SUBAGENTS_FILE))
+    subagent_records = mr.dedupe_subagents(
+        mr.normalize_project_paths(mr.load_records(mr.SUBAGENTS_FILE), project_roots)
+    )
     mr.fold_subagent_tokens_into_sessions(records, subagent_records)
     print(format_table(records))
     print(format_summary(records))
