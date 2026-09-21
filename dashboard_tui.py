@@ -514,8 +514,13 @@ class TrendChart(PlotextPlot):
     def on_mount(self) -> None:
         self.render_chart()
 
+    # The three ways the same quantity - a day's total tokens - gets sliced.
+    # "t" walks them in this order and wraps, so a third press returns to
+    # where it started rather than stranding the user in the last mode.
+    MODES: ClassVar[list[str]] = ["pane", "tokens", "model"]
+
     def toggle_mode(self) -> None:
-        self.mode = "tokens" if self.mode == "pane" else "pane"
+        self.mode = self.MODES[(self.MODES.index(self.mode) + 1) % len(self.MODES)]
         self.render_chart()
 
     def set_highlight(self, series: set[str] | None) -> None:
@@ -615,6 +620,45 @@ class TrendChart(PlotextPlot):
             max_total = max(
                 (sum(series_data[k][i] for k in series_keys) for i in range(len(days))), default=0
             )
+        elif self.mode == "model":
+            # Every model seen anywhere in the window gets a band in every
+            # day, so a model's colour means the same thing across the whole
+            # chart instead of shifting with each day's cast.
+            all_models: dict[str, int] = {}
+            for d in days:
+                for model, amount in self.mr.compute_model_totals(d["records"])[0].items():
+                    all_models[model] = all_models.get(model, 0) + amount
+            model_keys = sorted(all_models, key=lambda m: -all_models[m])
+            per_day: list[dict[str, int]] = []
+            unattributed: list[int] = []
+            for d in days:
+                by_model, remainder = self.mr.compute_model_totals(d["records"])
+                per_day.append(by_model)
+                unattributed.append(remainder)
+            # The unattributed band sits LAST so the models stay adjacent to
+            # one another, and carries the "other" colour it shares with the
+            # pane mode's overflow bucket - both mean "everything else".
+            series_lists = [[day.get(m, 0) for day in per_day] for m in model_keys]
+            series_lists.append(unattributed)
+            series_labels = [self.mr.model_display_label(m) for m in model_keys]
+            series_labels.append("sem modelo")
+            color = [
+                PANE_COLORS[i] if i < len(PANE_COLORS) else PANE_OTHER_COLOR
+                for i in range(len(model_keys))
+            ]
+            color.append(PANE_OTHER_COLOR)
+            day_totals_list = [sum(series[i] for series in series_lists) for i in range(len(days))]
+            series_lists[0] = floor_stacked_bottom_series(series_lists[0], day_totals_list)
+            # See the "pane" branch above for why this needs a type: ignore
+            # against textual_plotext's narrower stacked_bar stub.
+            self.plt.stacked_bar(  # type: ignore[call-arg]
+                labels,
+                series_lists,
+                labels=series_labels,
+                color=color,  # type: ignore[arg-type]
+            )
+            self.plt.title("Tokens por dia (por modelo)")
+            max_total = max(day_totals_list, default=0)
         else:
             input_totals = [sum(r.get("input_tokens", 0) or 0 for r in d["records"]) for d in days]
             output_totals = [
@@ -888,6 +932,9 @@ class MetricsTUIApp(App[None]):
         self._sync_legend_visibility()
 
     def _sync_legend_visibility(self) -> None:
+        # The "model" mode has no widget of its own: its bands are labelled
+        # by plotext's own legend, since nothing highlights them the way the
+        # other two modes' clickable chips do. So both siblings hide.
         mode = self.query_one(TrendChart).mode
         self.query_one(QuotaSummary).display = mode == "tokens"
         self.query_one(CompositionLegend).display = mode == "tokens"

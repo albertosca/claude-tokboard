@@ -57,6 +57,7 @@ controller to rule on, per the phase's Global Constraints, not a unilateral
 call to exclude them.
 """
 
+import re
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -336,3 +337,125 @@ def test_render_chart_does_not_annotate_a_bucket_thats_already_fully_elapsed():
     raw = chart.plt.build()
     assert "10/08" in raw
     assert "%" not in raw
+
+
+# ---------------------------------------------------------------------------
+# render_chart's third mode: tokens by model
+# ---------------------------------------------------------------------------
+
+
+def _model_session(
+    session_id: str, day: int, by_model: dict[str, Any] | None, total: int = 100
+) -> dict[str, Any]:
+    record = _august_session(session_id, day=day, tokens=total)
+    if by_model is not None:
+        record["tokens_by_model"] = by_model
+    return record
+
+
+def _m(**fields: int) -> dict[str, int]:
+    base = {
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "cache_read_tokens": 0,
+        "cache_creation_tokens": 0,
+    }
+    base.update(fields)
+    return base
+
+
+def test_toggle_mode_cycles_through_three_modes_and_returns():
+    chart = tui.TrendChart(mr, [_august_session("a", day=1), _august_session("b", day=5)])
+    assert chart.mode == "pane"
+    chart.toggle_mode()
+    assert chart.mode == "tokens"
+    chart.toggle_mode()
+    assert chart.mode == "model"
+    chart.toggle_mode()
+    assert chart.mode == "pane", "the third press must come back to the start"
+
+
+def test_model_mode_labels_each_band_with_a_shortened_model_name():
+    records = [
+        _model_session("a", 1, {"claude-opus-5": _m(input_tokens=100)}),
+        _model_session("b", 5, {"claude-haiku-4-5-20251001": _m(input_tokens=100)}),
+    ]
+    chart = tui.TrendChart(mr, records)
+    chart.mode = "model"
+    chart.render_chart(now=datetime(2026, 8, 12, 0, 0).astimezone())
+
+    text = chart.plt.build()
+    assert "opus-5" in text
+    assert "haiku-4-5" in text, "the release-date suffix belongs in storage, not in a legend"
+    assert "claude-opus-5" not in text, "the vendor prefix is the same word on every entry"
+
+
+def test_model_mode_shows_the_unattributed_remainder_as_its_own_band():
+    # Most of the real history has no map at all. The mode must show that
+    # rather than quietly drawing a shorter bar than the other two modes do.
+    records = [
+        _model_session("a", 1, {"claude-opus-5": _m(input_tokens=40)}, total=100),
+        _model_session("b", 5, None, total=100),
+    ]
+    chart = tui.TrendChart(mr, records)
+    chart.mode = "model"
+    chart.render_chart(now=datetime(2026, 8, 12, 0, 0).astimezone())
+
+    assert "sem modelo" in chart.plt.build()
+
+
+def _ytick_labels(text: str) -> list[str]:
+    """The y-axis tick labels plotext printed, which encode the scale the
+    bars were drawn against (render_chart sets them from max_total). The
+    legend text shares a line with the top tick, so this takes only what
+    sits left of the axis, and strips the colour codes first."""
+    plain = re.sub(r"\x1b\[[0-9;]*m", "", text)
+    return [line.split("\u2524")[0].strip() for line in plain.splitlines() if "\u2524" in line]
+
+
+def test_every_mode_draws_a_day_against_the_same_scale():
+    # The three modes slice one quantity - a day's tokens - so a day must
+    # be the same height in all of them. If the by-model mode only summed
+    # the attributed part, its bars would silently shrink and the chart
+    # would understate every day that predates the per-model map.
+    records = [
+        _model_session("a", 1, {"claude-opus-5": _m(input_tokens=40)}, total=100),
+        _model_session("b", 5, None, total=250),
+        _model_session(
+            "c",
+            10,
+            {"claude-opus-5": _m(input_tokens=30), "claude-sonnet-5": _m(output_tokens=5)},
+            total=35,
+        ),
+    ]
+    now = datetime(2026, 8, 12, 0, 0).astimezone()
+    scales = {}
+    for mode in tui.TrendChart.MODES:
+        chart = tui.TrendChart(mr, records)
+        chart.mode = mode
+        chart.render_chart(now=now)
+        scales[mode] = _ytick_labels(chart.plt.build())
+
+    assert scales["model"] == scales["pane"]
+    assert scales["model"] == scales["tokens"]
+    assert scales["model"][0] == mr.format_tokens(250), (
+        "the tallest day is the one with NO attribution at all - reading its "
+        "height off the ticks is what proves the remainder is carrying it"
+    )
+
+
+def test_a_day_with_no_attribution_at_all_is_drawn_entirely_as_unattributed():
+    # The degenerate case the backfill left behind for most of the history:
+    # no map anywhere in the window. The chart must still draw those days at
+    # full height under the "sem modelo" band rather than render nothing.
+    records = [
+        _model_session("a", 1, None, total=100),
+        _model_session("b", 5, None, total=60),
+    ]
+    chart = tui.TrendChart(mr, records)
+    chart.mode = "model"
+    chart.render_chart(now=datetime(2026, 8, 12, 0, 0).astimezone())
+
+    text = chart.plt.build()
+    assert "sem modelo" in re.sub(r"\x1b\[[0-9;]*m", "", text)
+    assert _ytick_labels(text)[0] == mr.format_tokens(100)

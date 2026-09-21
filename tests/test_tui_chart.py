@@ -102,9 +102,9 @@ async def _open_panorama(pilot: Any) -> Any:
 
 async def _drive_mode_toggle() -> dict[str, Any]:
     """Everything the plain toggle (no highlighting) must prove: the mode
-    flips, the rendering is genuinely different (not just re-titled), the
-    round trip restores the original render byte-for-byte, and the toggle
-    is a strict two-state flip rather than a longer cycle."""
+    advances, each rendering is genuinely different (not just re-titled),
+    the round trip restores the original render byte-for-byte, and the
+    toggle is a three-state cycle rather than a longer one."""
     args = tui.build_arg_parser().parse_args(["--label-budget", "0"])
     async with tui.MetricsTUIApp(mr, tui.load_data(args, mr=mr), args=args).run_test(
         size=(140, 45)
@@ -129,11 +129,17 @@ async def _drive_mode_toggle() -> dict[str, Any]:
         await pilot.press("t")
         await pilot.pause()
         mode_after_second_toggle = chart.mode
-        pane_text_after_round_trip = chart.render().plain
+        model_text = chart.render().plain
+        composition_visible_model = app.query_one(tui.CompositionLegend).display
+        project_visible_model = app.query_one(tui.ProjectLegend).display
+        quota_visible_model = app.query_one(tui.QuotaSummary).display
 
+        # The round trip is now three presses, not two - the cycle grew a
+        # third mode (tokens by model) in 2026-09.
         await pilot.press("t")
         await pilot.pause()
         mode_after_third_toggle = chart.mode
+        pane_text_after_round_trip = chart.render().plain
 
         return {
             "pane_text": pane_text,
@@ -146,6 +152,10 @@ async def _drive_mode_toggle() -> dict[str, Any]:
             "composition_visible_tokens": composition_visible_tokens,
             "project_visible_tokens": project_visible_tokens,
             "quota_visible_tokens": quota_visible_tokens,
+            "model_text": model_text,
+            "composition_visible_model": composition_visible_model,
+            "project_visible_model": project_visible_model,
+            "quota_visible_model": quota_visible_model,
             "mode_after_second_toggle": mode_after_second_toggle,
             "pane_text_after_round_trip": pane_text_after_round_trip,
             "mode_after_third_toggle": mode_after_third_toggle,
@@ -188,6 +198,10 @@ async def _drive_highlighting() -> dict[str, Any]:
         tokens_text_after_stray_highlight = chart.render().plain
         chart.set_project_highlight(None)
 
+        # Two presses to get back to pane: the cycle passes through the
+        # by-model mode, which neither highlight field touches.
+        await pilot.press("t")
+        await pilot.pause()
         await pilot.press("t")
         await pilot.pause()
         assert chart.mode == "pane"
@@ -247,11 +261,25 @@ def test_toggle_switches_the_mode(mode_toggle):
     assert mode_toggle["tokens_mode"] == "tokens"
 
 
-def test_toggle_is_a_strict_two_state_flip_not_a_longer_cycle(mode_toggle):
-    """Pins the boundary explicitly: a third "t" must land back on
-    "tokens", not advance to some third state."""
-    assert mode_toggle["mode_after_second_toggle"] == "pane"
-    assert mode_toggle["mode_after_third_toggle"] == "tokens"
+def test_toggle_is_a_three_state_cycle_that_wraps(mode_toggle):
+    """Pins the boundary explicitly: the cycle is exactly three long, and
+    the third "t" wraps to the start rather than stranding the user in the
+    last mode or advancing to a fourth state.
+
+    This test used to pin a strict TWO-state flip. The third mode (tokens
+    by model) was added deliberately in 2026-09, so the guard was updated
+    rather than deleted - it still refuses a cycle of any other length."""
+    assert mode_toggle["mode_after_second_toggle"] == "model"
+    assert mode_toggle["mode_after_third_toggle"] == "pane"
+
+
+def test_model_mode_hides_both_of_the_other_modes_legends(mode_toggle):
+    """The model mode labels its bands through plotext's own legend, so
+    neither sibling widget should be on screen - leaving one up would
+    describe a slicing the chart is no longer showing."""
+    assert mode_toggle["composition_visible_model"] is False
+    assert mode_toggle["project_visible_model"] is False
+    assert mode_toggle["quota_visible_model"] is False
 
 
 def test_toggling_back_restores_the_original_rendering_byte_for_byte(mode_toggle):
