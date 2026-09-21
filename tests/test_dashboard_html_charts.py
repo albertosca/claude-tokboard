@@ -578,7 +578,8 @@ def test_render_trend_chart_bar_width_floor_flag_false_and_widths_pinned_for_rea
         records = _year_records(n)
         out = dashboard_html.render_trend_chart(records, {"/proj/a": "group-color-1"}, "p1")
         floor_hit_matches = re.findall(r'data-floor-hit="(true|false)"', out)
-        assert floor_hit_matches == ["false", "false"]  # one per trend-pane (pane, tokens)
+        # One per trend-pane: pane, tokens, and (since 2026-09) model.
+        assert floor_hit_matches == ["false", "false", "false"]
         expected_bar_width = _expected_step(n) * 0.6
         pane_svg = _svg_block(out, "chart-pane-")
         rects = [r for r in _parse_elements(pane_svg, "rect") if "chart-bar" in r.get("class", "")]
@@ -684,8 +685,11 @@ def test_render_trend_chart_legend_dedupes_worktrees_into_parent_and_escapes_lab
     assert "&lt;proj&gt;" in out
     assert "<proj>" not in out
     # Both records share color_group_key "/home/dev/my<proj>", so they
-    # dedupe into exactly one legend chip, not two.
-    assert out.count("legend-chip") == 1
+    # dedupe into exactly one legend chip, not two. Counted inside the "por
+    # projeto" pane only - the "por modelo" pane has a legend of its own,
+    # and this test is about the project one.
+    pane_fragment = out.split('id="trend-pane-tokens-p1"')[0]
+    assert pane_fragment.count("legend-chip") == 1
 
 
 # --- five additional mutations, chosen by scanning this function's own
@@ -939,3 +943,157 @@ def test_render_project_totals_chart_days_running_note_appended_when_first_seen_
 # slice bound test, row height test) plus the highlight-band/legend-order/
 # zero-value tests above for render_trend_chart. See the report for the
 # full sweep list and results.
+
+
+# ===========================================================================
+# render_trend_chart's third mode: "por modelo"
+# ===========================================================================
+
+
+def _model_day_record(
+    day: str,
+    total: int,
+    by_model: dict[str, dict[str, int]] | None = None,
+    i: int = 0,
+) -> dict[str, Any]:
+    """A day whose tokens are all input_tokens, optionally carrying the
+    per-model map the 2026-09 hook writes (and most of the history lacks)."""
+    record = _day_record(day, i=i, input_tokens=total)
+    if by_model is not None:
+        record["tokens_by_model"] = by_model
+    return record
+
+
+def _model_bucket(**fields: int) -> dict[str, int]:
+    bucket = {
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "cache_read_tokens": 0,
+        "cache_creation_tokens": 0,
+    }
+    bucket.update(fields)
+    return bucket
+
+
+def _stack_heights_by_x(svg_fragment: str) -> dict[float, float]:
+    """Total drawn height per bucket, which is what "the three modes share
+    one scale" actually means on screen."""
+    heights: dict[float, float] = {}
+    for rect in _parse_elements(svg_fragment, "rect"):
+        if "chart-bar" not in rect.get("class", ""):
+            continue
+        x = round(rect["x"], 1)
+        heights[x] = heights.get(x, 0.0) + rect["height"]
+    return heights
+
+
+def test_render_trend_chart_model_mode_is_a_third_tab_beside_the_other_two():
+    records = [
+        _model_day_record("2026-01-01", 100),
+        _model_day_record("2026-01-02", 100),
+    ]
+    out = dashboard_html.render_trend_chart(records, {"/proj/a": "group-color-1"}, "p1")
+    assert 'id="trend-btn-model-p1"' in out
+    assert 'id="trend-pane-model-p1"' in out
+    assert "Por modelo" in out
+    # The tab it was added beside must still be there and still be the one
+    # that opens by default - a third pane must not steal "active".
+    assert 'class="tab-btn active" id="trend-btn-pane-p1"' in out
+    assert 'class="trend-pane active" id="trend-pane-pane-p1"' in out
+
+
+def test_render_trend_chart_model_mode_agrees_on_bucket_height_with_the_other_modes():
+    # The same invariant the pane/tokens pair already pins, extended to the
+    # third slice: a day is one quantity, and re-slicing it by model must
+    # not change how tall it is. Day 2 carries NO per-model map at all, so
+    # this only holds if the unattributed remainder is drawn.
+    records = [
+        _model_day_record(
+            "2026-01-01",
+            1000,
+            {"claude-opus-5": _model_bucket(input_tokens=400)},
+        ),
+        _model_day_record("2026-01-02", 250),
+    ]
+    out = dashboard_html.render_trend_chart(records, {"/proj/a": "group-color-1"}, "p1")
+    pane = _stack_heights_by_x(_svg_block(out, "chart-pane-"))
+    tokens = _stack_heights_by_x(_svg_block(out, "chart-tokens-"))
+    model = _stack_heights_by_x(_svg_block(out, "chart-model-"))
+
+    assert len(model) == 2
+    assert set(model) == set(pane) == set(tokens)
+    for x, pane_height in pane.items():
+        assert model[x] == pytest.approx(pane_height), (
+            f"bucket at x={x}: model stack {model[x]} vs pane stack {pane_height}"
+        )
+        assert model[x] == pytest.approx(tokens[x])
+    # Rules out a vacuous pass where both modes drew nothing, or drew two
+    # buckets of identical height.
+    assert len({round(h, 3) for h in model.values()}) == 2
+
+
+def test_render_trend_chart_model_mode_names_the_unattributed_remainder():
+    records = [
+        _model_day_record(
+            "2026-01-01",
+            1000,
+            {"claude-opus-5": _model_bucket(input_tokens=400)},
+        ),
+        _model_day_record("2026-01-02", 250),
+    ]
+    out = dashboard_html.render_trend_chart(records, {"/proj/a": "group-color-1"}, "p1")
+    titles = _titles(_svg_block(out, "chart-model-"))
+    # Two records one day apart put aggregate_by_day in its hourly
+    # granularity, so the bucket key is deliberately not spelled out here -
+    # what this test is about is the remainder's name and its size.
+    assert any(t.startswith("sem modelo · ") and "600 tokens" in t for t in titles), titles
+    assert any(t.startswith("sem modelo · ") and "250 tokens" in t for t in titles), titles
+
+
+def test_render_trend_chart_model_mode_tooltips_drop_the_vendor_prefix_and_release_date():
+    records = [
+        _model_day_record(
+            "2026-01-01",
+            100,
+            {"claude-haiku-4-5-20251001": _model_bucket(input_tokens=100)},
+        ),
+        _model_day_record(
+            "2026-01-02",
+            100,
+            {"claude-haiku-4-5-20251001": _model_bucket(input_tokens=100)},
+        ),
+    ]
+    out = dashboard_html.render_trend_chart(records, {"/proj/a": "group-color-1"}, "p1")
+    titles = _titles(_svg_block(out, "chart-model-"))
+    assert any(t.startswith("haiku-4-5 · ") and "100 tokens" in t for t in titles), titles
+    assert not any("claude-haiku" in t for t in titles), titles
+    # The raw id is what gets stored; only the label is shortened.
+    assert "sem modelo" not in " ".join(titles)
+
+
+def test_render_trend_chart_model_mode_legend_lists_models_by_spend_descending():
+    records = [
+        _model_day_record(
+            "2026-01-01",
+            100,
+            {
+                "claude-opus-5": _model_bucket(input_tokens=10),
+                "claude-sonnet-5": _model_bucket(input_tokens=90),
+            },
+        ),
+        _model_day_record(
+            "2026-01-02",
+            100,
+            {
+                "claude-opus-5": _model_bucket(input_tokens=10),
+                "claude-sonnet-5": _model_bucket(input_tokens=90),
+            },
+        ),
+    ]
+    out = dashboard_html.render_trend_chart(records, {"/proj/a": "group-color-1"}, "p1")
+    pane_fragment = out.split('id="trend-pane-model-p1"')[1]
+    labels = re.findall(
+        r'<span class="legend-chip"><span class="legend-swatch"[^>]*></span>([^<]*)</span>',
+        pane_fragment,
+    )
+    assert labels == ["sonnet-5", "opus-5", "sem modelo"], labels

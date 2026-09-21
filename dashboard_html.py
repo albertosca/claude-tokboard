@@ -519,6 +519,52 @@ def render_trend_chart(
                     bars.append(hatch_overlay(hatch_id, x, y_cursor, bar_width, seg_height))
         return "".join(bars)
 
+    # Every model seen anywhere in the window gets the same colour in every
+    # bucket, so a band means one thing across the whole chart instead of
+    # shifting with each day's cast. Ordered by spend over the window, same
+    # reasoning as the "por projeto" legend above.
+    model_window_totals: dict[str, int] = {}
+    for day in days:
+        for model, amount in mr.compute_model_totals(day["records"])[0].items():
+            model_window_totals[model] = model_window_totals.get(model, 0) + amount
+    model_order = sorted(model_window_totals, key=lambda m: model_window_totals[m], reverse=True)
+    # The palette is the project palette's CSS variables, applied inline
+    # rather than through the group-color-N classes themselves: those
+    # classes carry the project-highlight dimming rules, and a model band
+    # has nothing to do with which project is highlighted.
+    model_fill = {m: f"var(--group-{(i % 30) + 1})" for i, m in enumerate(model_order)}
+
+    def bars_for_model() -> str:
+        bars = []
+        hatch_id = f"chart-hatch-model-{period_id}"
+        for i, day in enumerate(days):
+            x = padding_left + i * step + (step - bar_width) / 2
+            by_model, unattributed = mr.compute_model_totals(day["records"])
+            # The remainder sits LAST (on top) so the models stay adjacent
+            # to one another, and wears the "no project" grey: both mean
+            # "everything this chart cannot name".
+            segments: list[tuple[str, str, int]] = [
+                (mr.model_display_label(m), model_fill[m], by_model.get(m, 0)) for m in model_order
+            ]
+            segments.append(("sem modelo", "var(--group-none)", unattributed))
+            y_cursor: float = padding_top + plot_height
+            for label, fill, value in segments:
+                if value <= 0:
+                    continue
+                seg_height = (value / max_pane) * plot_height if max_pane else 0
+                y_cursor -= seg_height
+                note = partial_note if i == n - 1 else ""
+                bars.append(
+                    f'<rect x="{x:.1f}" y="{y_cursor:.1f}" '
+                    f'width="{bar_width:.1f}" height="{seg_height:.1f}" '
+                    f'class="chart-bar chart-bar-model" style="fill:{fill}">'
+                    f"<title>{html.escape(label)} · {day['day']} - "
+                    f"{mr.format_tokens(value)} tokens{note}</title></rect>"
+                )
+                if i == n - 1 and partial_frac is not None:
+                    bars.append(hatch_overlay(hatch_id, x, y_cursor, bar_width, seg_height))
+        return "".join(bars)
+
     # width is fixed in CSS pixels (not 100%/responsive): with
     # preserveAspectRatio="none" a stretchy width forces the browser to
     # scale the viewBox's x-axis to fill the container, which distorts
@@ -563,6 +609,13 @@ def render_trend_chart(
         f'style="width:{width}px">'
         f"{hatch_defs(f'chart-hatch-tokens-{period_id}')}"
         f"{highlight_html}{build_y_axis(max_tokens)}{x_axis_html}{bars_for_tokens()}</svg>"
+    )
+    model_svg = (
+        f'<svg viewBox="0 0 {width} {height}" class="trend-svg" '
+        f'id="chart-model-{period_id}" preserveAspectRatio="none" '
+        f'style="width:{width}px">'
+        f"{hatch_defs(f'chart-hatch-model-{period_id}')}"
+        f"{highlight_html}{build_y_axis(max_pane)}{x_axis_html}{bars_for_model()}</svg>"
     )
 
     # Always scrollable now, not just in the floor-hit (scrollable=True)
@@ -627,6 +680,20 @@ def render_trend_chart(
         )
     pane_legend = "".join(pane_legend_chips)
     pane_legend_html = f'<div class="project-chart-legend">{pane_legend}</div>'
+    # No onclick: unlike projects and token types, a model band has no
+    # cross-chart highlight to drive, so the chips are a pure key.
+    model_legend_chips = [
+        f'<span class="legend-chip">'
+        f'<span class="legend-swatch" style="background:{model_fill[m]}"></span>'
+        f"{html.escape(mr.model_display_label(m))}</span>"
+        for m in model_order
+    ]
+    model_legend_chips.append(
+        '<span class="legend-chip">'
+        '<span class="legend-swatch" style="background:var(--group-none)"></span>'
+        "sem modelo</span>"
+    )
+    model_legend_html = f'<div class="project-chart-legend">{"".join(model_legend_chips)}</div>'
 
     return (
         '<div class="trend-container">'
@@ -635,6 +702,8 @@ def render_trend_chart(
         f"onclick=\"showTrendMode('pane', '{period_id}')\">Por projeto</span>"
         f'<span class="tab-btn" id="trend-btn-tokens-{period_id}" '
         f"onclick=\"showTrendMode('tokens', '{period_id}')\">Por tipo de token</span>"
+        f'<span class="tab-btn" id="trend-btn-model-{period_id}" '
+        f"onclick=\"showTrendMode('model', '{period_id}')\">Por modelo</span>"
         "</div>"
         f'<div class="trend-pane active" id="trend-pane-pane-{period_id}">'
         f'<div class="trend-scroll" data-floor-hit="{str(scrollable).lower()}">{pane_svg}</div>'
@@ -649,6 +718,10 @@ def render_trend_chart(
         f'<div class="trend-pane" id="trend-pane-tokens-{period_id}">'
         f'<div class="trend-scroll" data-floor-hit="{str(scrollable).lower()}">{tokens_svg}</div>'
         '<div class="trend-legend-slot"></div>'
+        "</div>"
+        f'<div class="trend-pane" id="trend-pane-model-{period_id}">'
+        f'<div class="trend-scroll" data-floor-hit="{str(scrollable).lower()}">{model_svg}</div>'
+        f'<div class="trend-legend-slot">{model_legend_html}</div>'
         "</div>"
         "</div>"
     )
