@@ -11,6 +11,10 @@ and shows it back to you two ways: an HTML dashboard, and a full
 terminal (TUI) app. See what you've been working on and how much it's
 costing you, project by project, day by day.
 
+![The HTML dashboard: a stacked trend chart by project, with tabs for token type and model, above a session table grouped by project](assets/dashboard.png)
+
+<sub>Rendered from this repo's own synthetic test fixture - the project names are `alpha`, `gamma`, `eta`; no real session data.</sub>
+
 ## Engineering notes
 
 Two presentation layers (an HTML dashboard and a [Textual](https://github.com/Textualize/textual)

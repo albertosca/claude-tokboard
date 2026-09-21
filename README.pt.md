@@ -11,6 +11,10 @@ de tokens, e mostra isso de duas formas: um dashboard HTML e um app de
 terminal (TUI) completo. Veja no que você tem trabalhado e quanto isso
 está custando, por projeto, por dia.
 
+![O dashboard HTML: gráfico de barras empilhadas por projeto, com abas por tipo de token e por modelo, acima de uma tabela de sessões agrupada por projeto](assets/dashboard.png)
+
+<sub>Renderizado a partir do fixture sintético de teste deste próprio repositório - os projetos se chamam `alpha`, `gamma`, `eta`; nenhum dado real de sessão.</sub>
+
 ## Notas de engenharia
 
 Duas camadas de apresentação (um dashboard HTML e um TUI feito com
