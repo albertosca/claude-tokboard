@@ -50,7 +50,13 @@ def test_dashboard_is_generated_from_the_fixture(dashboard_page):
 
 def test_no_real_metrics_leak_into_the_page(dashboard_page):
     # If the real ~/.claude/metrics were read, these would appear. They are
-    # the user's actual project names, so their absence is the proof.
+    # the author's actual project names, so their absence is the proof.
+    #
+    # THE REAL NAMES ARE THE POINT - do not replace them with placeholders.
+    # The 2026-09-21 pass that scrubbed every other real project name out of
+    # this repo skipped this line on purpose: a denylist of names that exist
+    # nowhere passes whether the fixture is clean or not, which is a check
+    # that cannot tell success from failure.
     html = Path(dashboard_page.html_path).read_text(encoding="utf-8")
     for leaked in ("billing-report", "editor-plugin", "claude-metrics-dashboard"):
         assert leaked not in html, f"real project {leaked!r} leaked - HOME was not isolated"
