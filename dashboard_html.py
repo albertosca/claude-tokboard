@@ -528,11 +528,17 @@ def render_trend_chart(
         for model, amount in mr.compute_model_totals(day["records"])[0].items():
             model_window_totals[model] = model_window_totals.get(model, 0) + amount
     model_order = sorted(model_window_totals, key=lambda m: model_window_totals[m], reverse=True)
-    # The palette is the project palette's CSS variables, applied inline
-    # rather than through the group-color-N classes themselves: those
-    # classes carry the project-highlight dimming rules, and a model band
-    # has nothing to do with which project is highlighted.
-    model_fill = {m: f"var(--group-{(i % 30) + 1})" for i, m in enumerate(model_order)}
+    # The bands join the SAME group-color-N vocabulary the "por projeto"
+    # bars use, rather than getting one of their own. That is what makes a
+    # band clickable for free: the highlight is a set of class names on
+    # <body>, and the CSS spotlight rules already exist for these classes.
+    # The precedent is documented in the stylesheet itself - series-N and
+    # group-color-N already share one data-highlight attribute "since only
+    # one trend-mode pane is ever visible at once" - and showTrendMode now
+    # clears the highlight when the pane changes, so a model's slot can
+    # never be left lighting up a project that happens to share it.
+    model_class = {m: f"group-color-{(i % 30) + 1}" for i, m in enumerate(model_order)}
+    unattributed_class = "group-color-none"
 
     def bars_for_model() -> str:
         bars = []
@@ -544,11 +550,11 @@ def render_trend_chart(
             # to one another, and wears the "no project" grey: both mean
             # "everything this chart cannot name".
             segments: list[tuple[str, str, int]] = [
-                (mr.model_display_label(m), model_fill[m], by_model.get(m, 0)) for m in model_order
+                (mr.model_display_label(m), model_class[m], by_model.get(m, 0)) for m in model_order
             ]
-            segments.append(("sem modelo", "var(--group-none)", unattributed))
+            segments.append(("sem modelo", unattributed_class, unattributed))
             y_cursor: float = padding_top + plot_height
-            for label, fill, value in segments:
+            for label, css_class, value in segments:
                 if value <= 0:
                     continue
                 seg_height = (value / max_pane) * plot_height if max_pane else 0
@@ -557,7 +563,8 @@ def render_trend_chart(
                 bars.append(
                     f'<rect x="{x:.1f}" y="{y_cursor:.1f}" '
                     f'width="{bar_width:.1f}" height="{seg_height:.1f}" '
-                    f'class="chart-bar chart-bar-model" style="fill:{fill}">'
+                    f'class="chart-bar {css_class}" '
+                    f"onclick=\"highlightModel('{css_class}', event)\">"
                     f"<title>{html.escape(label)} · {day['day']} - "
                     f"{mr.format_tokens(value)} tokens{note}</title></rect>"
                 )
@@ -680,17 +687,17 @@ def render_trend_chart(
         )
     pane_legend = "".join(pane_legend_chips)
     pane_legend_html = f'<div class="project-chart-legend">{pane_legend}</div>'
-    # No onclick: unlike projects and token types, a model band has no
-    # cross-chart highlight to drive, so the chips are a pure key.
+    # Chip and band carry the same class and call the same function, so
+    # clicking either one spotlights the same model.
     model_legend_chips = [
-        f'<span class="legend-chip">'
-        f'<span class="legend-swatch" style="background:{model_fill[m]}"></span>'
+        f'<span class="legend-chip" onclick="highlightModel(\'{model_class[m]}\', event)">'
+        f'<span class="legend-swatch {model_class[m]}"></span>'
         f"{html.escape(mr.model_display_label(m))}</span>"
         for m in model_order
     ]
     model_legend_chips.append(
-        '<span class="legend-chip">'
-        '<span class="legend-swatch" style="background:var(--group-none)"></span>'
+        f'<span class="legend-chip" onclick="highlightModel(\'{unattributed_class}\', event)">'
+        f'<span class="legend-swatch {unattributed_class}"></span>'
         "sem modelo</span>"
     )
     model_legend_html = f'<div class="project-chart-legend">{"".join(model_legend_chips)}</div>'

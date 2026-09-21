@@ -80,6 +80,7 @@ def _record(
     start: str,
     end: str,
     tokens: tuple[int, int, int, int],
+    by_model: dict[str, tuple[int, int, int, int]] | None = None,
 ) -> dict[str, Any]:
     record: dict[str, Any] = {
         "session_id": session_id,
@@ -91,6 +92,14 @@ def _record(
         "tool_call_count": 7,
     }
     record.update(dict(zip(TOKEN_FIELDS, tokens, strict=True)))
+    if by_model is not None:
+        # Deliberately PARTIAL, and only on some records: that is the shape
+        # the real history has after the 2026-09 backfill, and it is what
+        # makes the chart's "sem modelo" band reachable from the fixture.
+        record["tokens_by_model"] = {
+            model: dict(zip(TOKEN_FIELDS, amounts, strict=True))
+            for model, amounts in by_model.items()
+        }
     return record
 
 
@@ -111,7 +120,15 @@ def build_fixture(home_dir: str, now: datetime) -> dict[str, Any]:
         # Distinct projects from every other record, so a chart pointed at
         # the wrong window is caught by the project NAMES alone.
         _record(
-            "today-a", "/projects/delta", _today_at(now, 0.05), _today_at(now, 0.25), (2, 3, 120, 9)
+            "today-a",
+            "/projects/delta",
+            _today_at(now, 0.05),
+            _today_at(now, 0.25),
+            (2, 3, 120, 9),
+            by_model={
+                "claude-opus-5": (1, 2, 60, 4),
+                "claude-sonnet-5": (1, 1, 30, 2),
+            },
         ),
         _record(
             "today-b",
@@ -119,6 +136,7 @@ def build_fixture(home_dir: str, now: datetime) -> dict[str, Any]:
             _today_at(now, 0.5),
             _today_at(now, 0.9),
             (4, 6, 150, 11),
+            by_model={"claude-opus-5": (2, 3, 75, 5)},
         ),
         # Four days back: inside "desde-segunda" from Friday on, and the
         # nearest thing outside "ontem". Widening "ontem" by even a couple

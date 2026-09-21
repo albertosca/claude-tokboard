@@ -1017,6 +1017,11 @@ SCRIPT = """
       // o filtro que eu tava").
       var container = (pane || btn) && (pane || btn).closest('.trend-container');
       if (!container) { return; }
+      // A highlight belongs to the slicing it was made in. The three modes
+      // share one data-highlight vocabulary, so carrying a selection across
+      // a mode switch would dim the new pane by a class that means
+      // something else there (a project's colour slot vs a model's).
+      document.body.removeAttribute('data-highlight');
       container.querySelectorAll('.trend-pane').forEach(function(el) {
         el.classList.remove('active');
       });
@@ -1084,6 +1089,14 @@ SCRIPT = """
       toggleHighlight(type, event);
     }
     function highlightProject(groupClass, event) {
+      toggleHighlight(groupClass, event);
+    }
+    // "Por modelo"'s bands reuse the group-color-N vocabulary (see the
+    // comment on the spotlight rules above: only one trend pane is ever
+    // visible, so the three modes can share one data-highlight). Named
+    // separately from highlightProject purely so the markup says which
+    // mode a band belongs to.
+    function highlightModel(groupClass, event) {
       toggleHighlight(groupClass, event);
     }
     function selectPeriod(periodId) {

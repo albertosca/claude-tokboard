@@ -1093,7 +1093,66 @@ def test_render_trend_chart_model_mode_legend_lists_models_by_spend_descending()
     out = dashboard_html.render_trend_chart(records, {"/proj/a": "group-color-1"}, "p1")
     pane_fragment = out.split('id="trend-pane-model-p1"')[1]
     labels = re.findall(
-        r'<span class="legend-chip"><span class="legend-swatch"[^>]*></span>([^<]*)</span>',
+        r'<span class="legend-chip"[^>]*><span class="legend-swatch[^"]*"></span>([^<]*)</span>',
         pane_fragment,
     )
     assert labels == ["sonnet-5", "opus-5", "sem modelo"], labels
+
+
+def test_render_trend_chart_model_bands_and_chips_are_clickable_and_agree_on_class():
+    # The bands were unclickable when the mode shipped (reported 2026-09-21:
+    # "por modelo nao ta funcionando o clicar no grafico nem na legenda").
+    # A band and its chip must call the same highlight with the same class,
+    # or clicking one lights the other's colour.
+    records = [
+        _model_day_record(
+            "2026-01-01",
+            100,
+            {
+                "claude-opus-5": _model_bucket(input_tokens=10),
+                "claude-sonnet-5": _model_bucket(input_tokens=90),
+            },
+        ),
+        _model_day_record("2026-01-02", 100),
+    ]
+    out = dashboard_html.render_trend_chart(records, {"/proj/a": "group-color-1"}, "p1")
+    svg = _svg_block(out, "chart-model-")
+    # Parsed here rather than through _parse_elements, which deliberately
+    # keeps only geometry and class - the onclick IS the thing under test.
+    bands = re.findall(
+        r"<rect [^>]*class=\"chart-bar ([^\"]*)\" onclick=\"highlightModel\('([^']*)', event\)\">"
+        r"<title>([^\u00b7]+) \u00b7 ",
+        svg,
+    )
+    assert bands, svg[:400]
+    band_classes = {}
+    for css_class, onclick_class, label in bands:
+        assert onclick_class == css_class, (css_class, onclick_class)
+        band_classes[label.strip()] = css_class
+
+    pane_fragment = out.split('id="trend-pane-model-p1"')[1]
+    chips = re.findall(
+        r'<span class="legend-chip" onclick="highlightModel\(\'([^\']*)\', event\)">'
+        r'<span class="legend-swatch ([^"]*)"></span>([^<]*)</span>',
+        pane_fragment,
+    )
+    assert [c[2] for c in chips] == ["sonnet-5", "opus-5", "sem modelo"], chips
+    for onclick_class, swatch_class, label in chips:
+        assert onclick_class == swatch_class, (onclick_class, swatch_class)
+        assert band_classes[label] == swatch_class, (label, band_classes[label], swatch_class)
+
+
+def test_render_trend_chart_model_bands_never_share_a_colour_with_each_other():
+    records = [
+        _model_day_record(
+            "2026-01-01",
+            100,
+            {f"claude-m{i}": _model_bucket(input_tokens=10) for i in range(4)},
+        ),
+        _model_day_record("2026-01-02", 100),
+    ]
+    out = dashboard_html.render_trend_chart(records, {"/proj/a": "group-color-1"}, "p1")
+    pane_fragment = out.split('id="trend-pane-model-p1"')[1]
+    swatches = re.findall(r'<span class="legend-swatch ([^"]*)"></span>', pane_fragment)
+    assert len(swatches) == 5  # four models plus the unattributed remainder
+    assert len(set(swatches)) == 5, swatches

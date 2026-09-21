@@ -453,7 +453,7 @@ for (const order of ["expand-then-period", "period-then-expand"]) {
 {
   const started = section("[trend-mode] a sub-tab click on one period leaves every other period's chart intact");
   for (const clickedPeriod of PERIOD_IDS) {
-    for (const mode of ["pane", "tokens"]) {
+    for (const mode of ["pane", "tokens", "model"]) {
       window.selectPeriod(clickedPeriod);
       window.showTrendMode(mode, clickedPeriod);
       freshStyles();
@@ -570,6 +570,90 @@ for (const order of ["expand-then-period", "period-then-expand"]) {
     true
   );
   endSection("sticky offsets", started);
+}
+
+// "Por modelo" shipped with inert bands: the rects and the legend chips
+// carried a colour and nothing else, so clicking either did nothing at all
+// (reported 2026-09-21, "por modelo nao ta funcionando o clicar no grafico
+// nem na legenda"). Markup assertions could not have caught it - a rect with
+// a fill IS valid markup. What catches it is driving the click and asking
+// getComputedStyle whether the other bands actually dimmed.
+{
+  const started = section("[model] clicking a band or its chip spotlights that model");
+  const period = EXPECT.default_period;
+  window.selectPeriod(period);
+  window.showTrendMode("model", period);
+  freshStyles();
+
+  const pane = document.getElementById("trend-pane-model-" + period);
+  const bands = Array.from(pane.querySelectorAll("svg .chart-bar"));
+  const chips = Array.from(pane.querySelectorAll(".legend-chip"));
+  check("the model pane draws more than one band", bands.length > 1, true);
+  check("the model pane has a chip per band colour", chips.length > 1, true);
+
+  // A band and a chip that disagree on the class would each light the
+  // other's colour - the failure this pairing exists to refuse.
+  const bandClasses = new Set(bands.map((b) => b.getAttribute("class").replace("chart-bar ", "")));
+  const chipClasses = new Set(
+    chips.map((c) => c.querySelector(".legend-swatch").getAttribute("class").replace("legend-swatch ", ""))
+  );
+  check(
+    "every band colour has a chip of the same colour",
+    Array.from(bandClasses).every((c) => chipClasses.has(c)),
+    true
+  );
+
+  // A NAMED model, not the "sem modelo" remainder: the remainder would
+  // prove the mechanism while sidestepping the thing that was reported.
+  const named = bands.find((b) => b.getAttribute("class").indexOf("group-color-none") === -1);
+  check("the pane draws a band for a named model", Boolean(named), true);
+  const target = named.getAttribute("class").replace("chart-bar ", "");
+  const other = bands.find((b) => b.getAttribute("class").indexOf(target) === -1);
+  check("the pane has a second, differently-coloured band to dim", Boolean(other), true);
+
+  named.onclick(new window.MouseEvent("click"));
+  freshStyles();
+  check(
+    "clicking a band records the selection on <body>",
+    document.body.getAttribute("data-highlight"),
+    target
+  );
+  check(
+    "the clicked band stays at full opacity",
+    window.getComputedStyle(named).opacity,
+    "1"
+  );
+  check(
+    "a band of another model dims",
+    window.getComputedStyle(other).opacity,
+    "0.25"
+  );
+
+  // Clicking the same thing again clears it, and the chip drives the same
+  // selection as the band it belongs to.
+  named.onclick(new window.MouseEvent("click"));
+  check("clicking the same band again clears the selection", document.body.hasAttribute("data-highlight"), false);
+
+  const chipForTarget = chips.find(
+    (c) => c.querySelector(".legend-swatch").getAttribute("class").indexOf(target) !== -1
+  );
+  chipForTarget.onclick(new window.MouseEvent("click"));
+  check(
+    "clicking the chip selects the same class its band does",
+    document.body.getAttribute("data-highlight"),
+    target
+  );
+
+  // The three modes share one data-highlight vocabulary, so a selection
+  // must not survive a mode switch: group-color-3 means a model here and a
+  // project one tab over.
+  window.showTrendMode("pane", period);
+  check(
+    "switching mode clears a selection that means something else there",
+    document.body.hasAttribute("data-highlight"),
+    false
+  );
+  endSection("model highlighting", started);
 }
 
 console.log(`\nTOTAL: ${assertionCount} assertions across ${PERIOD_IDS.length} periods`);
