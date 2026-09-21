@@ -13,6 +13,8 @@ está custando, por projeto, por dia.
 
 ![O dashboard HTML: gráfico de barras empilhadas por projeto, com abas por tipo de token e por modelo, acima de uma tabela de sessões agrupada por projeto](assets/dashboard.png)
 
+![A TUI: tabela de sessões com painel de detalhe, e o gráfico de tendência ciclando pelas três formas de fatiar um dia - por projeto, por tipo de token, por modelo](assets/tui.gif)
+
 <sub>Renderizado a partir do fixture sintético de teste deste próprio repositório - os projetos se chamam `alpha`, `gamma`, `eta`; nenhum dado real de sessão.</sub>
 
 ## Notas de engenharia

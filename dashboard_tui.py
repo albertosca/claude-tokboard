@@ -871,6 +871,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
 
 class MetricsTUIApp(App[None]):
+    # Without this Textual titles the terminal window after the class, so
+    # it read "MetricsTUIApp" - a class name, in the one place a user reads
+    # a product name.
+    TITLE = "tokboard"
+
     CSS = """
     Horizontal { height: 1fr; }
     Tree { width: 62%; }

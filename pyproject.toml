@@ -58,6 +58,14 @@ ignore_missing_imports = true
 # here), so bodies of these functions are still type-checked - only their
 # signatures are excused.
 [[tool.mypy.overrides]]
+# tools/make-demo-assets.py imports the fixture builder by putting tests/ on
+# sys.path at runtime, which mypy cannot follow (tests/ is not a package -
+# see the override below for why). The import is one line, inside a function,
+# and the script is not part of the shipped plugin.
+module = ["fixtures.build_fixture"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
 # tests/ has no __init__.py (pytest's rootdir-relative import mode expects
 # that - see conftest.py, js_runtime.py etc. importing each other as bare
 # top-level modules), so mypy sees these as plain module names, never as

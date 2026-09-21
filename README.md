@@ -13,6 +13,8 @@ costing you, project by project, day by day.
 
 ![The HTML dashboard: a stacked trend chart by project, with tabs for token type and model, above a session table grouped by project](assets/dashboard.png)
 
+![The TUI: a session table with a detail panel, then the trend chart cycling through its three slicings of a day - by project, by token type, by model](assets/tui.gif)
+
 <sub>Rendered from this repo's own synthetic test fixture - the project names are `alpha`, `gamma`, `eta`; no real session data.</sub>
 
 ## Engineering notes

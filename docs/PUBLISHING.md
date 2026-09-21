@@ -1,36 +1,34 @@
 # Publishing this repo
 
-CI, README, badges, license and the privacy passes are done. What is left is
-one asset, one decision, and the visibility switch itself - and the switch is
-Alberto's call, not something to automate.
+CI, README, badges, license, the visual assets and the privacy passes are all
+done. What is left is one decision and the visibility switch itself - and the
+switch is Alberto's call, not something to automate.
 
-## Still open
+## Keeping the visual assets true
 
-- [ ] **A terminal recording of the TUI.** The 2026-08-05 polish spec promised
-      a screenshot AND a GIF; only the screenshot exists (`assets/dashboard.png`,
-      rendered from the synthetic fixture on 2026-09-21). The recording needs an
-      interactive terminal, so it cannot be produced headlessly. With
-      [vhs](https://github.com/charmbracelet/vhs) or
-      [asciinema](https://asciinema.org), against a throwaway HOME so no real
-      session data is recorded:
+`assets/dashboard.png` and `assets/tui.gif` are both generated, never hand
+captured, by:
 
-      ```bash
-      # Build a HOME holding only the committed synthetic fixture,
-      # then drive the TUI against it.
-      DEMO=$(mktemp -d)
-      python3 - "$DEMO" <<'EOF'
-      import sys
-      from datetime import datetime
-      from pathlib import Path
-      sys.path[:0] = ["tests", "lib"]
-      from fixtures.build_fixture import build_fixture
-      build_fixture(sys.argv[1], datetime.now().astimezone())
-      EOF
-      HOME="$DEMO" PYTHONPATH=lib python3 dashboard_tui.py --label-budget 0
-      ```
+```bash
+python3 tools/make-demo-assets.py
+```
 
-      Record that, save it as `assets/tui.gif`, and add it to both READMEs
-      beside the dashboard screenshot.
+It renders both from this repo's own synthetic test fixture into a throwaway
+HOME, so no real session data can reach them. Re-run it whenever the
+dashboards change enough that the images stop being true. It takes about
+eight minutes, almost all of it waiting for headless Chrome to exit.
+
+"No real data can reach them" is enforced, not intended. Before encoding, the
+script reads the project names out of the reader's own metrics files and
+refuses to continue if any of them appears in a frame - and refuses just as
+loudly if a frame names none of the fixture's projects, since a frame that
+rendered nothing would otherwise pass the first check. Both arms were
+canaried. The guard exists because an earlier version of this script leaked:
+metrics_core resolves METRICS_FILE from HOME at IMPORT time, so setting
+os.environ["HOME"] afterwards aimed it at the real ~/.claude/metrics, and the
+recording came out full of real projects and real token counts. It never
+reached a commit. The TUI is now driven in a subprocess that has HOME in its
+environment before Python starts.
 
 ## Make it public
 

@@ -276,3 +276,11 @@ def test_tree_holds_focus_immediately_after_mount(monkeypatch, tmp_path):
         "on_mount's self.query_one(Tree).focus() must land focus on the "
         "session Tree rather than leaving Textual's own default"
     )
+
+
+def test_the_app_titles_itself_after_the_product_not_its_class(tmp_path, monkeypatch):
+    """Textual falls back to the App subclass's NAME when no TITLE is set,
+    so the terminal window announced itself as "MetricsTUIApp" - a class
+    name, in the one place a user reads a product name (2026-09-21)."""
+    isolate_tui_from_the_real_filesystem(monkeypatch, tmp_path)
+    assert tui.MetricsTUIApp.TITLE == "tokboard"
