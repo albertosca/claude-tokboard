@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -15,8 +16,23 @@ METRICS_DIR = Path("~/.claude/metrics").expanduser()
 METRICS_FILE = METRICS_DIR / "subagents.jsonl"
 
 
+def get_project_root() -> str | None:
+    """The project root Claude Code hands every hook, or None.
+
+    The cwd a subagent is logged with is often a SUBDIRECTORY of the
+    project, and nothing in the path says where the project stops - which
+    is why the dashboard needs a declared list of project containers to
+    name older records. CLAUDE_PROJECT_DIR is the authoritative answer for
+    new ones. It stays at the project the session STARTED in even after
+    Claude enters a worktree, while the cwd follows - so both are worth
+    keeping, and the display layer decides which to use.
+    """
+    return os.environ.get("CLAUDE_PROJECT_DIR") or None
+
+
 def build_record(hook_input: dict[str, Any], parsed: dict[str, Any]) -> dict[str, Any]:
-    return {
+    project_root = get_project_root()
+    record = {
         "session_id": hook_input.get("session_id"),
         "agent_id": hook_input.get("agent_id"),
         "agent_type": hook_input.get("agent_type"),
@@ -32,6 +48,10 @@ def build_record(hook_input: dict[str, Any], parsed: dict[str, Any]) -> dict[str
         "tokens_by_model": parsed["tokens_by_model"],
         "agent_transcript_path": hook_input.get("agent_transcript_path"),
     }
+    # See the sibling hook: added, never set to None.
+    if project_root is not None:
+        record["project_root"] = project_root
+    return record
 
 
 def append_record(record: dict[str, Any]) -> None:

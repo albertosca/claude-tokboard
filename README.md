@@ -78,6 +78,8 @@ A direct child of a declared root is a project, however deep the session's cwd w
 
 Without this file nothing changes: the dashboards fall back to a heuristic that can only roll a path up one level, and it leaves the rest alone.
 
+Sessions and subagents logged from 2026-09-21 on also record the project root Claude Code hands every hook, which is authoritative and needs no configuration - `project_roots` is what names everything logged before that.
+
 ## tmux integration (optional, auto-detected)
 
 If you run Claude Code inside tmux, session rows show which tmux

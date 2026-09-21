@@ -112,6 +112,29 @@ def normalize_project_paths(
     # never on top of it: the container would otherwise be exactly the kind
     # of many-children parent the heuristic already refuses to collapse into,
     # and the two would disagree.
+    # Records written from 2026-09-21 on carry `project_root`: the project
+    # directory Claude Code itself hands every hook. That is not a guess,
+    # so it is taken FIRST and the two guesses below never see a cwd that
+    # already had an answer - which also keeps the fan-out counts honest,
+    # since two cwds under one root collapse to one known path here.
+    #
+    # Except inside a worktree. There the recorded root is the project the
+    # session STARTED in while the cwd followed Claude into the worktree,
+    # so taking it would merge every worktree back into its project and
+    # lose the "project / worktree" the chart has always shown.
+    authoritative: set[str] = set()
+    for r in records:
+        root = r.get("project_root")
+        path = r.get("project_path")
+        if (
+            isinstance(root, str)
+            and root
+            and isinstance(path, str)
+            and split_worktree(path.rstrip("/")) is None
+        ):
+            r["project_path"] = root
+            authoritative.add(root)
+
     known_paths: set[str] = {
         cast(str, r.get("project_path")) for r in records if r.get("project_path")
     }
@@ -154,6 +177,9 @@ def normalize_project_paths(
 
     canonical: dict[str, str] = {}
     for path in known_paths:
+        if path in authoritative:
+            canonical[path] = path
+            continue
         declared = declared_root_of(path)
         if declared is not None:
             canonical[path] = declared

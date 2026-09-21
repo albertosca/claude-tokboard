@@ -81,6 +81,8 @@ Um filho direto de uma raiz declarada é um projeto, por mais fundo que a sessã
 
 Sem esse arquivo nada muda: os dashboards caem numa heurística que só consegue subir um nível, e deixam o resto como está.
 
+Sessões e subagentes registrados a partir de 21/09/2026 também gravam a raiz do projeto que o próprio Claude Code entrega a todo hook, que é autoritativa e não precisa de configuração nenhuma - o `project_roots` é o que dá nome a tudo que foi registrado antes disso.
+
 ## Integração com tmux (opcional, detectada automaticamente)
 
 Se você roda o Claude Code dentro do tmux, as linhas de sessão mostram

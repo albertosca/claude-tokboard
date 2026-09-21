@@ -963,3 +963,48 @@ def test_main_swallows_exceptions_and_writes_nothing(script, tmp_path, monkeypat
     script.main()
 
     assert not metrics_file.exists()
+
+
+# --- project_root ------------------------------------------------------
+#
+# The cwd alone cannot say where the project is: it is often a
+# subdirectory, and a subdirectory is what ends up naming the project in
+# the dashboard. Claude Code hands hooks CLAUDE_PROJECT_DIR, which is the
+# project root the session started in - authoritative where every
+# heuristic is a guess. Stored RAW, beside the cwd rather than instead of
+# it, so the interpretation stays in the display layer.
+
+
+def test_build_record_records_the_project_root_when_claude_provides_it(script, monkeypatch):
+    monkeypatch.setattr(script, "get_tmux_window", lambda: None)
+    monkeypatch.setattr(script, "get_internal_name", lambda session_id, sessions_dir=None: None)
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", "/work/my-api")
+
+    record = script.build_record({"session_id": "s", "cwd": "/work/my-api/docs"}, _PARSED_STUB)
+
+    assert record["project_root"] == "/work/my-api"
+    assert record["project_path"] == "/work/my-api/docs", "the cwd is still the cwd"
+
+
+def test_build_record_omits_the_project_root_when_claude_does_not_provide_it(script, monkeypatch):
+    # Every Claude Code old enough to predate the variable, and any other
+    # caller of the hook, lands here. An ABSENT key, not a null one: a
+    # null would be a value the reader has to interpret, and the whole
+    # historical corpus has no key at all.
+    monkeypatch.setattr(script, "get_tmux_window", lambda: None)
+    monkeypatch.setattr(script, "get_internal_name", lambda session_id, sessions_dir=None: None)
+    monkeypatch.delenv("CLAUDE_PROJECT_DIR", raising=False)
+
+    record = script.build_record({"session_id": "s", "cwd": "/x"}, _PARSED_STUB)
+
+    assert "project_root" not in record
+
+
+def test_build_record_ignores_an_empty_project_root(script, monkeypatch):
+    monkeypatch.setattr(script, "get_tmux_window", lambda: None)
+    monkeypatch.setattr(script, "get_internal_name", lambda session_id, sessions_dir=None: None)
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", "")
+
+    record = script.build_record({"session_id": "s", "cwd": "/x"}, _PARSED_STUB)
+
+    assert "project_root" not in record

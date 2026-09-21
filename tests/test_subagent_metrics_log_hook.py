@@ -599,3 +599,36 @@ def test_module_guard_calls_main_and_exits_zero_when_run_as_a_script(tmp_path, m
 
     assert excinfo.value.code == 0
     assert not (tmp_path / ".claude" / "metrics" / "subagents.jsonl").exists()
+
+
+# --- project_root ------------------------------------------------------
+#
+# Mirror of the session hook's own three cases. Written out here rather
+# than trusted to the sibling file: these are two separate scripts with
+# two separate build_record functions, and a test in the other file passes
+# just as happily when this one is missing the field entirely.
+
+
+def test_build_record_records_the_project_root_when_claude_provides_it(script, monkeypatch):
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", "/work/my-api")
+
+    record = script.build_record({"agent_id": "a", "cwd": "/work/my-api/docs"}, _PARSED_STUB)
+
+    assert record["project_root"] == "/work/my-api"
+    assert record["project_path"] == "/work/my-api/docs", "the cwd is still the cwd"
+
+
+def test_build_record_omits_the_project_root_when_claude_does_not_provide_it(script, monkeypatch):
+    monkeypatch.delenv("CLAUDE_PROJECT_DIR", raising=False)
+
+    record = script.build_record({"agent_id": "a", "cwd": "/x"}, _PARSED_STUB)
+
+    assert "project_root" not in record
+
+
+def test_build_record_ignores_an_empty_project_root(script, monkeypatch):
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", "")
+
+    record = script.build_record({"agent_id": "a", "cwd": "/x"}, _PARSED_STUB)
+
+    assert "project_root" not in record

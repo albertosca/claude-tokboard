@@ -730,3 +730,81 @@ def test_a_doubled_slash_in_the_cwd_still_names_the_project():
     records = [_p("/home/me/code//my-api/docs", "a")]
     result = mr.normalize_project_paths(records, project_roots=["/home/me/code"])
     assert result[0]["project_path"] == "/home/me/code/my-api"
+
+
+# --- normalize_project_paths, the recorded project_root ---------------
+#
+# Records written from 2026-09-21 on carry the project root Claude Code
+# handed the hook. That is not a guess, so it outranks both the declared
+# roots and the fan-out heuristic - each of which exists only because
+# older records have nothing but a cwd.
+
+
+def _r(path: str, root: str | None = None, session_id: str = "s") -> dict[str, Any]:
+    record = _p(path, session_id)
+    if root is not None:
+        record["project_root"] = root
+    return record
+
+
+def test_a_recorded_project_root_replaces_the_cwd():
+    records = [_r("/anywhere/at/all/deep/inside", root="/anywhere/at/all")]
+    assert mr.normalize_project_paths(records)[0]["project_path"] == "/anywhere/at/all"
+
+
+def test_a_recorded_project_root_beats_a_declared_root_that_disagrees():
+    # The declared root would say "unexpected"; the record itself knows.
+    records = [
+        _r("/home/me/code/unexpected/nested/proj/src", root="/home/me/code/unexpected/nested/proj")
+    ]
+    result = mr.normalize_project_paths(records, project_roots=["/home/me/code"])
+    assert result[0]["project_path"] == "/home/me/code/unexpected/nested/proj"
+
+
+def test_a_recorded_project_root_does_not_erase_which_worktree_it_was():
+    # CLAUDE_PROJECT_DIR stays at the project the session STARTED in while
+    # the cwd follows Claude into a worktree, so taking the root here would
+    # silently merge every worktree back into the project and lose the
+    # "project / worktree" label the chart has always shown.
+    cwd = "/home/me/code/my-api/.worktrees/feature-x/src"
+
+    # With a declared root, the path is trimmed to the worktree itself -
+    # never past it, to the project.
+    declared = mr.normalize_project_paths(
+        [_r(cwd, root="/home/me/code/my-api")], project_roots=["/home/me/code"]
+    )
+    assert declared[0]["project_path"] == "/home/me/code/my-api/.worktrees/feature-x"
+
+    # With nothing declared, the cwd is left exactly as recorded, the way
+    # a worktree path always has been.
+    bare = mr.normalize_project_paths([_r(cwd, root="/home/me/code/my-api")])
+    assert bare[0]["project_path"] == cwd
+
+    for result in (declared, bare):
+        assert mr.project_display_label(result[0]["project_path"]) == "my-api / feature-x"
+        assert mr.color_group_key(result[0]["project_path"]) == "/home/me/code/my-api"
+
+
+def test_a_record_without_the_key_is_untouched_by_any_of_this():
+    records = [_p("/home/me/code/my-api/docs")]
+    assert mr.normalize_project_paths(records)[0]["project_path"] == "/home/me/code/my-api/docs"
+
+
+def test_an_empty_or_non_string_project_root_is_ignored():
+    records = [_r("/a/b/c", root=""), _r("/d/e/f", session_id="t")]
+    records[1]["project_root"] = 7
+    result = mr.normalize_project_paths(records)
+    assert [r["project_path"] for r in result] == ["/a/b/c", "/d/e/f"]
+
+
+def test_the_project_root_is_taken_before_the_heuristic_sees_the_paths():
+    # Two records whose cwds differ only below the root collapse into ONE
+    # known path, which is what keeps the fan-out counts honest: the
+    # heuristic must never see a cwd that already had an answer.
+    records = [
+        _r("/x/proj/a", root="/x/proj", session_id="s1"),
+        _r("/x/proj/b", root="/x/proj", session_id="s2"),
+        _p("/x/proj/c/d", "s3"),
+    ]
+    result = mr.normalize_project_paths(records)
+    assert [r["project_path"] for r in result] == ["/x/proj", "/x/proj", "/x/proj/c/d"]
