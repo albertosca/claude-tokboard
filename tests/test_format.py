@@ -97,3 +97,35 @@ def test_format_date_accepts_a_trailing_z_and_converts_to_local():
     utc_moment = datetime(2026, 3, 7, 14, 5, tzinfo=timezone.utc)
     expected = utc_moment.astimezone().strftime("%d/%m %H:%M")
     assert mr.format_date("2026-03-07T14:05:00Z") == expected
+
+
+# --- model_display_label ---------------------------------------------
+
+
+def test_model_display_label_drops_the_vendor_prefix():
+    # Every model in this data starts with "claude-", so carrying it into a
+    # legend of six entries is six times the same word and no information.
+    assert mr.model_display_label("claude-opus-5") == "opus-5"
+    assert mr.model_display_label("claude-sonnet-5") == "sonnet-5"
+
+
+def test_model_display_label_drops_a_trailing_date_suffix():
+    # Real ids are not uniformly formatted: five are clean, one carries a
+    # release date. Shortening happens HERE and never in storage, so the
+    # stored history keeps the full id and a display change needs no
+    # re-backfill (spec decision 3 of the capture sub-project).
+    assert mr.model_display_label("claude-haiku-4-5-20251001") == "haiku-4-5"
+
+
+def test_model_display_label_leaves_an_unrecognised_shape_alone():
+    # Better a long label than a wrong one: anything that is not the known
+    # shape is shown as it was recorded.
+    assert mr.model_display_label("gpt-4o") == "gpt-4o"
+    assert mr.model_display_label("unknown") == "unknown"
+
+
+def test_model_display_label_does_not_mistake_a_version_for_a_date():
+    # "4-5" is a version, "20251001" is a date. Only an 8-digit run is
+    # dropped, so a model whose version happens to end in digits keeps them.
+    assert mr.model_display_label("claude-opus-4-8") == "opus-4-8"
+    assert mr.model_display_label("claude-fable-5-1") == "fable-5-1"

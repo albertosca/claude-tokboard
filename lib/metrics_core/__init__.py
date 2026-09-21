@@ -24,7 +24,7 @@ from .backfill import (
     verify_fields,
     write_backfill_state,
 )
-from .format import format_date, format_duration, format_tokens
+from .format import format_date, format_duration, format_tokens, model_display_label
 from .granularity import (
     GRANULARITY_CONFIG,
     aggregate_by_day,
@@ -62,6 +62,7 @@ from .projects import (
 from .records import (
     METRICS_FILE,
     SUBAGENTS_FILE,
+    compute_model_totals,
     compute_quota_totals,
     compute_token_type_totals,
     dedupe_by_key,
@@ -104,6 +105,7 @@ __all__ = [
     "cold_summary_source",
     "color_group_key",
     "compress_to_label",
+    "compute_model_totals",
     "compute_project_first_seen",
     "compute_project_last_seen",
     "compute_project_totals",
@@ -135,6 +137,7 @@ __all__ = [
     "load_backfill_state",
     "load_label_cache",
     "load_records",
+    "model_display_label",
     "model_totals_as_of",
     "normalize_project_paths",
     "parse_transcript",

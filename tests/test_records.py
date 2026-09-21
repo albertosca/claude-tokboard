@@ -338,6 +338,100 @@ def test_compute_token_type_totals_sums_each_series_independently():
     }
 
 
+# --- compute_model_totals ---------------------------------------------------
+
+
+def _row(
+    total_by_field: tuple[int, int, int, int],
+    by_model: dict[str, dict[str, int]] | None = None,
+) -> dict[str, Any]:
+    record: dict[str, Any] = {
+        "input_tokens": total_by_field[0],
+        "output_tokens": total_by_field[1],
+        "cache_read_tokens": total_by_field[2],
+        "cache_creation_tokens": total_by_field[3],
+    }
+    if by_model is not None:
+        record["tokens_by_model"] = by_model
+    return record
+
+
+def _bucket_for(**fields: int) -> dict[str, int]:
+    base = {
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "cache_read_tokens": 0,
+        "cache_creation_tokens": 0,
+    }
+    base.update(fields)
+    return base
+
+
+def test_compute_model_totals_splits_each_records_total_across_its_models():
+    records = [
+        _row(
+            (10, 0, 0, 0),
+            {"model-a": _bucket_for(input_tokens=6), "model-b": _bucket_for(input_tokens=4)},
+        ),
+        _row((5, 0, 0, 0), {"model-a": _bucket_for(input_tokens=5)}),
+    ]
+
+    by_model, unattributed = mr.compute_model_totals(records)
+
+    assert by_model == {"model-a": 11, "model-b": 4}
+    assert unattributed == 0
+
+
+def test_compute_model_totals_reports_the_shortfall_as_unattributed():
+    # The whole point of the third chart mode's grey band: a record whose map
+    # accounts for less than its own total is not silently rescaled, it keeps
+    # the remainder visible.
+    records = [_row((100, 0, 0, 0), {"model-a": _bucket_for(input_tokens=30)})]
+
+    by_model, unattributed = mr.compute_model_totals(records)
+
+    assert by_model == {"model-a": 30}
+    assert unattributed == 70
+
+
+def test_compute_model_totals_counts_a_record_with_no_map_as_entirely_unattributed():
+    # 75% of the real history is this case - the transcript is gone and no
+    # backfill can ever recover it.
+    records = [_row((40, 0, 0, 0)), _row((0, 2, 0, 0))]
+
+    by_model, unattributed = mr.compute_model_totals(records)
+
+    assert by_model == {}
+    assert unattributed == 42
+
+
+def test_compute_model_totals_sums_to_the_same_number_record_token_total_does():
+    # The invariant the chart's shared scale rests on: whatever the split,
+    # the bands of a day must add up to that day's height in the other two
+    # modes. If this ever stops holding, switching tabs rescales the day.
+    records = [
+        _row((1, 2, 3, 4), {"model-a": _bucket_for(input_tokens=1, output_tokens=2)}),
+        _row((10, 0, 5, 0)),
+        _row((7, 0, 0, 0), {"model-b": _bucket_for(input_tokens=7)}),
+    ]
+
+    by_model, unattributed = mr.compute_model_totals(records)
+
+    assert sum(by_model.values()) + unattributed == sum(mr.record_token_total(r) for r in records)
+
+
+def test_compute_model_totals_never_reports_a_negative_remainder():
+    # A map claiming more than the record's own totals would otherwise push
+    # the grey band below zero and invert the stack. The backfill's gate
+    # refuses to write such a row, but nothing stops an older one existing.
+    records = [_row((10, 0, 0, 0), {"model-a": _bucket_for(input_tokens=999)})]
+
+    by_model, unattributed = mr.compute_model_totals(records)
+
+    assert by_model == {"model-a": 999}
+    assert unattributed == 0
+
+
 # --- compute_quota_totals ---------------------------------------------------
 
 

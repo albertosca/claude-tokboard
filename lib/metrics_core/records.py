@@ -10,6 +10,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, cast
 
+from .transcript_ingest import TOKEN_FIELDS
+
 METRICS_FILE = str(Path("~/.claude/metrics/sessions.jsonl").expanduser())
 SUBAGENTS_FILE = str(Path("~/.claude/metrics/subagents.jsonl").expanduser())
 
@@ -261,6 +263,37 @@ def compute_token_type_totals(records: list[dict[str, Any]]) -> dict[str, int]:
         "series-3": sum(r.get("cache_read_tokens", 0) or 0 for r in records),
         "series-4": sum(r.get("cache_creation_tokens", 0) or 0 for r in records),
     }
+
+
+def compute_model_totals(records: list[dict[str, Any]]) -> tuple[dict[str, int], int]:
+    """(tokens per model, tokens attributed to no model) over these records.
+
+    The third trend-chart mode slices the same quantity the other two do -
+    a day's total tokens - by the model that produced them. Most of the
+    history cannot be sliced that way: `tokens_by_model` only exists for
+    records whose transcript survived long enough to be captured natively
+    or reconstructed, which was 25% of the volume when this was written.
+
+    That remainder is returned rather than dropped, and the caller draws it
+    as its own band. Dropping it would make a day's bar shorter in this mode
+    than in the other two, so switching tabs would silently rescale the day
+    instead of re-slicing it - the one property all three modes share.
+
+    A map claiming MORE than its record's own totals cannot push the
+    remainder negative: the shortfall floors at zero, per record, so one bad
+    row cannot eat another row's remainder. The backfill's gate refuses to
+    write such a row, but nothing stops one written before that gate existed.
+    """
+    by_model: dict[str, int] = {}
+    unattributed = 0
+    for record in records:
+        attributed = 0
+        for model, bucket in (record.get("tokens_by_model") or {}).items():
+            amount = sum(bucket.get(field, 0) or 0 for field in TOKEN_FIELDS)
+            by_model[model] = by_model.get(model, 0) + amount
+            attributed += amount
+        unattributed += max(record_token_total(record) - attributed, 0)
+    return by_model, unattributed
 
 
 def compute_quota_totals(totals: dict[str, int]) -> tuple[int, int]:
