@@ -6,6 +6,8 @@ drift daily."""
 import json
 from pathlib import Path
 
+import pytest
+
 FIXTURE_SESSION_IDS = {
     "long-1",
     "yest-1",
@@ -48,18 +50,78 @@ def test_dashboard_is_generated_from_the_fixture(dashboard_page):
         assert project in html, f"fixture project {project!r} missing from the page"
 
 
+REAL_METRICS_DIR = Path("~/.claude/metrics").expanduser()
+RENDERER_SOURCES = ("dashboard_html.py", "dashboard_html_assets.py")
+
+
+def real_project_names(metrics_dir: Path, renderer_source: str) -> set[str]:
+    """The reader's own project names, read from their own metrics files.
+
+    This used to be three names typed into this file. That worked, and it
+    kept the author's real project names in a public repository - the one
+    place the 2026-09 privacy pass could not scrub, because renaming them
+    would leave the detector watching for strings that exist nowhere.
+    Reading them at test time removes them from the repo AND makes the
+    check stronger: every project on the machine instead of three.
+
+    A name that also occurs in the renderer's own source is dropped. The
+    page can print such a word without any data reaching it ("metrics",
+    "tmux"), so finding it proves nothing. A name that is NOT in the
+    renderer's source can only reach the page through data - which is
+    exactly the leak this is looking for.
+    """
+    names: set[str] = set()
+    for name in ("sessions.jsonl", "subagents.jsonl"):
+        path = metrics_dir / name
+        if not path.exists():
+            continue
+        for line in path.read_text(encoding="utf-8").splitlines():
+            try:
+                project = json.loads(line).get("project_path")
+            except json.JSONDecodeError:
+                continue
+            if project:
+                base = Path(str(project).rstrip("/")).name
+                if base and base not in renderer_source:
+                    names.add(base)
+    return names
+
+
+def leaked_names(html: str, names: set[str]) -> list[str]:
+    return sorted(n for n in names if n in html)
+
+
 def test_no_real_metrics_leak_into_the_page(dashboard_page):
-    # If the real ~/.claude/metrics were read, these would appear. They are
-    # the author's actual project names, so their absence is the proof.
-    #
-    # THE REAL NAMES ARE THE POINT - do not replace them with placeholders.
-    # The 2026-09-21 pass that scrubbed every other real project name out of
-    # this repo skipped this line on purpose: a denylist of names that exist
-    # nowhere passes whether the fixture is clean or not, which is a check
-    # that cannot tell success from failure.
+    repo = Path(__file__).resolve().parent.parent
+    source = "".join((repo / f).read_text(encoding="utf-8") for f in RENDERER_SOURCES)
+    names = real_project_names(REAL_METRICS_DIR, source)
+    if not names:
+        # CI, or any machine that has never logged a session: there is no
+        # real data to leak, and passing here would claim a check that did
+        # not happen. Skipped, visibly.
+        pytest.skip(f"no real project names under {REAL_METRICS_DIR} - nothing to leak")
     html = Path(dashboard_page.html_path).read_text(encoding="utf-8")
-    for leaked in ("billing-report", "editor-plugin", "claude-metrics-dashboard"):
-        assert leaked not in html, f"real project {leaked!r} leaked - HOME was not isolated"
+    assert leaked_names(html, names) == [], "real projects leaked - HOME was not isolated"
+
+
+def test_the_leak_detector_fires_on_a_leak():
+    # The detector above passes whenever nothing leaks, so on its own it
+    # cannot tell a clean page from a check that never looks. This feeds it
+    # a page that DOES carry a real name and requires it to say so.
+    names = {"some-real-project", "another-one"}
+    assert leaked_names("<html>alpha some-real-project</html>", names) == ["some-real-project"]
+    assert leaked_names("<html>alpha beta</html>", names) == []
+
+
+def test_a_word_the_renderer_itself_prints_is_not_taken_as_a_leak(tmp_path):
+    (tmp_path / "sessions.jsonl").write_text(
+        json.dumps({"project_path": "/x/metrics"})
+        + "\n"
+        + json.dumps({"project_path": "/x/my-private-app"})
+        + "\n"
+        + "not json\n"
+    )
+    assert real_project_names(tmp_path, "the renderer prints metrics") == {"my-private-app"}
 
 
 def test_output_landed_inside_the_temporary_home(dashboard_page):
