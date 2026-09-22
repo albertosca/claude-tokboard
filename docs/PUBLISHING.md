@@ -41,40 +41,18 @@ visibility -> Make public**.
 
 ## Before you click it
 
-- [ ] **The working tree is scrubbed; the git history is not.** Three passes
-      have run over the tree - 2026-08-05 and 2026-09-13 (secrets, real project
-      names and the username in code comments) and 2026-09-21 (absolute paths
-      and real project names in `docs/superpowers/`). None of them rewrote
-      history, deliberately: `git filter-repo` would change every SHA, and the
-      plans, `PROJECT-LOG.md` and `BACKLOG.md` cite those SHAs throughout.
+- [ ] **The history was rewritten and the GitHub repo recreated on 2026-09-22 - before it ever went public.** `git filter-repo` removed `docs/superpowers/` (specs, plans, project log, backlog) from every commit, and replaced the author's home directory and seven real project names in every remaining file and commit message. The planning docs now live in a private repository and are symlinked into the author's checkout, so every path under `docs/superpowers/` that the code or `CLAUDE.md` mentions exists for him and for nobody else - that is deliberate, not a broken link.
 
-      So `git log -p` still shows the author's home directory and two other
-      project names. That is an accepted trade, not an oversight - the username
-      is already published on purpose in `LICENSE`, `plugin.json` and every
-      commit's author field. If you decide otherwise, rewriting history is the
-      only thing that actually removes it, and it has to happen BEFORE the repo
-      goes public.
+      The repo was deleted and recreated rather than force-pushed because GitHub keeps every pull request's head ref, read-only, pointing at the old commits: a force-push would have left the pre-rewrite history browsable through the PR pages. Recreating was the only self-service way to purge it; it cost the history of four PRs (three CI canaries and the one that added CI) and the old Actions runs.
 
-- [ ] **`tests/test_fixture_isolation.py` names two real projects on purpose.**
-      Its denylist asserts they never reach the rendered page. Leave them: a
-      denylist of names that exist nowhere passes whether the fixture is clean
-      or not.
+      Verified on the rewritten history before pushing: zero occurrences of the replaced strings in any commit's content or message, zero commits touching `docs/superpowers/`, the final tree identical to the pre-rewrite one except for that directory, and the full suite green. The pre-rewrite history is kept locally as a git bundle, and the old-to-new commit map lives with the private docs.
 
-- [ ] You're fine with your email in the commit metadata (declined for scrubbing
-      on 2026-08-05, informed choice - noted here so it is a decision, not a
-      discovery).
+- [ ] **The leak detector reads its denylist from the reader's own metrics** (`tests/test_fixture_isolation.py`), so no real project name is committed anywhere. With no real data - as in CI - it skips visibly instead of passing.
 
-- [ ] The CI and Lint badges at the top of `README.md` are green on `main` -
-      they keep working once the repo is public, no extra step needed.
+- [ ] You're fine with your email in the commit metadata (declined for scrubbing on 2026-08-05, informed choice - noted here so it is a decision, not a discovery).
+
+- [ ] The CI and Lint badges at the top of `README.md` are green on `main` - they keep working once the repo is public, no extra step needed.
 
 ## After
 
-Nothing else is required. Optional follow-ups, not blockers:
-
-- Repo description and topics (**Settings -> General**) - the description is
-  the one-line pitch GitHub search shows, and it is English-only (the
-  Portuguese lives in `README.pt.md`).
-- Share the link wherever you'd planned to. The original spec,
-  `docs/superpowers/specs/2026-08-05-public-launch-polish-design.md`, suggested
-  direct link-sharing plus a plugin-developer community if one exists - that
-  part is still open, not decided here.
+Nothing else is required. The description and topics are already set. Sharing the link is still open: the original launch spec suggested direct link-sharing plus a plugin-developer community if one exists, and that was never decided.

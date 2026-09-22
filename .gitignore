@@ -8,3 +8,7 @@ __pycache__/
 .DS_Store
 node_modules/
 .coverage
+# The planning docs live in a private repository and are symlinked in
+# here. No trailing slash: git sees a symlink as a file, and a "dir/"
+# pattern matches only real directories - it would not ignore the link.
+/docs/superpowers

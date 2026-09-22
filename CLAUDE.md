@@ -10,7 +10,7 @@ Every change - code, comments, commit messages, docs, test data - is written ass
 - No secrets, tokens, or credentials, ever - not even in a throwaway script or a `.bak` file that "won't get committed."
 - Example data in docs/tests uses generic placeholders (`my-api`, `blog-site`, `/Users/username/...`), never a real project name.
 
-See `docs/PUBLISHING.md` for how the repo goes public, and `docs/superpowers/specs/2026-08-05-public-launch-polish-design.md` for the original privacy-audit reasoning this extends.
+See `docs/PUBLISHING.md` for how the repo goes public and what was done to its history first.
 
 ## Setup
 
@@ -47,4 +47,4 @@ For a subset: `pytest tests/test_x.py --no-cov` (see below for why `--no-cov`).
 
 ## Where things are written down
 
-`docs/superpowers/PROJECT-LOG.md` (what happened and why), `docs/superpowers/BACKLOG.md` (deferred work, with reasons), `docs/superpowers/plans/` (per-initiative plans).
+`docs/superpowers/` holds the project log, backlog, specs and plans. It is a symlink into a private repository and is gitignored here: it exists in the author's checkout and in no clone of this one. Paths under it that the code mentions resolve for him only - deliberately.
