@@ -284,3 +284,68 @@ def test_the_app_titles_itself_after_the_product_not_its_class(tmp_path, monkeyp
     name, in the one place a user reads a product name (2026-09-21)."""
     isolate_tui_from_the_real_filesystem(monkeypatch, tmp_path)
     assert tui.MetricsTUIApp.TITLE == "tokboard"
+
+
+# --- the chart keeps its slicing across a period change ----------------
+#
+# "p" rebuilds every widget (refresh(recompose=True)), so before
+# 2026-09-22 the new TrendChart came back in its default "pane" mode and
+# the three legend rows all came back visible - whatever the reader had
+# picked, and whichever legend belonged to it. Found while re-recording the
+# README, where the frame after "p" showed "por projeto" with all three
+# legend rows at once.
+
+
+async def _mode_and_legends_after_p(presses_of_t: int) -> dict[str, Any]:
+    args = tui.build_arg_parser().parse_args(["--label-budget", "0"])
+    async with tui.MetricsTUIApp(mr, tui.load_data(args, mr=mr), args=args).run_test(
+        size=(140, 45)
+    ) as pilot:
+        app = pilot.app
+        await pilot.pause()
+        await pilot.press("g")
+        for _ in range(presses_of_t):
+            await pilot.press("t")
+        await pilot.pause()
+        before = app.query_one(tui.TrendChart).mode
+        await pilot.press("p")
+        await pilot.pause()
+        return {
+            "before": before,
+            "after": app.query_one(tui.TrendChart).mode,
+            "quota": app.query_one(tui.QuotaSummary).display,
+            "composition": app.query_one(tui.CompositionLegend).display,
+            "projects": app.query_one(tui.ProjectLegend).display,
+        }
+
+
+@pytest.mark.parametrize(
+    ("presses_of_t", "mode", "quota", "composition", "projects"),
+    [
+        (1, "tokens", True, True, False),
+        (2, "model", False, False, False),
+        # The default mode keeps its mode for free - "pane" is what a fresh
+        # chart starts in - so this case isolates the OTHER half of the
+        # bug: before the fix it failed on the legends alone, with all
+        # three rows visible. Even a reader who never pressed "t" saw it.
+        (0, "pane", False, False, True),
+    ],
+)
+def test_the_chart_keeps_its_slicing_and_its_legend_across_a_period_change(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    presses_of_t: int,
+    mode: str,
+    quota: bool,
+    composition: bool,
+    projects: bool,
+) -> None:
+    seeded_tui_home(monkeypatch, tmp_path)
+    result = asyncio.run(_mode_and_legends_after_p(presses_of_t))
+    assert result["before"] == mode, "the setup did not reach the mode under test"
+    assert result["after"] == mode
+    assert (result["quota"], result["composition"], result["projects"]) == (
+        quota,
+        composition,
+        projects,
+    )

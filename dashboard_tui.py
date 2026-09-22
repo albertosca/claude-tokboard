@@ -514,11 +514,17 @@ class TrendChart(PlotextPlot):
     SERIES_KEYS: ClassVar[list[str]] = ["series-1", "series-2", "series-3", "series-4"]
     SERIES_COLORS: ClassVar[list[str]] = ["green", "blue", "magenta", "orange"]
 
-    def __init__(self, mr: ModuleType, chart_records: list[dict[str, Any]], **kwargs: Any) -> None:
+    def __init__(
+        self,
+        mr: ModuleType,
+        chart_records: list[dict[str, Any]],
+        mode: str = "pane",
+        **kwargs: Any,
+    ) -> None:
         super().__init__(**kwargs)
         self.mr = mr
         self.chart_records = chart_records
-        self.mode = "pane"
+        self.mode = mode
         self.highlighted: set[str] | None = None
         self.project_highlighted: set[str | None] | None = None
 
@@ -916,6 +922,7 @@ class MetricsTUIApp(App[None]):
         # "tab-sessions", not "tab-panorama". Default matches TabbedContent's
         # own default (first pane) and on_mount's unconditional Tree focus.
         self.active_tab_id = "tab-sessions"
+        self.chart_mode = "pane"
 
     def compose(self) -> ComposeResult:
         yield Static(
@@ -933,7 +940,10 @@ class MetricsTUIApp(App[None]):
                 yield QuotaSummary(totals, self.mr)
                 yield CompositionLegend(totals, self.mr)
                 yield ProjectLegend(self.mr, self.data["chart_records"])
-                yield TrendChart(self.mr, self.data["daily_chart_records"])
+                # In the mode the reader last picked, not the default: "p"
+                # recomposes every widget, and a fresh chart would silently
+                # drop the slicing they chose (2026-09-22).
+                yield TrendChart(self.mr, self.data["daily_chart_records"], mode=self.chart_mode)
                 yield ProjectRankingList(
                     self.mr,
                     self.data["chart_records"],
@@ -965,7 +975,9 @@ class MetricsTUIApp(App[None]):
         self.query_one(SessionDetailPanel).show_session(session_id, subagents)
 
     def action_toggle_chart_mode(self) -> None:
-        self.query_one(TrendChart).toggle_mode()
+        chart = self.query_one(TrendChart)
+        chart.toggle_mode()
+        self.chart_mode = chart.mode
         self._sync_legend_visibility()
 
     def action_toggle_more_projects(self) -> None:
@@ -1044,6 +1056,9 @@ class MetricsTUIApp(App[None]):
             self.query_one(Tree).focus()
         else:
             self.query_one(TrendChart).focus()
+        # The recompose also rebuilt the three legend widgets, all visible
+        # by default; on_mount does not run again to hide the wrong ones.
+        self._sync_legend_visibility()
 
 
 def main() -> None:
