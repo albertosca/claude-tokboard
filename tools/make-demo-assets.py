@@ -25,7 +25,9 @@ from __future__ import annotations
 
 import contextlib
 import json
+import math
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -37,25 +39,28 @@ REPO = Path(__file__).resolve().parent.parent
 ASSETS = REPO / "assets"
 CHROME = Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
 
-# (keys pressed before the shot, how long to hold it, in seconds).
+# (keys pressed before the shot, how long to hold it, in seconds). It OPENS
+# on the chart, not on the session table the app starts on: the first frame
+# is what a README shows before the animation runs and in every static
+# preview, and the session table over this small fixture is mostly empty.
 BEATS: list[tuple[list[str], float]] = [
-    ([], 1.8),  # the session table as it opens
-    (["down", "down", "down"], 0.9),
-    (["enter"], 1.2),  # expand a project's group
-    (["down"], 0.6),  # onto an actual session row, not the group node
-    (["enter"], 2.7),  # its detail panel fills
-    (["g"], 2.4),  # chart: sliced by project
+    (["g"], 2.6),  # chart, sliced by project
     (["t"], 2.4),  # by token type
-    (["t"], 3.0),  # by model
-    (["t"], 1.2),  # and the cycle wraps
-    (["p"], 1.8),  # a different period
+    (["t"], 2.8),  # by model
+    # No "p" beat: cycling the period rebuilds the chart, which drops the
+    # slicing the reader picked and shows all three legend rows at once
+    # (a known bug, in the backlog). Put it back once that is fixed.
+    (["g"], 1.4),  # over to the session table
+    (["down", "down", "down"], 0.7),
+    (["enter"], 1.0),  # expand a project's group
+    (["down"], 0.5),  # onto an actual session row, not the group node
+    (["enter"], 2.6),  # its detail panel fills
 ]
 
 # Project names the committed fixture invents. At least one has to show up
 # in every frame, or the frame did not render the data it claims to.
 FIXTURE_PROJECTS = ("alpha", "beta", "gamma", "delta", "epsilon", "zeta", "eta")
-TERMINAL_SIZE = (132, 38)
-RASTER_SIZE = (1629, 978)
+TERMINAL_SIZE = (132, 32)
 GIF_WIDTH = 1100
 # The last 12 bytes of every complete PNG: the zero-length IEND chunk.
 PNG_END = b"\x00\x00\x00\x00IEND\xaeB`\x82"
@@ -137,7 +142,11 @@ def rasterize(src: Path, dest: Path, width: int, height: int) -> None:
                 ],
                 check=True,
                 capture_output=True,
-                timeout=45,
+                # Chrome writes the PNG in seconds and then may never exit, so
+                # this is how long the run waits on a process that is
+                # probably already done. Short is safe: an unwritten or
+                # truncated PNG still fails the IEND check below, loudly.
+                timeout=20,
             )
     finally:
         shutil.rmtree(profile, ignore_errors=True)
@@ -252,12 +261,24 @@ def refuse_if_it_shows_real_data(work: Path, count: int) -> None:
             raise SystemExit(f"frame {i} shows real projects: {shown}")
 
 
+def svg_size(svg: str) -> tuple[int, int]:
+    """The window to rasterize an exported frame in: its own viewBox,
+    rounded up. A hard-coded size either crops the bottom of the frame -
+    where the key bar lives - or pads it with blank space, and it silently
+    goes wrong the moment TERMINAL_SIZE changes."""
+    match = re.search(r'viewBox="0 0 ([\d.]+) ([\d.]+)"', svg)
+    if match is None:
+        raise SystemExit("exported frame has no viewBox - cannot size it")
+    return math.ceil(float(match.group(1))), math.ceil(float(match.group(2)))
+
+
 def make_recording(home: Path, work: Path) -> None:
     holds = shoot_tui(home, work)
     refuse_if_it_shows_real_data(work, len(holds))
     for i in range(len(holds)):
         print(f"  frame {i + 1}/{len(holds)}", flush=True)
-        rasterize(work / f"f{i:02d}.svg", work / f"f{i:02d}.png", *RASTER_SIZE)
+        svg = work / f"f{i:02d}.svg"
+        rasterize(svg, work / f"f{i:02d}.png", *svg_size(svg.read_text()))
     # The concat demuxer ignores the final entry's duration, so the last
     # screen would flash past unless the file is named once more.
     listing = "".join(f"file 'f{i:02d}.png'\nduration {h:.2f}\n" for i, h in enumerate(holds))

@@ -6,113 +6,88 @@
 
 # tokboard
 
-A Claude Code plugin that tracks your session history and token usage,
-and shows it back to you two ways: an HTML dashboard, and a full
-terminal (TUI) app. See what you've been working on and how much it's
-costing you, project by project, day by day.
+**See where your Claude Code tokens go** - by day, by project, by token type and by model.
+
+A Claude Code plugin that logs every session and subagent in the background and shows it back to you two ways: an HTML dashboard in your browser, and a full terminal app.
 
 ![The HTML dashboard: a stacked trend chart by project, with tabs for token type and model, above a session table grouped by project](assets/dashboard.png)
 
-![The TUI: a session table with a detail panel, then the trend chart cycling through its three slicings of a day - by project, by token type, by model](assets/tui.gif)
-
-<sub>Rendered from this repo's own synthetic test fixture - the project names are `alpha`, `gamma`, `eta`; no real session data.</sub>
-
-## Engineering notes
-
-Two presentation layers (an HTML dashboard and a [Textual](https://github.com/Textualize/textual)
-TUI) share one pure-Python data layer (`lib/metrics_core/`), so every
-number both surfaces show is computed once and tested once. The suite
-is at 100% statement and branch coverage with a permanent gate
-(`--cov-fail-under=100` - a single uncovered line fails the build), and
-CI runs it alongside `ruff` (a wide rule set, not just the defaults)
-and `mypy --strict` on every push - see [Contributing](#contributing)
-below for the exact commands, or the workflows themselves in
-[`.github/workflows/`](.github/workflows/).
+<sub>The HTML dashboard. All screenshots are rendered from the repo's synthetic test data - no real sessions.</sub>
 
 ## What you get
 
-- **Cost and token visibility** - input/output/cache tokens broken
-  down by day, by project, and by token type, so you can see what's
-  actually driving your usage.
-- **Session history** - every session logged with an auto-generated
-  task label (opt-in - see below), searchable/filterable by project or
-  tag, with subagent breakdowns per session.
-- **Two ways to look at it**: `/tokboard` opens an interactive HTML
-  dashboard in your browser; `/tokboard-tui` opens a full terminal app
-  (built on [Textual](https://github.com/Textualize/textual)) for when
-  a browser isn't convenient.
+- **One day, three slicings.** The trend chart splits each day's total by project, by token type or by model. A day stays the same height in every tab, so switching re-slices it instead of rescaling it.
+- **A quota view, not just a volume view.** Most tokens are cheap cache reads. A separate line estimates how much of your rate-limit quota a period used, following Anthropic's documented rule for what counts.
+- **An honest last bar.** The bucket still in progress is labelled with how much of it has elapsed (and hatched, in the browser), so a half-finished week never reads as a drop.
+- **Session history.** Every session grouped by project, with its subagents, duration and token breakdown - filterable by period.
+- **Click to highlight.** Click a legend entry or a bar to spotlight one project, token type or model across the chart.
+
+![The terminal app: a session table with a detail panel, then the trend chart cycling through its three slicings of a day](assets/tui.gif)
+
+<sub>The terminal app - same data, keyboard-driven: <kbd>g</kbd> charts/sessions, <kbd>t</kbd> chart mode, <kbd>p</kbd> period, <kbd>q</kbd> quit.</sub>
+
+> The interface is in Brazilian Portuguese.
 
 ## Install
 
-Install this plugin through Claude Code's plugin system (see the
-[Claude Code plugin docs](https://docs.claude.com/en/docs/claude-code)
-for how your setup discovers and installs plugins). Once installed,
-`/tokboard` works immediately (zero external dependencies) - `/tokboard-tui`
-auto-installs its own dependencies (`textual`, `textual-plotext`) into
-a dedicated virtual environment the first time you run it.
+Install it through Claude Code's plugin system (see the [Claude Code plugin docs](https://docs.claude.com/en/docs/claude-code)). Then:
 
-On Debian/Ubuntu, that auto-install step needs the `python3-venv` package,
-which isn't always preinstalled. If `/tokboard-tui` fails on first run with
-an error about `ensurepip`, run `sudo apt install python3-venv` (or the
-version-specific `python3.X-venv` the error message names) and try again -
-`/tokboard` itself is unaffected either way, since it has no dependencies
-to install.
+| Command | What it does |
+|---|---|
+| `/tokboard` | Builds the HTML dashboard and opens it in your browser. No dependencies. |
+| `/tokboard-tui` | Sets up the terminal app on first run, then hands you the command to launch it in your own terminal. |
 
-## AI-generated task labels (opt-in)
+The browser opens by itself on macOS; elsewhere, open `~/.claude/metrics/dashboard.html`.
 
-Both dashboards can auto-generate a short label per session
-(e.g. "fixing auth redirect bug") by summarizing it with a lightweight
-`claude -p` call. **This is off by default** (`--label-budget 0`) -
-it's a real API call per uncached session, so it spends your own
-quota. Pass `--label-budget N` to either dashboard's underlying script
-to turn it on (`N` new labels per run; already-cached labels are
-always free).
+<details>
+<summary><code>/tokboard-tui</code> fails on first run with an <code>ensurepip</code> error (Debian/Ubuntu)</summary>
 
-## Naming your projects (optional)
+The auto-install needs the `python3-venv` package, which isn't always preinstalled. Run `sudo apt install python3-venv` (or the version-specific `python3.X-venv` the error names) and try again. `/tokboard` is unaffected either way.
+</details>
 
-A session is logged with whatever directory Claude Code's cwd happened to be, which is often a subdirectory of the project rather than its root - so a session run from `my-api/docs/vendor` shows up in the chart legend as "vendor". The path alone cannot say where the project stops, and resolving it against the filesystem does not work either: directories get renamed and deleted, and the history outlives them.
+## Optional settings
 
-So you declare it, in `~/.claude/metrics/config.json`:
+**AI task labels.** Claude can label each session with a short summary ("fixing auth redirect bug"). It's off by default, because each new label is a `claude -p` call on your own quota.
+
+Turn it on with `--label-budget N` (N new labels per run; cached ones are free), via `/tokboard-tui --label-budget N` or by running a dashboard script directly.
+
+**Filters.** Both scripts also take `--project`, `--tag` and `--days`/`--all` to narrow what they show.
+
+**Naming your projects.** A session is logged under whatever directory it ran in, so work inside `my-api/docs/vendor` would show up as "vendor". Tell tokboard where your projects live, in `~/.claude/metrics/config.json`:
 
 ```json
-{
-  "project_roots": ["/Users/username/code", "/Users/username/work"]
-}
+{ "project_roots": ["~/code", "~/work"] }
 ```
 
-A direct child of a declared root is a project, however deep the session's cwd went. `~` is expanded. Worktrees keep their own entry, labelled `project / worktree`, so you can still tell which branch of a project the work happened in.
+Any folder directly inside a listed root is one project, however deep the session went. Newer sessions record their project root automatically; this setting is what names older ones.
 
-Without this file nothing changes: the dashboards fall back to a heuristic that can only roll a path up one level, and it leaves the rest alone.
+**tmux.** If you run Claude Code inside tmux, each session shows the window it ran in. Nothing to configure.
 
-Sessions and subagents logged from 2026-09-21 on also record the project root Claude Code hands every hook, which is authoritative and needs no configuration - `project_roots` is what names everything logged before that.
+## How it's built
 
-## tmux integration (optional, auto-detected)
+- **One data layer, two interfaces.** Both dashboards read from `lib/metrics_core/`, pure standard-library Python - every number is computed once and tested once.
+- **100% statement and branch coverage, enforced.** A single uncovered line fails CI.
+- **The page is tested by using it.** The rendering tests drive the real generated dashboard in jsdom - clicking, filtering, highlighting - and assert on computed styles, not on markup.
+- **Strict static checks.** `ruff` with ten rule families and `mypy --strict` on every push.
+- **Careful with your data.** Migrations over your irreplaceable logs run as dry runs first, are checked against an independent oracle, and write only after a verified backup.
 
-If you run Claude Code inside tmux, session rows show which tmux
-window they happened in. If you don't use tmux at all, that column
-simply doesn't appear - nothing to configure.
+## Your data
 
-## Uninstall / data location
-
-All logged data lives in `~/.claude/metrics/` (`sessions.jsonl`,
-`subagents.jsonl`, label caches, the rendered `dashboard.html`) -
-independent of the plugin itself. Uninstalling the plugin stops new
-data from being logged but doesn't delete what's already there.
+- Everything lives in `~/.claude/metrics/`: the session and subagent logs, label caches and the rendered dashboard.
+- Nothing leaves your machine - unless you turn on AI labels, which send each labelled session to Claude to be summarized.
+- Uninstalling stops new logging and keeps what's already there.
 
 ## Contributing
 
 ```bash
 pip install -r requirements-dev.txt -r requirements-tui.txt
 npm install                     # jsdom, for the rendering tests
-pytest -q                       # full suite, 100% coverage is a hard gate
+pytest                          # full suite - 100% coverage is a hard gate
 ruff check . && ruff format --check .
-mypy .
+mypy --strict .
 ```
 
-No build step and no compiled assets - `dashboard_html.py` and
-`dashboard_tui.py` are the two entry points, both reading from
-`lib/metrics_core/`. PRs are welcome; open an issue first for anything
-beyond a small fix so the direction can be agreed on before the work.
+No build step. `dashboard_html.py` and `dashboard_tui.py` are the two entry points. PRs are welcome - for anything beyond a small fix, open an issue first so we can agree on the direction.
 
 ## License
 
