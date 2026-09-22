@@ -47,9 +47,8 @@ BEATS: list[tuple[list[str], float]] = [
     (["g"], 2.6),  # chart, sliced by project
     (["t"], 2.4),  # by token type
     (["t"], 2.8),  # by model
-    # No "p" beat: cycling the period rebuilds the chart, which drops the
-    # slicing the reader picked and shows all three legend rows at once
-    # (a known bug, in the backlog). Put it back once that is fixed.
+    (["p"], 2.0),  # a different period - the slicing survives it
+    (["p", "p", "p", "p"], 0.1),  # back round to "tudo", held a tenth of a second
     (["g"], 1.4),  # over to the session table
     (["down", "down", "down"], 0.7),
     (["enter"], 1.0),  # expand a project's group
