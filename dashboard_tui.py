@@ -490,18 +490,48 @@ def pane_series_label(mr: ModuleType, key: str | None) -> str:
     return "outros" if key == PANE_OTHER_KEY else mr.project_display_label(key)
 
 
-def floor_stacked_bottom_series(bottom_series: list[int], day_totals: list[int]) -> list[int]:
-    """Work around a plotext stacked_bar rendering bug: when the FIRST
-    (bottom) series in the stack is exactly 0 for a bar that otherwise has
-    data, the visible segment above it renders one row too high, making the
-    bar look like it floats above the zero line instead of touching it.
-    Confirmed by isolating plotext's stacked_bar with a minimal repro during
-    this fix - a nonzero floor on the bottom series alone (here, 1 token,
-    negligible next to real per-day totals in the thousands-to-millions)
-    eliminates the artifact. Only applied on days with real data (day_total
-    > 0) - a genuinely empty day must stay at 0, not get a phantom bar.
+def draw_stacked_bars(
+    plt: Any,
+    xlabels: list[str],
+    series_lists: list[list[int]],
+    series_labels: list[str],
+    colors: list[str],
+) -> None:
+    """A stacked bar chart, drawn as layers instead of with plotext's own
+    stacked_bar.
+
+    stacked_bar leaves a bar floating one row above the zero line whenever
+    its FIRST series is 0 there - measured against the installed plotext on
+    2026-09-22. The old workaround set that series to 1 token, and plotext
+    draws any nonzero value as at least one full row, so the bar's base came
+    out in the colour, and under the legend name, of a series that had no
+    tokens on that day: the model mode painted the top model under every day
+    older than the per-model map.
+
+    Here each series is a plain bar from zero up to its CUMULATIVE total,
+    drawn from the top of the stack down so every lower layer paints over
+    the one above it. Every layer starts at zero, so nothing floats. A
+    series is simply not drawn where it is 0 - which is also required,
+    because plotext paints a zero-valued bar's base cell with the background
+    and would erase what is under it. Bars are placed by number, not by
+    label, so a layer that skips a day still lines up with the others.
     """
-    return [1 if v == 0 and day_totals[i] > 0 else v for i, v in enumerate(bottom_series)]
+    xs = list(range(1, len(xlabels) + 1))
+    cumulative: list[list[int]] = []
+    running = [0] * len(xs)
+    for series in series_lists:
+        running = [a + b for a, b in zip(running, series, strict=True)]
+        cumulative.append(running)
+    for i in reversed(range(len(series_lists))):
+        shown = [j for j, value in enumerate(series_lists[i]) if value > 0]
+        if shown:
+            plt.bar(
+                [xs[j] for j in shown],
+                [cumulative[i][j] for j in shown],
+                label=series_labels[i],
+                color=colors[i],
+            )
+    plt.xticks(xs, xlabels)
 
 
 class TrendChart(PlotextPlot):
@@ -570,11 +600,8 @@ class TrendChart(PlotextPlot):
         # The last bucket is always a fraction of a full one while it's
         # still running (backlog, 2026-09-02: "the newest bar always reads
         # as a decline") - annotated on its own label rather than greyed
-        # out like dashboard_html.py's independent SVG rects can be:
-        # plotext's stacked_bar only takes one color per SERIES, applied
-        # across every bucket (see the ignore-annotated calls below, which
-        # exist for exactly this narrower-than-reality stub), so there is
-        # no per-bar color hook to grey out just this one bar.
+        # out like dashboard_html.py's SVG rects are: each series is drawn
+        # in one colour across every bucket (see draw_stacked_bars).
         partial_frac = self.mr.partial_bucket_fraction(
             granularity, days[-1]["day"], now or datetime.now().astimezone()
         )
@@ -597,17 +624,6 @@ class TrendChart(PlotextPlot):
             day_totals_list = [
                 sum(series_data[k][i] for k in series_keys) for i in range(len(days))
             ]
-            # The false arc is unreachable, by construction rather than by
-            # accident: render_chart derives `days` from the SAME
-            # self.chart_records that feeds compute_pane_projects, and
-            # returns early above when len(days) < 2. So reaching this line
-            # requires chart_records to be non-empty, which guarantees at
-            # least one key in that function's `totals`, hence a non-empty
-            # top_keys, hence a non-empty series_keys and series_lists.
-            # `no branch` rather than `no cover`: the body below runs on
-            # every real render and must stay in the denominator.
-            if series_lists:  # pragma: no branch - unreachable, see comment above
-                series_lists[0] = floor_stacked_bottom_series(series_lists[0], day_totals_list)
             series_labels = [pane_series_label(self.mr, k) for k in series_keys]
             palette = [
                 PANE_COLORS[i] if i < len(PANE_COLORS) else PANE_OTHER_COLOR
@@ -620,19 +636,7 @@ class TrendChart(PlotextPlot):
                 ]
             else:
                 color = palette
-            # textual_plotext's stub for stacked_bar only declares the
-            # narrower single-value bar() signature (label: str | None,
-            # color: single value) - the real plotext.stacked_bar it wraps
-            # takes labels (plural, one per series) and a color list, which
-            # is what actually renders a legend/palette per series here.
-            # Confirmed at runtime against the installed plotext.stacked_bar
-            # signature; this is a stub gap, not a bug in the call.
-            self.plt.stacked_bar(  # type: ignore[call-arg]
-                labels,
-                series_lists,
-                labels=series_labels,
-                color=color,  # type: ignore[arg-type]
-            )
+            draw_stacked_bars(self.plt, labels, series_lists, series_labels, color)
             self.plt.title("Tokens por dia (por projeto)")
             max_total = max(
                 (sum(series_data[k][i] for k in series_keys) for i in range(len(days))), default=0
@@ -665,15 +669,7 @@ class TrendChart(PlotextPlot):
             ]
             color.append(PANE_OTHER_COLOR)
             day_totals_list = [sum(series[i] for series in series_lists) for i in range(len(days))]
-            series_lists[0] = floor_stacked_bottom_series(series_lists[0], day_totals_list)
-            # See the "pane" branch above for why this needs a type: ignore
-            # against textual_plotext's narrower stacked_bar stub.
-            self.plt.stacked_bar(  # type: ignore[call-arg]
-                labels,
-                series_lists,
-                labels=series_labels,
-                color=color,  # type: ignore[arg-type]
-            )
+            draw_stacked_bars(self.plt, labels, series_lists, series_labels, color)
             self.plt.title("Tokens por dia (por modelo)")
             max_total = max(day_totals_list, default=0)
         else:
@@ -691,7 +687,6 @@ class TrendChart(PlotextPlot):
                 input_totals[i] + output_totals[i] + cache_read_totals[i] + cache_creation_totals[i]
                 for i in range(len(days))
             ]
-            input_totals = floor_stacked_bottom_series(input_totals, day_totals_list)
             if self.highlighted:
                 color = [
                     self.SERIES_COLORS[i] if key in self.highlighted else "gray"
@@ -699,13 +694,12 @@ class TrendChart(PlotextPlot):
                 ]
             else:
                 color = self.SERIES_COLORS
-            # See the "pane" branch above for why this needs a type: ignore
-            # against textual_plotext's narrower stacked_bar stub.
-            self.plt.stacked_bar(  # type: ignore[call-arg]
+            draw_stacked_bars(
+                self.plt,
                 labels,
                 [input_totals, output_totals, cache_read_totals, cache_creation_totals],
-                labels=["input", "output", "cache read", "cache creation"],
-                color=color,  # type: ignore[arg-type]
+                ["input", "output", "cache read", "cache creation"],
+                color,
             )
             self.plt.title("Tokens por dia (por tipo de token)")
             max_total = max(

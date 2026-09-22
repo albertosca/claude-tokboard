@@ -56,6 +56,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "lib"))
 sys.path.insert(0, str(REPO_ROOT))
@@ -79,37 +81,62 @@ def _daily(project: str, day: int, tokens: int) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
-# Finding 1 - floor_stacked_bottom_series (dashboard_tui.py:444), the
-# serious one: its entire output is corruptible in silence, per the task
-# brief, because no test called it directly before this file.
+# Finding 1 - the stacked bars. This section used to pin
+# floor_stacked_bottom_series, a workaround that set a zero bottom series to
+# 1 token and so painted a series under days it had no tokens on. It was
+# replaced on 2026-09-22 by draw_stacked_bars; one requirement those tests
+# carried is kept below - an empty day draws nothing.
 # ---------------------------------------------------------------------------
 
 
-def test_floor_stacked_bottom_series_floors_a_zero_bottom_on_a_real_day():
-    """A day with real total tokens but a zero bottom-series value is the
-    plotext rendering-bug case the function exists for (see its own
-    docstring) - it must come back as 1, not 0."""
-    assert tui.floor_stacked_bottom_series([0], [100]) == [1]
+class _RecordingPlt:
+    """Stands in for plotext: records what was drawn, in order. The real
+    rendering is checked in test_tui_data_shapes.py's zero-row tests; what
+    is under test here is which bars reach plotext at all."""
+
+    def __init__(self) -> None:
+        self.bars: list[tuple[list[int], list[int], str, str]] = []
+        self.ticks: tuple[list[int], list[str]] | None = None
+
+    def bar(self, xs: list[int], ys: list[int], label: str, color: str) -> None:
+        self.bars.append((xs, ys, label, color))
+
+    def xticks(self, xs: list[int], labels: list[str]) -> None:
+        self.ticks = (xs, labels)
 
 
-def test_floor_stacked_bottom_series_leaves_a_genuinely_empty_day_at_zero():
-    """The explicit decision the docstring calls out: a day with NO data at
-    all (day_total == 0 too) must stay at 0, not get a phantom bar."""
-    assert tui.floor_stacked_bottom_series([0], [0]) == [0]
+def test_stacked_bars_are_cumulative_layers_drawn_from_the_top_down():
+    plt = _RecordingPlt()
+    tui.draw_stacked_bars(plt, ["d1", "d2"], [[10, 20], [5, 5]], ["low", "high"], ["g", "b"])
+    # The top layer reaches the full stack height and is drawn FIRST, so the
+    # lower layer, drawn after it, paints over its bottom part.
+    assert plt.bars == [([1, 2], [15, 25], "high", "b"), ([1, 2], [10, 20], "low", "g")]
+    assert plt.ticks == ([1, 2], ["d1", "d2"])
 
 
-def test_floor_stacked_bottom_series_leaves_real_nonzero_values_untouched():
-    """The non-edge case, so the two tests above cannot pass by a mutant
-    that floors (or zeroes) everything."""
-    assert tui.floor_stacked_bottom_series([5], [100]) == [5]
+def test_a_series_is_not_drawn_on_a_day_it_has_no_tokens():
+    plt = _RecordingPlt()
+    tui.draw_stacked_bars(plt, ["d1", "d2"], [[0, 20], [5, 5]], ["low", "high"], ["g", "b"])
+    # "low" is 0 on d1: no bar there at all - neither a phantom strip in its
+    # colour nor a zero-height bar, which plotext would draw as a blank cell
+    # over whatever is under it.
+    assert ([1], [5]) not in [(xs, ys) for xs, ys, *_ in plt.bars]
+    assert plt.bars[1] == ([2], [20], "low", "g")
 
 
-def test_floor_stacked_bottom_series_mixed_row():
-    """All three shapes together in one call, matching how render_chart
-    actually invokes it - one list, one day-totals list, several days."""
-    bottom = [0, 5, 0]
-    totals = [100, 200, 0]
-    assert tui.floor_stacked_bottom_series(bottom, totals) == [1, 5, 0]
+def test_a_day_with_no_data_at_all_draws_nothing():
+    """Kept from the replaced tests: an empty day must not get a bar."""
+    plt = _RecordingPlt()
+    tui.draw_stacked_bars(plt, ["d1", "d2"], [[0, 7], [0, 3]], ["low", "high"], ["g", "b"])
+    assert all(1 not in xs for xs, *_ in plt.bars)
+
+
+def test_a_series_with_no_tokens_anywhere_gets_no_legend_entry():
+    # Nothing to draw means nothing to label: a legend entry for a series
+    # absent from the whole chart would name a colour that appears nowhere.
+    plt = _RecordingPlt()
+    tui.draw_stacked_bars(plt, ["d1", "d2"], [[3, 4], [0, 0]], ["low", "high"], ["g", "b"])
+    assert [label for *_, label, _ in plt.bars] == ["low"]
 
 
 # ---------------------------------------------------------------------------
@@ -153,30 +180,36 @@ def test_project_legend_bolds_only_the_highlighted_chip():
         )
 
 
-def _capture_stacked_bar_color(chart: Any) -> dict[str, Any]:
+def _capture_stacked_bar_color(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
+    """The per-series colour list, as the chart hands it to plotext. Since
+    2026-09-22 that goes through draw_stacked_bars (it used to be
+    plt.stacked_bar's `color=`), still one entry per series, in series
+    order."""
     captured: dict[str, Any] = {}
-    original = chart.plt.stacked_bar
+    original = tui.draw_stacked_bars
 
-    def spy(*args: Any, **kwargs: Any) -> Any:
-        captured["color"] = kwargs.get("color")
-        return original(*args, **kwargs)
+    def spy(plt: Any, xlabels: Any, series: Any, labels: Any, colors: list[str]) -> None:
+        captured["color"] = colors
+        original(plt, xlabels, series, labels, colors)
 
-    chart.plt.stacked_bar = spy
+    monkeypatch.setattr(tui, "draw_stacked_bars", spy)
     return captured
 
 
-def test_set_highlight_colors_the_highlighted_series_and_greys_the_rest():
+def test_set_highlight_colors_the_highlighted_series_and_greys_the_rest(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """dashboard_tui.py:553 (`self.SERIES_COLORS[i] if key in
     self.highlighted else "gray"`). tests/test_tui_chart.py's own
     highlighting tests only check THAT gray appears somewhere in the
     render, which is exactly the assertion an operand swap survives (gray
     still appears - just on the wrong series). This reads the actual
-    `color` list passed to plt.stacked_bar and checks it by series
+    `color` list handed to plotext and checks it by series
     identity."""
     records = [_daily("/projects/a", 1, 10), _daily("/projects/a", 2, 20)]
     chart = tui.TrendChart(mr, records)
     chart.toggle_mode()  # into "tokens" mode, where set_highlight applies
-    captured = _capture_stacked_bar_color(chart)
+    captured = _capture_stacked_bar_color(monkeypatch)
     chart.set_highlight({"series-1"})
     color = captured["color"]
     assert color[0] == chart.SERIES_COLORS[0], (
@@ -186,14 +219,16 @@ def test_set_highlight_colors_the_highlighted_series_and_greys_the_rest():
         assert color[i] == "gray", f"series index {i} is not highlighted and must be grayed out"
 
 
-def test_set_project_highlight_colors_the_highlighted_project_and_greys_the_rest():
+def test_set_project_highlight_colors_the_highlighted_project_and_greys_the_rest(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """dashboard_tui.py:525, the pane-mode twin - and the same class of gap
     as line 520's boundary just below it: computed with more projects than
     PANE_COLORS so the "outros" bucket is exercised at the same time."""
     records = [_daily(f"/projects/p{i:02d}", day, 100 - i) for i in range(3) for day in (1, 2)]
     chart = tui.TrendChart(mr, records)
     chart.render_chart()
-    captured = _capture_stacked_bar_color(chart)
+    captured = _capture_stacked_bar_color(monkeypatch)
     highlighted_key = chart.pane_series_keys[1]
     chart.set_project_highlight({highlighted_key})
     color = captured["color"]
@@ -211,7 +246,9 @@ def test_set_project_highlight_colors_the_highlighted_project_and_greys_the_rest
 # ---------------------------------------------------------------------------
 
 
-def test_overflow_projects_beyond_pane_colors_get_the_other_color():
+def test_overflow_projects_beyond_pane_colors_get_the_other_color(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """9 distinct, distinctly-ranked projects: PANE_MAX_PROJECTS (7) go
     into top_keys, the rest collapse into one "outros" bucket, so
     series_keys has exactly 8 entries - one more than len(PANE_COLORS) (7).
@@ -219,7 +256,7 @@ def test_overflow_projects_beyond_pane_colors_get_the_other_color():
     boundary controls."""
     records = [_daily(f"/projects/p{i:02d}", day, (9 - i) * 10) for i in range(9) for day in (1, 2)]
     chart = tui.TrendChart(mr, records)
-    captured = _capture_stacked_bar_color(chart)
+    captured = _capture_stacked_bar_color(monkeypatch)
     chart.render_chart()
     color = captured["color"]
     assert len(chart.pane_series_keys) == 8

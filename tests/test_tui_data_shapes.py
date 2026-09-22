@@ -459,3 +459,62 @@ def test_a_day_with_no_attribution_at_all_is_drawn_entirely_as_unattributed():
     text = chart.plt.build()
     assert "sem modelo" in re.sub(r"\x1b\[[0-9;]*m", "", text)
     assert _ytick_labels(text)[0] == mr.format_tokens(100)
+
+
+# ---------------------------------------------------------------------------
+# The zero row: every bar reaches it, and only in a series it actually holds
+# ---------------------------------------------------------------------------
+#
+# plotext's stacked_bar leaves a bar floating one row above the zero line
+# whenever its FIRST series is 0 there. The old workaround set that series
+# to 1 token - and plotext draws any nonzero value as at least one full
+# row, so the bar's base came out in the colour, under the legend name, of
+# a series with no tokens on that day. In the model mode that painted the
+# top model under every day that predates the per-model map (2026-09-22).
+
+_ANSI = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def _zero_row_colours(raw: str) -> list[str]:
+    """The colour of each bar segment on the chart's zero row, left to right."""
+    zero = next(line for line in raw.splitlines() if re.match(r"^\s*0┤", _ANSI.sub("", line)))
+    return re.findall(r"\x1b\[([0-9;]*)m█+", zero)
+
+
+def _legend_colour(raw: str, label: str) -> str:
+    """The colour plotext's own legend draws `label` in."""
+    match = re.search(r"\x1b\[([0-9;]*)m█+\x1b\[[0-9;]*m[^\n]*?" + re.escape(label), raw)
+    assert match, f"no legend entry for {label!r}"
+    return match.group(1)
+
+
+def test_a_bar_reaches_zero_in_a_series_it_actually_has():
+    records = [
+        _model_session("a", 1, None, total=100),
+        _model_session("b", 5, {"claude-opus-5": _m(input_tokens=100)}, total=100),
+    ]
+    chart = tui.TrendChart(mr, records)
+    chart.mode = "model"
+    chart.render_chart(now=datetime(2026, 8, 12, 0, 0).astimezone())
+    raw = chart.plt.build()
+
+    unattributed = _legend_colour(raw, "sem modelo")
+    opus = _legend_colour(raw, "opus-5")
+    assert unattributed != opus, "the two series must be told apart for this to mean anything"
+    # Day 1 has no model data at all, so its base is "sem modelo" - never
+    # opus-5, which it does not have. Day 2 is all opus-5.
+    assert _zero_row_colours(raw) == [unattributed, opus]
+
+
+def test_every_bar_with_data_still_reaches_the_zero_line():
+    # The float the old workaround existed for must stay fixed: here the
+    # FIRST series (the top project) is 0 on day 1. Two bars, two segments
+    # on the zero row - one would mean a bar is floating.
+    records = [
+        _august_session("a", day=1, tokens=50) | {"project_path": "/projects/small"},
+        _august_session("b", day=5, tokens=400) | {"project_path": "/projects/big"},
+        _august_session("c", day=5, tokens=50) | {"project_path": "/projects/small"},
+    ]
+    chart = tui.TrendChart(mr, records)
+    chart.render_chart(now=datetime(2026, 8, 12, 0, 0).astimezone())
+    assert len(_zero_row_colours(chart.plt.build())) == 2
