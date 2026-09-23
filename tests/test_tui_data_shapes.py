@@ -905,23 +905,60 @@ def test_the_whole_dashboard_survives_every_narrow_width(monkeypatch, tmp_path):
     # The same sweep through the real app, on the chart's pane, in each of
     # the three chart modes - the full app at 7 and 8 columns is where the
     # 2026-09-23 review found the crash.
+    #
+    # Not every width, though: mounting the whole dashboard costs about
+    # 0.2s per resize, and 20 widths x 3 modes made this the slowest test
+    # in the suite (13-15s). The chart-only sweep above already renders
+    # every width from 1 to 20; what only the full app adds is the chart
+    # squeezed beside the real legends and frame, and that can only go
+    # wrong where the message switches to the chart. So per mode: width 1,
+    # the switch found by bisection over 1..20 - observed, as before, from
+    # where the message stops, never a hard-coded column - two widths
+    # either side of it, one wide terminal, and the three short heights.
+    # Trimmed 2026-09-23 from ~14s to ~6.5s. Revert-checked: loosening
+    # _draw_chart's `canvas_width < 1` guard to `< 0` still turns it red,
+    # with plotext's ValueError on the zero-cell canvas one column below
+    # the switch - the column this sample exists to keep.
     seeded_tui_home(monkeypatch, tmp_path)
     args = tui.build_arg_parser().parse_args(["--label-budget", "0"])
-    sizes = [(width, 40) for width in range(1, 21)] + [(80, height) for height in (1, 3, 5)]
+    heights = [(80, height) for height in (1, 3, 5)]
 
     async def drive() -> dict[str, list[tuple[tuple[int, int], int, str]]]:
         shown: dict[str, list[tuple[tuple[int, int], int, str]]] = {}
         app = tui.MetricsTUIApp(mr, tui.load_data(args, mr=mr), args=args)
         async with app.run_test(size=(80, 40)) as pilot:
-            await pilot.press("g")
-            for _ in tui.TrendChart.MODES:
-                chart = pilot.app.query_one(tui.TrendChart)
-                for size in sizes:
+            seen: dict[tuple[int, int], tuple[int, str]] = {}
+
+            async def narrow_at(size: tuple[int, int]) -> bool:
+                if size not in seen:
                     await pilot.resize_terminal(*size)
                     await pilot.pause()
-                    shown.setdefault(chart.mode, []).append(
-                        (size, chart.size.width, str(chart.render()))
-                    )
+                    chart = pilot.app.query_one(tui.TrendChart)
+                    seen[size] = (chart.size.width, str(chart.render()))
+                return seen[size][1] == TOO_NARROW
+
+            await pilot.press("g")
+            for _ in tui.TrendChart.MODES:
+                seen.clear()
+                # Narrowest width that draws the chart, assuming the message
+                # at 1 and the chart at 20; if either end is wrong the
+                # assertions below still see it, because both ends are kept.
+                narrow, wide = 1, 20
+                await narrow_at((narrow, 40))
+                await narrow_at((wide, 40))
+                while wide - narrow > 1:
+                    middle = (narrow + wide) // 2
+                    if await narrow_at((middle, 40)):
+                        narrow = middle
+                    else:
+                        wide = middle
+                for width in [*range(max(1, wide - 2), wide + 3), 120]:
+                    await narrow_at((width, 40))
+                for size in heights:
+                    await narrow_at(size)
+                widths = sorted(size for size in seen if size not in heights)
+                mode = pilot.app.query_one(tui.TrendChart).mode
+                shown[mode] = [(size, *seen[size]) for size in widths + heights]
                 await pilot.resize_terminal(80, 40)
                 await pilot.press("t")
         return shown
