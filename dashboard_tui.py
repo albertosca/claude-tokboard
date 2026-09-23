@@ -623,7 +623,13 @@ def _bar_width_on(canvas_width: int, days: int) -> float:
     lands in, and days a cell or more apart never land in the same one -
     only a canvas with fewer cells than days makes two days share, which no
     width can prevent.
+
+    A canvas of no cells at all - a widget no wider than its y labels and
+    frame - has no room for anything, and the formula would divide by zero
+    at -1 and turn positive again below it.
     """
+    if canvas_width < 1:
+        return 0.0
     cells = canvas_width - 1
     return min(BAR_WIDTH, (cells - 2 * (days - 1)) / (cells + 2))
 
@@ -833,6 +839,11 @@ class TrendChart(PlotextPlot):
             if self.size.width
             else None
         )
+        if canvas_width is not None and canvas_width < 1:
+            # No cell to draw a bar in. plotext itself raises on a canvas of
+            # 0 cells once there are bars to fill (a ValueError in
+            # get_fill_boundaries, measured 2026-09-23), so nothing is drawn.
+            return
         draw_stacked_bars(
             self.plt, labels, series_lists, series_labels, color, canvas_width=canvas_width
         )

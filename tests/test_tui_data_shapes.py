@@ -816,3 +816,17 @@ def test_bars_are_one_cell_wide_when_days_outnumber_cells():
     # 9 cells for 10 days: sharing is unavoidable, so no bar spreads over
     # more than the one cell it cannot help landing in.
     assert all(len(span) == 1 for span in _day_spans(12, 10))
+
+
+def test_no_room_for_a_canvas_draws_bars_of_no_width():
+    # A widget no wider than its y labels and frame leaves a canvas of 0
+    # cells or fewer. The width solved for it once divided by zero at -1
+    # and came out as plotext's full 0.8 below that (2026-09-23 review).
+    assert [tui._bar_width_on(canvas, 30) for canvas in (-3, -2, -1, 0)] == [0.0] * 4
+
+
+def test_the_chart_survives_every_narrow_width():
+    # A tmux pane can be dragged through any width; a crash in render kills
+    # the whole dashboard. Measured before the fix: 4 columns (canvas -1)
+    # raised ZeroDivisionError here, 5 (canvas 0) a ValueError in plotext.
+    _built_at(_alternating_days(30), [(width, 20) for width in range(1, 21)])
