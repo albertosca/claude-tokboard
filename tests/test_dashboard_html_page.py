@@ -41,6 +41,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
 import metrics_core as mr
 import metrics_core.labels as labels_module
+import metrics_core.paths as paths_module
 
 import dashboard_html
 import dashboard_html_assets
@@ -416,6 +417,17 @@ def isolate_main_from_the_real_filesystem(tmp_path: Path, monkeypatch: pytest.Mo
 
     Both are applied here so every path main() can touch lands under
     tmp_path, never under the real ~/.claude/metrics/.
+
+    CONFIG_FILE is the same "resolved from HOME at import time" shape as
+    the four above (paths.py's own module-level constant), and main() now
+    also reads it - via resolve_language(load_config(), os.environ) - to
+    decide which language to render in. Left unpatched, that call falls
+    through to the AUTHOR's real ~/.claude/metrics/config.json and the
+    real process locale, exactly the leak tests/test_tui_state.py's own
+    isolation guards against (fix round 1, 2026-09-23). Pinned the same
+    two ways here: config.json (the real mechanism) and the locale
+    variables (for symmetry, and so this file never depends on the
+    locale of the machine running it).
     """
     home = tmp_path / "home"
     (home / ".claude" / "metrics").mkdir(parents=True)
@@ -428,6 +440,12 @@ def isolate_main_from_the_real_filesystem(tmp_path: Path, monkeypatch: pytest.Mo
     monkeypatch.setattr(
         labels_module, "AGENT_LABELS_FILE", str(home / ".claude" / "metrics" / "agent_labels.json")
     )
+    config_path = home / ".claude" / "metrics" / "config.json"
+    monkeypatch.setattr(paths_module, "CONFIG_FILE", str(config_path))
+    config_path.write_text(json.dumps({"language": "pt"}))
+    monkeypatch.setenv("LC_ALL", "pt_BR.UTF-8")
+    monkeypatch.setenv("LC_MESSAGES", "")
+    monkeypatch.setenv("LANG", "")
     return home
 
 
