@@ -123,6 +123,7 @@ from typing import Any, NamedTuple, NoReturn
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
 from metrics_core.backfill import (
+    TimelineEntry,
     index_subagent_transcripts,
     index_transcripts,
     model_totals_as_of,
@@ -159,7 +160,7 @@ ID_KEY_FOR_TRANSCRIPT_KEY: dict[str, str] = {
 }
 
 ModelMap = dict[str, dict[str, int]]
-Timeline = list[tuple[str, bool, tuple[int, ...], str]]
+Timeline = list[TimelineEntry]
 
 # How far BELOW a natively written value a reconstruction may land and still
 # be accepted, per model and per token field. Strictly one-directional: see

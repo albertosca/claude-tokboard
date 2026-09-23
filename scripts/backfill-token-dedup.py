@@ -19,17 +19,22 @@ the FULL transcript would give every row of a session the same final total,
 every delta but the first would collapse to zero, and the trend chart would
 pile each session onto a single day. So each snapshot is recomputed AS OF ITS
 OWN timestamp_end: only transcript entries at or before that moment count,
-deduped by message.id exactly as the fixed parse_transcript does.
+each message once at its per-field PEAK, exactly as the fixed
+parse_transcript counts it (see transcript_ingest.usage_increment).
 
 Why the row selection is evidence-driven, not date-driven
 ---------------------------------------------------------
-For every row two values are reconstructed from the transcript: the DEDUPED
-as-of sum (what a correct hook would have written) and the RAW as-of sum
-(what the broken hook did write). A row is only rewritten when its stored
-value reproduces the RAW sum exactly - that is positive proof both that the
-row came from the broken hook and that the reconstruction models this row
-correctly. A row already equal to the DEDUPED sum is left alone, which is
-what makes a second run a no-op instead of a second correction.
+Two broken formulas are in the file. Before 2026-08-11 the hook summed
+every entry (RAW, inflated by replays); from then until 2026-09-23 it kept
+the FIRST entry of each message id, which handles replays but undercounts
+every streamed message, whose later entries carry the larger output_tokens.
+For every row three values are reconstructed from the transcript: the PEAK
+as-of sum (what a correct hook would have written) and the two broken ones.
+A row is only rewritten when its stored value reproduces RAW or FIRST - that
+is positive proof both of which hook wrote it and that the reconstruction
+models this row correctly - and the formula fixes the only direction it may
+move: a raw sum down, a first sum up. A row already equal to the PEAK is
+left alone, which is what makes a second run a no-op.
 
 Why correction is all-or-nothing PER SESSION
 --------------------------------------------
@@ -51,8 +56,10 @@ Safety
   session appends to it while this runs), so the snapshot prefix is verified
   unchanged at rename time and anything appended meanwhile is carried over
   verbatim - no line is ever lost;
-- only the four token fields may change, and only downwards; every other
-  field is compared byte-for-byte before the rename.
+- only the four token fields may change, each row only in its formula's
+  direction; tokens_by_model on a corrected row is rebuilt by the same rule
+  and must sum to the new totals; every other field is compared
+  byte-for-byte before the rename.
 
 subagents.jsonl
 ---------------
@@ -88,6 +95,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 from metrics_core.backfill import (
     BACKFILL_STATE_FILE,
     DEFAULT_CUTOFF,
+    FIRST,
     UNIT_ID_KEYS,
     apply_plan,
     daily_totals,
@@ -95,7 +103,7 @@ from metrics_core.backfill import (
     find_nonmonotonic_sessions,
     index_subagent_transcripts,
     index_transcripts,
-    plan_corrections,
+    plan_corrections_by_formula,
     sha256_bytes,
     sha256_of,
     subagent_transcripts,
@@ -103,6 +111,7 @@ from metrics_core.backfill import (
     verify_fields,
     write_backfill_state,
 )
+from metrics_core.transcript_ingest import TOKEN_FIELDS
 
 METRICS_FILES = {
     kind: str(Path(f"~/.claude/metrics/{kind}.jsonl").expanduser()) for kind in UNIT_ID_KEYS
@@ -125,6 +134,36 @@ def print_daily_comparison(
         print(f"  {day:<12}{b:>18,}{a:>18,}{factor:>10}")
     collapsed = [d for d in before_map if before_map[d] > 0 and after_map.get(d, 0) == 0]
     print(f"  days that collapsed to zero: {len(collapsed)} {collapsed if collapsed else ''}")
+
+
+def print_field_deltas(before: list[dict[str, Any]], after: list[dict[str, Any]]) -> None:
+    """Net change per token field, so a correction that raises output while
+    lowering cache is visible as both, not netted into one grand total."""
+    print("Net change per field:")
+    for field in TOKEN_FIELDS:
+        delta = sum(
+            (new.get(field) or 0) - (old.get(field) or 0)
+            for old, new in zip(before, after, strict=True)
+        )
+        print(f"  {field:<24}{delta:>+18,}")
+
+
+def unreconciled_maps(records: list[dict[str, Any]], plan: dict[int, list[int]]) -> list[str]:
+    """Problems for any corrected row whose tokens_by_model does not sum,
+    field by field, to that row's own four totals."""
+    problems = []
+    for index in sorted(plan):
+        model_map = records[index].get("tokens_by_model")
+        if model_map is None:
+            continue
+        for field in TOKEN_FIELDS:
+            mapped = sum(bucket.get(field, 0) for bucket in model_map.values())
+            if mapped != records[index].get(field, 0):
+                problems.append(
+                    f"line {index + 1}: tokens_by_model {field} sums to {mapped}, "
+                    f"the row says {records[index].get(field, 0)}"
+                )
+    return problems
 
 
 def print_summary(
@@ -152,7 +191,9 @@ def print_summary(
         )
         buckets: collections.Counter[str] = collections.Counter()
         for factor in factors:
-            if factor < 1.001:
+            if factor < 0.999:
+                buckets["<1.00x (undercount raised)"] += 1
+            elif factor < 1.001:
                 buckets["1.00x (no duplicates)"] += 1
             elif factor < 1.5:
                 buckets["1.00-1.50x"] += 1
@@ -320,24 +361,40 @@ def main() -> int:
         transcripts = index_transcripts(args.projects_dir)
         print(f"indexed {len(transcripts)} session transcripts under {args.projects_dir}")
 
-    plan, stats, factors = plan_corrections(records, transcripts, args.cutoff, id_key)
-    corrected = apply_plan(records, plan)
+    result = plan_corrections_by_formula(records, transcripts, args.cutoff, id_key)
+    plan, stats, factors = result.values, result.stats, result.factors
+    corrected = apply_plan(records, plan, result.model_maps)
 
     before_total = sum(token_sum(r) for r in records)
     after_total = sum(token_sum(r) for r in corrected)
     print_summary(stats, factors, before_total, after_total, len(plan), len(raw_lines))
+    print_field_deltas(records, corrected)
     print_daily_comparison(records, corrected, args.daily_days)
 
-    # apply_plan drops tokens_by_model from every row it corrects (the map
-    # was computed against the totals just replaced), so this is the call
-    # that causes that removal, and the one that declares it.
-    problems = verify_fields(records, corrected, allow_removed_keys=frozenset({"tokens_by_model"}))
+    # Each corrected row may move in ONE direction, fixed by the formula it
+    # was recognised as: a raw sum only down, a first-occurrence sum only
+    # up. tokens_by_model may change value on a corrected row (apply_plan
+    # rebuilt it by the same rule as the totals) but not appear, vanish or
+    # move - and the check below proves the rebuilt map sums to the new
+    # totals rather than trusting it.
+    rising = frozenset(index for index, formula in result.formulas.items() if formula == FIRST)
+    problems = verify_fields(
+        records,
+        corrected,
+        may_increase=rising,
+        allow_changed_keys=frozenset({"tokens_by_model"}),
+    )
+    problems += unreconciled_maps(corrected, plan)
     if problems:
         print(f"\nFIELD VERIFICATION FAILED ({len(problems)} problems):", file=sys.stderr)
         for problem in problems[:20]:
             print(f"  {problem}", file=sys.stderr)
         return 1
-    print("\nfield-by-field verification: only token fields changed, none increased")
+    print(
+        "\nfield-by-field verification: only token fields and tokens_by_model changed; "
+        f"{len(plan) - len(rising)} raw-sum row(s) only fell, {len(rising)} "
+        "first-occurrence row(s) only rose; every rewritten map sums to its row's totals"
+    )
 
     before_offenders = find_nonmonotonic_sessions(records, id_key)
     after_offenders = find_nonmonotonic_sessions(corrected, id_key)

@@ -100,6 +100,9 @@ def test_print_summary_pins_every_bucket_boundary_on_both_sides(script, capsys):
     # `< 1.5` from `< 1.4`, or `< 1.95` from `< 1.85`: every one of those
     # mid-range factors lands in the same bucket either way.
     factors = [
+        0.5,
+        0.998,  # 0.999 boundary: a first-occurrence sum raised
+        0.999,
         1.000,
         1.001,  # 1.001 boundary
         1.499,
@@ -110,7 +113,8 @@ def test_print_summary_pins_every_bucket_boundary_on_both_sides(script, capsys):
         2.05,  # 2.05 boundary
     ]
     expected_counts = {
-        "1.00x (no duplicates)": 1,  # 1.000
+        "<1.00x (undercount raised)": 2,  # 0.5, 0.998
+        "1.00x (no duplicates)": 2,  # 0.999, 1.000
         "1.00-1.50x": 2,  # 1.001, 1.499
         "1.50-1.95x": 2,  # 1.5, 1.94
         "~2.00x": 2,  # 1.95, 2.049
@@ -994,6 +998,92 @@ def test_main_defaults_the_metrics_file_from_the_kind(tmp_path, script, monkeypa
     assert script.main() == 0
 
     assert f"read 3 lines from {paths['metrics']}" in capsys.readouterr().out
+
+
+def _streamed_fixture(tmp_path: Path) -> dict[str, Path]:
+    """One subagent whose single message was streamed as three entries
+    (output 3 -> 40 -> 179), stored the way the 2026-08-11 hook wrote it:
+    the FIRST entry only, with a per-model map built the same way."""
+    paths = _subagents_fixture(tmp_path)
+    agents = paths["projects"] / "some-project" / "parent" / "subagents"
+    entries = [
+        (
+            f"2026-08-02T10:00:0{second}",
+            "s1",
+            {
+                "input_tokens": 2,
+                "output_tokens": out,
+                "cache_read_input_tokens": 1000,
+                "cache_creation_input_tokens": 50,
+            },
+        )
+        for second, out in enumerate([3, 40, 179])
+    ]
+    _write_transcript(agents / "agent-s1.jsonl", entries)
+    row = _subagent_row("s1", "2026-08-02T10:00:02", 40, 2, str(agents / "agent-s1.jsonl"))
+    row.update(output_tokens=3, cache_read_tokens=1000, cache_creation_tokens=50)
+    row["tokens_by_model"] = {
+        "unknown": {
+            "input_tokens": 2,
+            "output_tokens": 3,
+            "cache_read_tokens": 1000,
+            "cache_creation_tokens": 50,
+        }
+    }
+    paths["metrics"].write_text(json.dumps(row) + "\n")
+    return paths
+
+
+def test_main_raises_a_row_that_stored_the_first_occurrence_sum(
+    tmp_path, script, monkeypatch, capsys
+):
+    paths = _streamed_fixture(tmp_path)
+    monkeypatch.setattr("sys.argv", _subagents_argv(paths, "--apply"))
+
+    assert script.main() == 0
+
+    out = capsys.readouterr().out
+    assert "1  corrected: stored the first-occurrence sum" in out
+    assert "0 raw-sum row(s) only fell, 1 first-occurrence row(s) only rose" in out
+    assert "  output_tokens                         +176\n" in out
+    assert "  cache_read_tokens                       +0\n" in out
+    row = json.loads(paths["metrics"].read_text())
+    assert [row[f] for f in ("input_tokens", "output_tokens")] == [2, 179]
+    assert row["tokens_by_model"] == {
+        "unknown": {
+            "input_tokens": 2,
+            "output_tokens": 179,
+            "cache_read_tokens": 1000,
+            "cache_creation_tokens": 50,
+        }
+    }
+    assert list(row)[-2:] == ["agent_transcript_path", "tokens_by_model"]  # key kept in place
+
+
+def test_main_refuses_a_rewritten_map_that_does_not_reconcile(
+    tmp_path, script, monkeypatch, capsys
+):
+    # The planner builds the totals and the map by the same rule, so they
+    # agree; this is the check that proves it on every run instead of
+    # assuming it. A map off by one token must stop the write.
+    paths = _streamed_fixture(tmp_path)
+    before = paths["metrics"].read_bytes()
+    real_apply_plan = script.apply_plan
+
+    def off_by_one(records, plan, model_maps=None):
+        out = real_apply_plan(records, plan, model_maps)
+        for index in plan:
+            out[index]["tokens_by_model"]["unknown"]["output_tokens"] += 1
+        return out
+
+    monkeypatch.setattr(script, "apply_plan", off_by_one)
+    monkeypatch.setattr("sys.argv", _subagents_argv(paths, "--apply"))
+
+    assert script.main() == 1
+
+    err = capsys.readouterr().err
+    assert "line 1: tokens_by_model output_tokens sums to 180, the row says 179" in err
+    assert paths["metrics"].read_bytes() == before
 
 
 def test_main_names_ambiguous_subagent_transcripts(tmp_path, script, monkeypatch, capsys):

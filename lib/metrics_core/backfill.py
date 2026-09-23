@@ -12,11 +12,17 @@ import collections
 import hashlib
 import json
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, NamedTuple, cast
 
 from .i18n import t
 from .records import expand_records_to_daily_deltas
-from .transcript_ingest import SYNTHETIC_MODEL, TOKEN_FIELDS, USAGE_KEYS, model_key
+from .transcript_ingest import (
+    SYNTHETIC_MODEL,
+    TOKEN_FIELDS,
+    model_key,
+    usage_increment,
+    usage_values,
+)
 
 # Rows written on or after this date are left alone: the correction is only
 # claimed for the window it was verified on. Override with --cutoff once the
@@ -189,17 +195,51 @@ def file_kind_problem(records: list[dict[str, Any]], kind: str) -> str | None:
     return None
 
 
-def scan_transcript(path: str) -> list[tuple[str, bool, tuple[int, ...], str]]:
-    """Timeline of assistant entries, flagged as duplicates in FILE order.
+# One assistant entry: (timestamp, is_first_occurrence_duplicate, the four
+# usage values, model, message id).
+TimelineEntry = tuple[str, bool, tuple[int, ...], str, Any]
+ModelMap = dict[str, dict[str, int]]
 
-    Duplicate detection has to follow file order because that is what the
-    hook does; the flags are then reused for any as-of cutoff, which is
-    sound because a repeated message id was verified to always carry
-    identical usage numbers. Each entry also carries the model that
-    produced it (via the shared model_key rule), so callers can build
-    per-model as-of totals without re-reading the transcript.
+
+class PrefixSums(NamedTuple):
+    """Timestamp-sorted entries and three running totals over them.
+
+    `peak` is the correct total: each message id at its per-field peak (see
+    transcript_ingest.usage_increment). `first` and `raw` are the two
+    formulas earlier hooks wrote, kept so a stored row can be recognised as
+    the output of one of them: `first` counts only the first entry of each
+    id in file order (the hook from 2026-08-11 to 2026-09-23), `raw` sums
+    every entry (the hook before that).
     """
-    timeline: list[tuple[str, bool, tuple[int, ...], str]] = []
+
+    stamps: list[str]
+    peak: list[list[int]]
+    first: list[list[int]]
+    raw: list[list[int]]
+
+
+class AsOf(NamedTuple):
+    peak: list[int]
+    first: list[int]
+    raw: list[int]
+
+
+def scan_transcript(path: str) -> list[TimelineEntry]:
+    """Timeline of assistant entries, in file order.
+
+    Each entry keeps its message id, so the correct (peak) total can be
+    rebuilt for any subset of entries, and a first-occurrence flag fixed in
+    FILE order, which is what the 2026-08-11 hook did - kept only to
+    recognise rows that hook wrote. The flag is NOT a statement that later
+    entries of an id carry nothing new: an earlier version of this docstring
+    said a repeated message id "was verified to always carry identical usage
+    numbers", which is true of replays and false of streamed responses, whose
+    entries grow in output_tokens (measured in usage_increment's docstring).
+    Each entry also carries the model that produced it (via the shared
+    model_key rule), so callers can build per-model as-of totals without
+    re-reading the transcript.
+    """
+    timeline: list[TimelineEntry] = []
     seen_ids: set[Any] = set()
     with Path(path).open() as f:
         for line in f:
@@ -213,78 +253,84 @@ def scan_transcript(path: str) -> list[tuple[str, bool, tuple[int, ...], str]]:
             if entry.get("type") != "assistant":
                 continue
             message = entry.get("message") or {}
-            usage = message.get("usage") or {}
-            values = tuple(usage.get(USAGE_KEYS[field], 0) or 0 for field in TOKEN_FIELDS)
             message_id = message.get("id")
             is_duplicate = message_id is not None and message_id in seen_ids
             if message_id is not None:
                 seen_ids.add(message_id)
             timeline.append(
-                (entry.get("timestamp") or "", is_duplicate, values, model_key(message))
+                (
+                    entry.get("timestamp") or "",
+                    is_duplicate,
+                    usage_values(message),
+                    model_key(message),
+                    message_id,
+                )
             )
     return timeline
 
 
-def build_prefix_sums(
-    timeline: list[tuple[str, bool, tuple[int, ...], str]],
-) -> tuple[list[str], list[list[int]], list[list[int]]]:
-    """Sorted timestamps plus running deduped/raw totals, for as-of lookups.
+def build_prefix_sums(timeline: list[TimelineEntry]) -> PrefixSums:
+    """Sorted timestamps plus running peak/first/raw totals, for as-of lookups.
 
     Timestamps are NOT monotonic in file order (a replayed turn keeps its
-    original timestamp), so they are sorted here. Summing a set of entries is
-    order-independent, and the duplicate flags were already fixed in file
-    order, so this changes nothing but the lookup cost.
+    original timestamp), so they are sorted here. Every total is
+    order-independent over a set of entries - a sum, a sum over entries
+    flagged in file order, or a per-id maximum built from increments - so
+    sorting changes nothing but the lookup cost.
     """
     ordered = sorted(timeline, key=lambda item: item[0])
     stamps = [item[0] for item in ordered]
-    deduped: list[list[int]] = [[0] * 4]
+    peak: list[list[int]] = [[0] * 4]
+    first: list[list[int]] = [[0] * 4]
     raw: list[list[int]] = [[0] * 4]
-    for _stamp, is_duplicate, values, _model in ordered:
-        previous_d = deduped[-1]
-        previous_r = raw[-1]
-        raw.append([previous_r[i] + values[i] for i in range(4)])
+    peaks: dict[Any, tuple[int, ...]] = {}
+    for _stamp, is_duplicate, values, _model, message_id in ordered:
+        increment = usage_increment(peaks, message_id, values)
+        peak.append([peak[-1][i] + increment[i] for i in range(4)])
+        raw.append([raw[-1][i] + values[i] for i in range(4)])
         if is_duplicate:
-            deduped.append(list(previous_d))
+            first.append(list(first[-1]))
         else:
-            deduped.append([previous_d[i] + values[i] for i in range(4)])
-    return stamps, deduped, raw
+            first.append([first[-1][i] + values[i] for i in range(4)])
+    return PrefixSums(stamps, peak, first, raw)
 
 
-def as_of(
-    stamps: list[str], deduped: list[list[int]], raw: list[list[int]], end_timestamp: str | None
-) -> tuple[list[int], list[int]]:
-    """Cumulative deduped and raw totals for entries at or before a moment."""
+def as_of(sums: PrefixSums, end_timestamp: str | None) -> AsOf:
+    """Cumulative peak, first and raw totals for entries at or before a moment."""
+    stamps = sums.stamps
     count = len(stamps) if end_timestamp is None else bisect.bisect_right(stamps, end_timestamp)
-    return deduped[count], raw[count]
+    return AsOf(sums.peak[count], sums.first[count], sums.raw[count])
 
 
-def model_totals_as_of(
-    timeline: list[tuple[str, bool, tuple[int, ...], str]], end_timestamp: str | None
-) -> dict[str, dict[str, int]]:
+def model_totals_as_of(timeline: list[TimelineEntry], end_timestamp: str | None) -> ModelMap:
     """Per-model cumulative totals for entries at or before a moment.
 
-    The per-model counterpart of as_of, and deliberately a linear scan rather
-    than a prefix-sum table: a session owns a few dozen snapshots against a
-    transcript of a few thousand entries, so the table would cost more to
-    build (one dict copy per entry per model) than the scans it saves.
+    The per-model counterpart of as_of's `peak`, and deliberately a linear
+    scan rather than a prefix-sum table: a session owns a few dozen snapshots
+    against a transcript of a few thousand entries, so the table would cost
+    more to build (one dict copy per entry per model) than the scans it saves.
 
-    Replayed entries are skipped via the duplicate flag scan_transcript
-    already computed, so a resumed session cannot inflate the model whose
-    turns were replayed.
+    Each message counts once at its per-field peak, through the same
+    usage_increment the hooks use - so a replay cannot inflate the model
+    whose turns were replayed, and a streamed message is not cut short at
+    its first content block.
     """
-    totals: dict[str, dict[str, int]] = {}
-    for stamp, is_duplicate, values, model in timeline:
-        if is_duplicate:
-            continue
+    totals: ModelMap = {}
+    peaks: dict[Any, tuple[int, ...]] = {}
+    for stamp, _is_duplicate, values, model, message_id in timeline:
         if end_timestamp is not None and stamp > end_timestamp:
             continue
-        if model == SYNTHETIC_MODEL and not any(values):
+        first_seen = message_id is None or message_id not in peaks
+        increment = usage_increment(peaks, message_id, values)
+        # The same bucket rule as parse_transcript, so a rebuilt map has the
+        # same keys as one the hook wrote.
+        if not any(increment) and not (first_seen and model != SYNTHETIC_MODEL):
             continue
         bucket = totals.get(model)
         if bucket is None:
             bucket = totals[model] = dict.fromkeys(TOKEN_FIELDS, 0)
         for index, field in enumerate(TOKEN_FIELDS):
-            bucket[field] += values[index]
+            bucket[field] += increment[index]
     return totals
 
 
@@ -292,26 +338,88 @@ def token_sum(record: dict[str, Any]) -> int:
     return sum(record.get(field, 0) or 0 for field in TOKEN_FIELDS)
 
 
-def plan_corrections(
+# The two formulas a stored row can be recognised as, and so corrected from.
+RAW = "raw"
+FIRST = "first"
+# Disposition keys a corrected row is counted under, by formula.
+CORRECTED_REASONS = {
+    RAW: "corrected: stored the raw sum (every entry)",
+    FIRST: "corrected: stored the first-occurrence sum",
+}
+
+
+class CorrectionPlan(NamedTuple):
+    """What plan_corrections_by_formula decided.
+
+    `values` maps a row index to its corrected four totals; `formulas` names
+    which prior formula each of those rows was recognised as (RAW or FIRST),
+    which fixes the only direction its values may move in; `model_maps` holds
+    each planned row's per-model map rebuilt by the same rule, for callers
+    that rewrite tokens_by_model alongside the totals.
+    """
+
+    values: dict[int, list[int]]
+    formulas: dict[int, str]
+    model_maps: dict[int, ModelMap]
+    stats: collections.Counter[str]
+    factors: list[float]
+
+
+def _recognise(stored: list[int], now: AsOf) -> str | None:
+    """Which prior formula produced `stored`, or None if neither did.
+
+    Exact matches first. Then the tolerance: entries timestamped before a
+    snapshot can land in the transcript after it, so the file no longer
+    reproduces that moment exactly (see NEITHER_TOLERANCE). It applies to
+    both formulas for that same reason; which one a near-miss is taken for
+    is the one it is closer to.
+    """
+    if stored == now.raw:
+        return RAW
+    if stored == now.first:
+        return FIRST
+    total = sum(stored)
+    drifts = {
+        formula: abs(total / sum(reference) - 1.0)
+        for formula, reference in ((RAW, now.raw), (FIRST, now.first))
+        if sum(reference)
+    }
+    near = [formula for formula, drift in drifts.items() if drift <= NEITHER_TOLERANCE]
+    if not near:
+        return None
+    return min(near, key=lambda formula: drifts[formula])
+
+
+def plan_corrections_by_formula(
     records: list[dict[str, Any]],
     transcripts: dict[str, str],
     cutoff: str,
     id_key: str = "session_id",
-) -> tuple[dict[int, list[int]], collections.Counter[str], list[float]]:
-    """Decide which sessions can be recomputed, and to what.
+) -> CorrectionPlan:
+    """Decide which units can be recomputed, from which formula, and to what.
 
-    Returns (plan, stats, factors) where plan maps a row index to its new
-    token values. Decisions are taken per UNIT - the rows sharing `id_key` -
-    and applied to all of its rows or none of them; every skip reason is
-    counted so the dry run shows exactly what was and was not touched.
+    Every row's stored totals are compared, as of its own timestamp_end,
+    with three reconstructions from its transcript: the correct PEAK total,
+    and the two formulas earlier hooks wrote - the RAW sum of every entry,
+    and the FIRST-occurrence sum. A row equal to the peak is already
+    correct. A row recognised as raw or first is corrected to the peak, and
+    the formula fixes the direction: a raw sum can only shrink (it counts
+    every entry the peak counts, and more), a first-occurrence sum can only
+    grow (the peak of an id is at least its first entry). A correction
+    moving the other way means the recognition was wrong, and the unit is
+    refused. A row recognised as neither refuses its unit too.
 
-    `transcripts` is keyed by that same id. For subagents.jsonl pass
-    id_key="agent_id" (see UNIT_ID_KEYS): the session_id on a subagent row
-    is its parent's.
+    Decisions are taken per UNIT - the rows sharing `id_key` - and applied to
+    all of its rows or none of them; every skip reason is counted so the dry
+    run shows exactly what was and was not touched. `transcripts` is keyed by
+    that same id. For subagents.jsonl pass id_key="agent_id" (see
+    UNIT_ID_KEYS): the session_id on a subagent row is its parent's.
     """
     stats: collections.Counter[str] = collections.Counter()
     factors: list[float] = []
     plan: dict[int, list[int]] = {}
+    formulas: dict[int, str] = {}
+    model_maps: dict[int, ModelMap] = {}
 
     rows_by_session: dict[Any, list[int]] = collections.defaultdict(list)
     for index, record in enumerate(records):
@@ -331,27 +439,29 @@ def plan_corrections(
             stats["untouched: session spans the cutoff"] += len(indexes)
             continue
 
-        stamps, deduped, raw = build_prefix_sums(scan_transcript(transcript))
-        proposals: dict[int, list[int]] = {}
+        timeline = scan_transcript(transcript)
+        sums = build_prefix_sums(timeline)
+        proposals: dict[int, tuple[list[int], str]] = {}
         already_correct = 0
         refused: str | None = None
         for index in indexes:
             record = records[index]
             stored = [record.get(field, 0) or 0 for field in TOKEN_FIELDS]
-            deduped_now, raw_now = as_of(stamps, deduped, raw, record["timestamp_end"])
-            if stored == deduped_now:
+            now = as_of(sums, record["timestamp_end"])
+            if stored == now.peak:
                 already_correct += 1
                 continue
-            if stored != raw_now:
-                total_raw = sum(raw_now)
-                drift = abs(sum(stored) / total_raw - 1.0) if total_raw else 1.0
-                if drift > NEITHER_TOLERANCE:
-                    refused = "untouched: session has a row matching neither formula"
-                    break
-            if any(deduped_now[i] > stored[i] for i in range(4)):
-                refused = "untouched: session where a correction would increase a field"
+            formula = _recognise(stored, now)
+            if formula is None:
+                refused = "untouched: session has a row matching neither formula"
                 break
-            proposals[index] = deduped_now
+            if formula == RAW and any(now.peak[i] > stored[i] for i in range(4)):
+                refused = "untouched: session where a correction would increase a raw sum"
+                break
+            if formula == FIRST and any(now.peak[i] < stored[i] for i in range(4)):
+                refused = "untouched: session where a correction would decrease a first sum"
+                break
+            proposals[index] = (now.peak, formula)
 
         if refused:
             stats[refused] += len(indexes)
@@ -360,15 +470,34 @@ def plan_corrections(
             stats["untouched: already correct"] += len(indexes)
             continue
 
-        stats["corrected"] += len(proposals)
         stats["untouched: already correct"] += already_correct
-        for index, values in proposals.items():
+        for index, (values, formula) in proposals.items():
+            stats[CORRECTED_REASONS[formula]] += 1
             plan[index] = values
+            formulas[index] = formula
+            model_maps[index] = model_totals_as_of(timeline, records[index]["timestamp_end"])
             before = sum(records[index].get(field, 0) or 0 for field in TOKEN_FIELDS)
+            # A planned row's peak is never zero: a zero peak means every
+            # entry up to that moment is zero, so the raw and first sums are
+            # zero too, and a non-zero stored row cannot be recognised as
+            # either (its drift from a zero reference is undefined and
+            # excluded). The guard stays for the division.
             after = sum(values)
-            if after:
+            if after:  # pragma: no branch - see the comment above
                 factors.append(before / after)
-    return plan, stats, factors
+    return CorrectionPlan(plan, formulas, model_maps, stats, factors)
+
+
+def plan_corrections(
+    records: list[dict[str, Any]],
+    transcripts: dict[str, str],
+    cutoff: str,
+    id_key: str = "session_id",
+) -> tuple[dict[int, list[int]], collections.Counter[str], list[float]]:
+    """(plan, stats, factors) of plan_corrections_by_formula - the values
+    each row is corrected to, without the formula and per-model detail."""
+    result = plan_corrections_by_formula(records, transcripts, cutoff, id_key)
+    return result.values, result.stats, result.factors
 
 
 def find_nonmonotonic_sessions(
@@ -401,17 +530,32 @@ def find_nonmonotonic_sessions(
     return offenders
 
 
-def apply_plan(records: list[dict[str, Any]], plan: dict[int, list[int]]) -> list[dict[str, Any]]:
+def apply_plan(
+    records: list[dict[str, Any]],
+    plan: dict[int, list[int]],
+    model_maps: dict[int, ModelMap] | None = None,
+) -> list[dict[str, Any]]:
+    """The records with each planned row's four totals replaced.
+
+    A planned row's tokens_by_model was computed against the totals being
+    replaced, so it is wrong afterwards. Where `model_maps` holds that row's
+    map rebuilt by the same rule as the new totals, it replaces the old one
+    in place (same key position); otherwise the key is dropped, because
+    absent is how this schema spells "unknown". A row that had no map does
+    not gain one here - filling maps is scripts/backfill-tokens-by-model.py's
+    job, behind its own gates.
+    """
     corrected = []
     for index, record in enumerate(records):
         if index in plan:
             updated = dict(record)
             for position, field in enumerate(TOKEN_FIELDS):
                 updated[field] = plan[index][position]
-            # The per-model map was computed against the totals just replaced, so
-            # it is now wrong and nothing here can recompute it (that needs the
-            # transcript). Absent is how this schema spells "unknown".
-            updated.pop("tokens_by_model", None)
+            if "tokens_by_model" in updated:
+                if model_maps is not None and index in model_maps:
+                    updated["tokens_by_model"] = model_maps[index]
+                else:
+                    del updated["tokens_by_model"]
             corrected.append(updated)
         else:
             corrected.append(record)
@@ -437,6 +581,8 @@ def verify_fields(
     after: list[dict[str, Any]],
     allow_new_keys: frozenset[str] = frozenset(),
     allow_removed_keys: frozenset[str] = frozenset(),
+    may_increase: frozenset[int] = frozenset(),
+    allow_changed_keys: frozenset[str] = frozenset(),
 ) -> list[str]:
     """Every non-token field must survive untouched, tokens may only drop.
 
@@ -444,6 +590,12 @@ def verify_fields(
     allow_removed_keys may disappear where it was present. Each direction is
     declared separately and grants only that direction - allowing a key's
     addition does not also allow its removal, nor the reverse.
+
+    `may_increase` names row indexes (0-based) whose tokens may only RISE
+    instead - rows recognised as first-occurrence sums, which undercount -
+    so every row still has exactly one permitted direction. A key in
+    allow_changed_keys may change its value, but not appear, disappear or
+    move.
     """
     if len(before) != len(after):
         return [f"record count changed: {len(before)} -> {len(after)}"]
@@ -465,8 +617,13 @@ def verify_fields(
             continue
         for key in old:
             if key in TOKEN_FIELDS:
-                if (new[key] or 0) > (old[key] or 0):
+                if index in may_increase:
+                    if (new[key] or 0) < (old[key] or 0):
+                        problems.append(f"line {index + 1}: {key} decreased")
+                elif (new[key] or 0) > (old[key] or 0):
                     problems.append(f"line {index + 1}: {key} increased")
+            elif key in allow_changed_keys:
+                continue
             elif old[key] != new[key]:
                 problems.append(f"line {index + 1}: {key} changed {old[key]!r} -> {new[key]!r}")
     return problems

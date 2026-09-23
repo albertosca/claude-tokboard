@@ -351,6 +351,70 @@ def test_parse_transcript_triple_duplicate_message_id_counted_exactly_once(scrip
     assert parsed["output_tokens"] == 20
 
 
+def _streamed(message_id: str, outputs: list[int], model: str = "model-alpha") -> list[str]:
+    # A streamed response is written as one transcript entry per content
+    # block, all sharing the message id. Input and cache usage repeat
+    # unchanged; output_tokens GROWS block by block (measured 2026-09-23 over
+    # every subagent transcript on disk: 28,509 ids, all differing only in
+    # output_tokens).
+    return [
+        json.dumps(
+            {
+                "type": "assistant",
+                "timestamp": f"2026-01-01T00:00:{second:02d}Z",
+                "message": {
+                    "id": message_id,
+                    "model": model,
+                    "usage": {
+                        "input_tokens": 3,
+                        "output_tokens": output,
+                        "cache_read_input_tokens": 1000,
+                        "cache_creation_input_tokens": 50,
+                    },
+                },
+            }
+        )
+        for second, output in enumerate(outputs)
+    ]
+
+
+def test_parse_transcript_counts_a_streamed_message_at_its_peak_usage(script, tmp_path):
+    # Keeping the FIRST entry of the id counted 3 output tokens for a message
+    # that produced 179 - the undercount that left subagent output 5.75x low.
+    path = tmp_path / "t.jsonl"
+    _write_lines(path, _streamed("m1", [3, 40, 179]))
+
+    parsed = script.parse_transcript(str(path))
+
+    assert parsed["turn_count"] == 1
+    assert parsed["input_tokens"] == 3
+    assert parsed["output_tokens"] == 179
+    assert parsed["cache_read_tokens"] == 1000
+    assert parsed["cache_creation_tokens"] == 50
+    assert parsed["tokens_by_model"] == {
+        "model-alpha": {
+            "input_tokens": 3,
+            "output_tokens": 179,
+            "cache_read_tokens": 1000,
+            "cache_creation_tokens": 50,
+        }
+    }
+
+
+def test_parse_transcript_takes_the_peak_even_when_the_last_entry_is_lower(script, tmp_path):
+    # Measured: 5 ids in one subagent transcript whose streamed series was
+    # replayed interleaved (2, 270, 2, 270, 2). Neither first nor last is
+    # right in general; the per-field maximum is.
+    path = tmp_path / "t.jsonl"
+    _write_lines(path, _streamed("m1", [2, 270, 2, 270, 2]))
+
+    parsed = script.parse_transcript(str(path))
+
+    assert parsed["output_tokens"] == 270
+    assert parsed["input_tokens"] == 3
+    assert parsed["tokens_by_model"]["model-alpha"]["output_tokens"] == 270
+
+
 def test_parse_transcript_entries_with_no_id_are_always_counted(script, tmp_path):
     path = tmp_path / "t.jsonl"
     entry = {

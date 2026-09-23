@@ -156,7 +156,7 @@ def test_scan_transcript_skips_blank_malformed_and_non_assistant_lines(tmp_path)
             + "\n"
         )
     timeline = mr.scan_transcript(str(path))
-    assert timeline == [("2026-08-01T10:00:00", False, (5, 0, 0, 0), "unknown")]
+    assert timeline == [("2026-08-01T10:00:00", False, (5, 0, 0, 0), "unknown", "msg-1")]
 
 
 def test_scan_transcript_never_flags_entries_with_no_message_id_as_duplicates(tmp_path):
@@ -169,7 +169,7 @@ def test_scan_transcript_never_flags_entries_with_no_message_id_as_duplicates(tm
         ],
     )
     timeline = mr.scan_transcript(str(path))
-    assert [is_dup for _, is_dup, _, _ in timeline] == [False, False]
+    assert [entry[1] for entry in timeline] == [False, False]
 
 
 def test_scan_transcript_flags_a_repeated_message_id_in_file_order(tmp_path):
@@ -183,10 +183,11 @@ def test_scan_transcript_flags_a_repeated_message_id_in_file_order(tmp_path):
         ],
     )
     timeline = mr.scan_transcript(str(path))
-    assert [is_dup for _, is_dup, _, _ in timeline] == [False, True, False]
+    assert [entry[1] for entry in timeline] == [False, True, False]
+    assert [entry[4] for entry in timeline] == ["msg-1", "msg-1", "msg-2"]
 
 
-def test_as_of_returns_deduped_and_raw_cumulative_totals_at_a_moment(tmp_path):
+def test_as_of_returns_peak_first_and_raw_cumulative_totals_at_a_moment(tmp_path):
     path = tmp_path / "t.jsonl"
     write_transcript(
         path,
@@ -196,13 +197,52 @@ def test_as_of_returns_deduped_and_raw_cumulative_totals_at_a_moment(tmp_path):
             ("2026-08-01T10:00:02", "msg-2", usage(input_tokens=50)),
         ],
     )
-    stamps, deduped, raw = mr.build_prefix_sums(mr.scan_transcript(str(path)))
-    deduped_now, raw_now = mr.as_of(stamps, deduped, raw, "2026-08-01T10:00:01")
-    assert deduped_now == [100, 0, 0, 0]
-    assert raw_now == [200, 0, 0, 0]
-    deduped_end, raw_end = mr.as_of(stamps, deduped, raw, None)
-    assert deduped_end == [150, 0, 0, 0]
-    assert raw_end == [250, 0, 0, 0]
+    sums = mr.build_prefix_sums(mr.scan_transcript(str(path)))
+    now = mr.as_of(sums, "2026-08-01T10:00:01")
+    assert now.peak == [100, 0, 0, 0]
+    assert now.first == [100, 0, 0, 0]
+    assert now.raw == [200, 0, 0, 0]
+    end = mr.as_of(sums, None)
+    assert end.peak == [150, 0, 0, 0]
+    assert end.first == [150, 0, 0, 0]
+    assert end.raw == [250, 0, 0, 0]
+
+
+def test_as_of_counts_a_streamed_message_at_its_peak_as_of_each_moment(tmp_path):
+    # One message streamed as three entries: output grows 3 -> 40 -> 179,
+    # input and cache repeat. The first-occurrence formula keeps 3; the
+    # peak as of each moment is the largest entry seen up to it.
+    path = tmp_path / "t.jsonl"
+    write_transcript(
+        path,
+        [
+            ("2026-08-01T10:00:00", "m1", usage(2, 3, 1000, 50)),
+            ("2026-08-01T10:00:01", "m1", usage(2, 40, 1000, 50)),
+            ("2026-08-01T10:00:02", "m1", usage(2, 179, 1000, 50)),
+        ],
+    )
+    sums = mr.build_prefix_sums(mr.scan_transcript(str(path)))
+    middle = mr.as_of(sums, "2026-08-01T10:00:01")
+    assert middle.peak == [2, 40, 1000, 50]
+    assert middle.first == [2, 3, 1000, 50]
+    assert middle.raw == [4, 43, 2000, 100]
+    assert mr.as_of(sums, None).peak == [2, 179, 1000, 50]
+
+
+def test_as_of_peak_does_not_depend_on_the_order_entries_are_in(tmp_path):
+    # Interleaved replay of a streamed message (measured on real data: 2,
+    # 270, 2, 270, 2) - neither the first nor the last entry is the peak.
+    path = tmp_path / "t.jsonl"
+    write_transcript(
+        path,
+        [
+            ("2026-08-01T10:00:00", "m1", usage(output_tokens=2)),
+            ("2026-08-01T10:00:01", "m1", usage(output_tokens=270)),
+            ("2026-08-01T10:00:02", "m1", usage(output_tokens=2)),
+        ],
+    )
+    sums = mr.build_prefix_sums(mr.scan_transcript(str(path)))
+    assert mr.as_of(sums, None).peak == [0, 270, 0, 0]
 
 
 def _model_line(stamp: str, message_id: str, model: str, **usage: int) -> str:
@@ -341,7 +381,7 @@ def test_plan_corrections_fixes_a_session_stored_as_the_raw_sum(tmp_path):
     records = [record("s1", "2026-08-01T10:00:01", 200, 0)]  # stored = raw
     plan, stats, factors = mr.plan_corrections(records, {"s1": str(path)}, cutoff="2026-08-13")
     assert plan == {0: [100, 0, 0, 0]}
-    assert stats["corrected"] == 1
+    assert stats["corrected: stored the raw sum (every entry)"] == 1
     assert factors == [2.0]
 
 
@@ -410,7 +450,7 @@ def test_plan_corrections_refuses_a_row_that_would_increase_a_field(tmp_path):
     records = [record("s1", "2026-08-01T10:00:01", 90, 110)]
     plan, stats, _factors = mr.plan_corrections(records, {"s1": str(path)}, cutoff="2026-08-13")
     assert plan == {}
-    assert stats["untouched: session where a correction would increase a field"] == 1
+    assert stats["untouched: session where a correction would increase a raw sum"] == 1
 
 
 def test_plan_corrections_accepts_a_row_within_tolerance_of_the_raw_sum(tmp_path):
@@ -426,7 +466,7 @@ def test_plan_corrections_accepts_a_row_within_tolerance_of_the_raw_sum(tmp_path
     records = [record("s1", "2026-08-01T10:00:01", 1990, 0)]
     plan, stats, _factors = mr.plan_corrections(records, {"s1": str(path)}, cutoff="2026-08-13")
     assert plan == {0: [1000, 0, 0, 0]}
-    assert stats["corrected"] == 1
+    assert stats["corrected: stored the raw sum (every entry)"] == 1
 
 
 def test_plan_corrections_accepts_a_row_just_inside_the_tolerance_boundary(tmp_path):
@@ -449,7 +489,7 @@ def test_plan_corrections_accepts_a_row_just_inside_the_tolerance_boundary(tmp_p
     records = [record("s1", "2026-08-01T10:00:00", 10199, 0)]
     plan, stats, _factors = mr.plan_corrections(records, {"s1": str(path)}, cutoff="2026-08-13")
     assert plan == {0: [10000, 0, 0, 0]}
-    assert stats["corrected"] == 1
+    assert stats["corrected: stored the raw sum (every entry)"] == 1
 
 
 def test_plan_corrections_refuses_a_row_just_outside_the_tolerance_boundary(tmp_path):
@@ -504,17 +544,15 @@ def test_plan_corrections_refuses_a_row_matching_neither_formula(tmp_path):
     assert stats["untouched: session has a row matching neither formula"] == 1
 
 
-def test_plan_corrections_skips_the_factor_when_the_correction_is_to_zero(tmp_path):
-    # A replayed turn keeps its ORIGINAL timestamp (see scan_transcript's
-    # docstring), so file order and timestamp order can disagree: here
-    # msg-1 appears first in the FILE at the LATER timestamp (not a
-    # duplicate yet) and second in the file at the EARLIER timestamp (now
-    # flagged a duplicate). Sorted by timestamp for the prefix sums, the
-    # earlier moment is therefore a duplicate and contributes nothing to
-    # the deduped total - so the deduped-as-of-that-moment total is zero,
-    # while the raw hook still logged 100. That makes the correction
-    # target itself zero, without any refusal: exactly the `if after:`
-    # guard's reason to exist.
+def test_plan_corrections_counts_a_replay_filed_before_its_original_at_its_peak(tmp_path):
+    # A replayed turn keeps its ORIGINAL timestamp, so file order and
+    # timestamp order can disagree: here msg-1 appears first in the FILE at
+    # the LATER timestamp and second in the file at the EARLIER one. The
+    # first-occurrence formula flags the earlier-stamped entry a duplicate,
+    # so as of that moment it counted ZERO - and this test used to pin a
+    # "correction" of the stored 100 down to 0. Under the peak rule the
+    # message counts once at the largest entry up to the moment, which is
+    # 100: the row is already correct and nothing is rewritten.
     path = tmp_path / "s1.jsonl"
     write_transcript(
         path,
@@ -523,11 +561,189 @@ def test_plan_corrections_skips_the_factor_when_the_correction_is_to_zero(tmp_pa
             ("2026-08-01T10:00:00", "msg-1", usage(input_tokens=100)),  # earlier ts, replay
         ],
     )
-    records = [record("s1", "2026-08-01T10:00:00", 100, 0)]  # stored = raw-as-of the earlier moment
+    records = [record("s1", "2026-08-01T10:00:00", 100, 0)]
     plan, stats, factors = mr.plan_corrections(records, {"s1": str(path)}, cutoff="2026-08-13")
-    assert plan == {0: [0, 0, 0, 0]}
-    assert stats["corrected"] == 1
+    assert plan == {}
+    assert stats["untouched: already correct"] == 1
     assert factors == []
+
+
+# --- plan_corrections_by_formula: raw AND first-occurrence rows -------------
+
+
+def _streamed_transcript(path: Path) -> None:
+    # m1 streamed in three entries (output 3 -> 40 -> 179), m2 in one.
+    write_transcript(
+        path,
+        [
+            ("2026-08-01T10:00:00", "m1", usage(2, 3, 1000, 50)),
+            ("2026-08-01T10:00:01", "m1", usage(2, 40, 1000, 50)),
+            ("2026-08-01T10:00:02", "m1", usage(2, 179, 1000, 50)),
+            ("2026-08-01T10:00:03", "m2", usage(1, 7, 10, 0)),
+        ],
+    )
+
+
+def test_plan_raises_a_row_that_stored_the_first_occurrence_sum(tmp_path):
+    # What the hook wrote from 2026-08-11 on: each id's FIRST entry only.
+    path = tmp_path / "a1.jsonl"
+    _streamed_transcript(path)
+    records = [record("s1", "2026-08-01T10:00:03", 3, 10, 1010, 50)]  # first = [3, 10, 1010, 50]
+
+    result = mr.plan_corrections_by_formula(records, {"s1": str(path)}, cutoff="2026-08-13")
+
+    assert result.values == {0: [3, 186, 1010, 50]}
+    assert result.formulas == {0: "first"}
+    assert +result.stats == {"corrected: stored the first-occurrence sum": 1}
+    assert result.model_maps == {
+        0: {
+            "unknown": {
+                "input_tokens": 3,
+                "output_tokens": 186,
+                "cache_read_tokens": 1010,
+                "cache_creation_tokens": 50,
+            }
+        }
+    }
+
+
+def test_plan_lowers_a_row_that_stored_the_raw_sum_of_a_streamed_message(tmp_path):
+    # What the hook wrote before 2026-08-11: every entry. The correction is
+    # to the PEAK, not to the first entry - the old reconstruction's target.
+    path = tmp_path / "a1.jsonl"
+    _streamed_transcript(path)
+    records = [record("s1", "2026-08-01T10:00:03", 7, 229, 3010, 150)]  # raw
+
+    result = mr.plan_corrections_by_formula(records, {"s1": str(path)}, cutoff="2026-08-13")
+
+    assert result.values == {0: [3, 186, 1010, 50]}
+    assert result.formulas == {0: "raw"}
+
+
+def test_plan_leaves_a_row_already_at_the_peak_alone(tmp_path):
+    path = tmp_path / "a1.jsonl"
+    _streamed_transcript(path)
+    records = [record("s1", "2026-08-01T10:00:03", 3, 186, 1010, 50)]
+
+    result = mr.plan_corrections_by_formula(records, {"s1": str(path)}, cutoff="2026-08-13")
+
+    assert result.values == {}
+    assert result.stats["untouched: already correct"] == 1
+
+
+def test_plan_corrects_each_snapshot_of_a_unit_from_its_own_formula(tmp_path):
+    # One unit whose early snapshot was written by the raw hook and whose
+    # later one by the first-occurrence hook - the deploy landed between
+    # them. Both are corrected, each to its own as-of peak.
+    path = tmp_path / "a1.jsonl"
+    _streamed_transcript(path)
+    records = [
+        record("s1", "2026-08-01T10:00:02", 6, 222, 3000, 150),  # raw as of 10:00:02
+        record("s1", "2026-08-01T10:00:03", 3, 10, 1010, 50),  # first as of 10:00:03
+    ]
+
+    result = mr.plan_corrections_by_formula(records, {"s1": str(path)}, cutoff="2026-08-13")
+
+    assert result.values == {0: [2, 179, 1000, 50], 1: [3, 186, 1010, 50]}
+    assert result.formulas == {0: "raw", 1: "first"}
+
+
+def test_plan_refuses_a_first_sum_whose_correction_would_lower_a_field(tmp_path):
+    # Total within tolerance of the first-occurrence sum, but one field sits
+    # above the peak: a first sum can only undercount, so this is not one.
+    path = tmp_path / "a1.jsonl"
+    write_transcript(
+        path,
+        [
+            ("2026-08-01T10:00:00", "m1", usage(0, 100, 0, 0)),
+            ("2026-08-01T10:00:01", "m1", usage(0, 101, 0, 0)),
+            ("2026-08-01T10:00:02", "m2", usage(0, 900, 0, 0)),
+        ],
+    )
+    # first = [0, 1000, 0, 0], raw = [0, 1101, 0, 0], peak = [0, 1001, 0, 0]
+    records = [record("s1", "2026-08-01T10:00:02", 5, 995, 0, 0)]
+
+    result = mr.plan_corrections_by_formula(records, {"s1": str(path)}, cutoff="2026-08-13")
+
+    assert result.values == {}
+    assert result.stats["untouched: session where a correction would decrease a first sum"] == 1
+
+
+def test_plan_takes_a_near_miss_for_the_formula_it_is_closer_to(tmp_path):
+    # 0.5% off the first-occurrence sum and ~9% off the raw one: a first sum.
+    path = tmp_path / "a1.jsonl"
+    write_transcript(
+        path,
+        [
+            ("2026-08-01T10:00:00", "m1", usage(0, 100, 0, 0)),
+            ("2026-08-01T10:00:01", "m1", usage(0, 101, 0, 0)),
+            ("2026-08-01T10:00:02", "m2", usage(0, 900, 0, 0)),
+        ],
+    )
+    records = [record("s1", "2026-08-01T10:00:02", 0, 1000 - 5, 0, 0)]
+
+    result = mr.plan_corrections_by_formula(records, {"s1": str(path)}, cutoff="2026-08-13")
+
+    assert result.formulas == {0: "first"}
+    assert result.values == {0: [0, 1001, 0, 0]}
+
+
+def test_model_totals_as_of_counts_a_streamed_message_at_its_peak(tmp_path):
+    path = tmp_path / "t.jsonl"
+    lines = [
+        _model_line("2026-08-01T10:00:00", "m1", "model-alpha", output_tokens=3),
+        _model_line("2026-08-01T10:00:01", "m1", "model-alpha", output_tokens=179),
+        _model_line("2026-08-01T10:00:02", "m1", "model-alpha", output_tokens=2),
+    ]
+    path.write_text("\n".join(lines) + "\n")
+    timeline = mr.scan_transcript(str(path))
+
+    assert mr.model_totals_as_of(timeline, None)["model-alpha"]["output_tokens"] == 179
+    early = mr.model_totals_as_of(timeline, "2026-08-01T10:00:00")
+    assert early["model-alpha"]["output_tokens"] == 3
+
+
+def test_apply_plan_replaces_a_map_it_was_given_in_place_and_never_adds_one():
+    records = [
+        dict(record("s1", "x", 5, 5), tokens_by_model={"x": {}}, tail=1),
+        record("s2", "x", 5, 5),
+        dict(record("s3", "x", 5, 5), tokens_by_model={"x": {}}),
+    ]
+    new_map = {"m": dict.fromkeys(mr.TOKEN_FIELDS, 1)}
+    out = mr.apply_plan(records, {0: [1, 1, 1, 1], 1: [1, 1, 1, 1], 2: [1, 1, 1, 1]}, {0: new_map})
+    assert out[0]["tokens_by_model"] == new_map
+    assert list(out[0]) == list(records[0])  # same key position
+    assert "tokens_by_model" not in out[1]
+    assert "tokens_by_model" not in out[2]  # no rebuilt map: dropped, as before
+
+
+def test_verify_fields_lets_a_may_increase_row_rise_and_nothing_else():
+    before: list[dict[str, Any]] = [
+        {"input_tokens": 10, "tokens_by_model": {"a": 1}},
+        {"input_tokens": 10},
+    ]
+    rose: list[dict[str, Any]] = [
+        {"input_tokens": 12, "tokens_by_model": {"a": 2}},
+        {"input_tokens": 12},
+    ]
+    problems = mr.verify_fields(
+        before, rose, may_increase=frozenset({0}), allow_changed_keys=frozenset({"tokens_by_model"})
+    )
+    assert problems == ["line 2: input_tokens increased"]
+
+    fell: list[dict[str, Any]] = [
+        {"input_tokens": 8, "tokens_by_model": {"a": 1}},
+        {"input_tokens": 8},
+    ]
+    problems = mr.verify_fields(before, fell, may_increase=frozenset({0}))
+    assert problems == ["line 1: input_tokens decreased"]
+
+    moved: list[dict[str, Any]] = [
+        {"tokens_by_model": {"a": 1}, "input_tokens": 10},
+        {"input_tokens": 10},
+    ]
+    problems = mr.verify_fields(before, moved, allow_changed_keys=frozenset({"tokens_by_model"}))
+    assert problems == ["line 1: key order changed"]
 
 
 # --- find_nonmonotonic_sessions -----------------------------------------
@@ -597,7 +813,7 @@ def test_plan_corrections_corrects_two_subagents_of_one_parent_independently(tmp
     )
 
     assert plan == {0: [100, 0, 0, 0], 1: [30, 0, 0, 0]}
-    assert +stats == {"corrected": 2}  # unary + drops zero counts
+    assert +stats == {"corrected: stored the raw sum (every entry)": 2}  # unary + drops zero counts
     assert sorted(factors) == [2.0, 3.0]
 
 

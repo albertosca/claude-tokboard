@@ -63,6 +63,55 @@ def model_key(message: dict[str, Any]) -> str:
     return raw if isinstance(raw, str) else "unknown"
 
 
+def usage_values(message: dict[str, Any]) -> tuple[int, ...]:
+    """The four token counts of one assistant message, in TOKEN_FIELDS order."""
+    usage = message.get("usage") or {}
+    return tuple(usage.get(USAGE_KEYS[field], 0) or 0 for field in TOKEN_FIELDS)
+
+
+def usage_increment(
+    peaks: dict[Any, tuple[int, ...]], message_id: Any, values: tuple[int, ...]
+) -> tuple[int, ...]:
+    """What one assistant entry adds to a running total: a message counts at
+    its PER-FIELD PEAK across every entry that carries its id.
+
+    One message id appears in a transcript many times, for two reasons. A
+    resumed or compacted session REPLAYS earlier turns, with identical usage
+    (measured 2026-08-11: 47.2% of all token volume in the twelve largest
+    transcripts was a repeat, an overall 1.89x when every entry was summed).
+    And a streamed response is written as one entry PER CONTENT BLOCK, whose
+    output_tokens grow block by block while input and cache usage repeat
+    unchanged. Measured 2026-09-23 over every transcript on disk: 28,509 of
+    39,335 repeated ids in subagent transcripts differ, all of them only in
+    output_tokens; 0 of 21,280 in session transcripts do.
+
+    Counting the first entry of an id, as this module did from 2026-08-11 to
+    2026-09-23, handles replays and undercounts every streamed message - the
+    same subagent transcripts summed to 5,196,123 output tokens that way
+    against 31,540,502 at the peak. The last entry is not safe either: 5 ids
+    were replayed interleaved (2, 270, 2, 270, 2), so file order does not
+    end on the peak. The per-field maximum is right in every case measured,
+    and it does not depend on the order entries are visited in: summing the
+    increments this returns over any subset of an id's entries gives the
+    maximum over that subset, which is what makes as-of reconstruction over
+    timestamp-sorted entries agree with a hook that read the file in order.
+
+    Entries with no id cannot be matched to anything, so they always count
+    in full. `peaks` is the caller's per-transcript state, updated in place.
+    """
+    if message_id is None:
+        return values
+    peak = peaks.get(message_id)
+    if peak is None:
+        peaks[message_id] = values
+        return values
+    # Indexed rather than zip(..., strict=True): the hooks import this module
+    # and may run under macOS's bundled Python 3.9, which has no `strict`.
+    fields = range(len(values))
+    peaks[message_id] = tuple(max(values[i], peak[i]) for i in fields)
+    return tuple(max(0, values[i] - peak[i]) for i in fields)
+
+
 def parse_transcript(path: str) -> dict[str, Any]:
     input_tokens = 0
     output_tokens = 0
@@ -70,7 +119,7 @@ def parse_transcript(path: str) -> dict[str, Any]:
     cache_creation_tokens = 0
     turn_count = 0
     tool_call_count = 0
-    seen_message_ids = set()
+    peaks: dict[Any, tuple[int, ...]] = {}
     first_timestamp = None
     last_timestamp = None
     git_branch = None
@@ -99,24 +148,17 @@ def parse_transcript(path: str) -> dict[str, Any]:
             if entry.get("type") == "assistant":
                 message = entry.get("message") or {}
                 # One assistant message can appear many times in a single
-                # transcript: resuming or compacting a session replays
-                # earlier turns back into the file. Summing every
-                # occurrence inflated every number this tool reports -
-                # measured 2026-08-11 across the twelve largest
-                # transcripts, 47.2% of all token volume was a repeat of
-                # an id already counted, an overall 1.89x. Entries with no
-                # id can't be deduped, so they are always counted.
+                # transcript - replayed by a resume or compaction, and
+                # split into one entry per content block when streamed.
+                # It counts once, at its per-field peak: see
+                # usage_increment for the measurements behind the rule.
                 message_id = message.get("id")
-                if message_id is not None:
-                    if message_id in seen_message_ids:
-                        continue
-                    seen_message_ids.add(message_id)
-                turn_count += 1
-                usage = message.get("usage") or {}
-                input_tokens += usage.get("input_tokens", 0) or 0
-                output_tokens += usage.get("output_tokens", 0) or 0
-                cache_read_tokens += usage.get("cache_read_input_tokens", 0) or 0
-                cache_creation_tokens += usage.get("cache_creation_input_tokens", 0) or 0
+                first_occurrence = message_id is None or message_id not in peaks
+                increment = usage_increment(peaks, message_id, usage_values(message))
+                input_tokens += increment[0]
+                output_tokens += increment[1]
+                cache_read_tokens += increment[2]
+                cache_creation_tokens += increment[3]
 
                 # Per-message attribution, keyed by the model that produced
                 # the message (the same session routinely uses several).
@@ -135,17 +177,29 @@ def parse_transcript(path: str) -> dict[str, Any]:
                 # invariant is therefore structural, not contingent on that
                 # measurement holding forever. Raw model id, deliberately:
                 # shortening is a display concern, and storing raw means a
-                # display change never needs a re-backfill.
+                # display change never needs a re-backfill. A bucket gains
+                # exactly the increment the totals gained, so the two stay
+                # equal under the peak rule as they did under the old one;
+                # a later entry of a message only touches a bucket when it
+                # raises the message's peak.
                 model = model_key(message)
-                if model != SYNTHETIC_MODEL or any(
-                    usage.get(USAGE_KEYS[field], 0) or 0 for field in TOKEN_FIELDS
-                ):
+                if any(increment) or (first_occurrence and model != SYNTHETIC_MODEL):
                     bucket = tokens_by_model.get(model)
                     if bucket is None:
                         bucket = tokens_by_model[model] = dict.fromkeys(TOKEN_FIELDS, 0)
-                    for field in TOKEN_FIELDS:
-                        bucket[field] += usage.get(USAGE_KEYS[field], 0) or 0
+                    for position, field in enumerate(TOKEN_FIELDS):
+                        bucket[field] += increment[position]
 
+                if not first_occurrence:
+                    # turn_count and tool_call_count keep their
+                    # first-occurrence counting unchanged. Known and NOT
+                    # fixed here (2026-09-23): a streamed message carries
+                    # its tool_use blocks in its LATER entries too, so
+                    # tool_call_count undercounts - over every transcript
+                    # on disk, 7,856 of 31,154 distinct tool_use blocks in
+                    # sessions and 12,005 of 57,374 in subagents.
+                    continue
+                turn_count += 1
                 content = message.get("content") or []
                 if isinstance(content, list):
                     for block in content:
