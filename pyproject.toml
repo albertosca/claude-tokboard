@@ -26,12 +26,9 @@ mypy_path = "lib"
 # requirements-tui.txt / scripts/setup-tui-venv.sh - two installs, same
 # versions, different audiences). dashboard_tui.py's own real types are
 # adopted (2026-09-13, backlog item 2026-09-01): no override needed for
-# either package. The two type: ignore[call-arg]/[arg-type] pairs left in
-# dashboard_tui.py's stacked_bar() calls are a real upstream stub bug, not
-# local debt - textual_plotext's hand-written plotext/_figure.pyi declares
-# stacked_bar(label=...) with a scalar `color`, but the vendored runtime it
-# wraps takes `labels=` (plural) and a color list, confirmed by
-# inspect.signature against the installed plotext.stacked_bar directly.
+# either package. dashboard_tui.py no longer calls plotext's stacked_bar()
+# (2026-09-22: draw_stacked_bars layers plain bar() calls instead), so the
+# two type: ignore pairs its wrong upstream stub once needed are gone too.
 # See docs/superpowers/BACKLOG.md's 2026-09-01 entry for the full history
 # of the 24 findings this phase closed.
 [[tool.mypy.overrides]]

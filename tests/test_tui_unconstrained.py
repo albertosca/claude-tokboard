@@ -95,10 +95,12 @@ class _RecordingPlt:
     is under test here is which bars reach plotext at all."""
 
     def __init__(self) -> None:
-        self.bars: list[tuple[list[int], list[int], str, str]] = []
+        self.bars: list[tuple[list[int], list[int], str | None, str | None]] = []
         self.ticks: tuple[list[int], list[str]] | None = None
 
-    def bar(self, xs: list[int], ys: list[int], label: str, color: str) -> None:
+    def bar(
+        self, xs: list[int], ys: list[int], label: str | None, color: str | None, width: float
+    ) -> None:
         self.bars.append((xs, ys, label, color))
 
     def xticks(self, xs: list[int], labels: list[str]) -> None:

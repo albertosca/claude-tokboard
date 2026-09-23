@@ -522,16 +522,49 @@ def draw_stacked_bars(
     for series in series_lists:
         running = [a + b for a, b in zip(running, series, strict=True)]
         cumulative.append(running)
+    drew_any = False
     for i in reversed(range(len(series_lists))):
         shown = [j for j, value in enumerate(series_lists[i]) if value > 0]
         if shown:
+            drew_any = True
+            positions = [xs[j] for j in shown]
             plt.bar(
-                [xs[j] for j in shown],
+                positions,
                 [cumulative[i][j] for j in shown],
                 label=series_labels[i],
                 color=colors[i],
+                width=_bar_width_for(positions),
             )
+    if not drew_any:
+        # Not one token in the whole window. plotext with no data renders a
+        # bare frame with no dates, which reads as broken. A zero-height
+        # layer is invisible - a zero bar only paints its base cell with the
+        # background, and here there is nothing under it to erase - and it
+        # is enough data for plotext to draw the axis.
+        plt.bar(xs, [0] * len(xs), label=None, color=None, width=_bar_width_for(xs))
     plt.xticks(xs, xlabels)
+
+
+# plotext's own default bar width (plotext/_default.py: bar_width = 4 / 5).
+BAR_WIDTH = 0.8
+
+
+def _bar_width_for(positions: list[int]) -> float:
+    """The `width` to pass so these bars come out BAR_WIDTH wide.
+
+    plotext does not draw `width` as given: it multiplies it by the average
+    spacing of the x values in that one call (plotext/_utility.py, bars():
+    half = width / 2 * (max - min) / (n - 1) whenever n > 1). A series drawn
+    without its zero days has wider spacing, so without this its bars come
+    out wider too - three times as wide for a series present on the first
+    and last of four days, painting its colour across the two days between,
+    where it has nothing. Found in review on 2026-09-23. Dividing by that
+    same average spacing cancels it exactly, even when the spacing is
+    irregular, because plotext uses the average and so does this.
+    """
+    if len(positions) < 2:
+        return BAR_WIDTH
+    return BAR_WIDTH / ((positions[-1] - positions[0]) / (len(positions) - 1))
 
 
 class TrendChart(PlotextPlot):
@@ -621,9 +654,6 @@ class TrendChart(PlotextPlot):
                 for k in series_keys:
                     series_data[k].append(day_totals[k])
             series_lists = [series_data[k] for k in series_keys]
-            day_totals_list = [
-                sum(series_data[k][i] for k in series_keys) for i in range(len(days))
-            ]
             series_labels = [pane_series_label(self.mr, k) for k in series_keys]
             palette = [
                 PANE_COLORS[i] if i < len(PANE_COLORS) else PANE_OTHER_COLOR
@@ -682,10 +712,6 @@ class TrendChart(PlotextPlot):
             ]
             cache_creation_totals = [
                 sum(r.get("cache_creation_tokens", 0) or 0 for r in d["records"]) for d in days
-            ]
-            day_totals_list = [
-                input_totals[i] + output_totals[i] + cache_read_totals[i] + cache_creation_totals[i]
-                for i in range(len(days))
             ]
             if self.highlighted:
                 color = [
@@ -870,6 +896,17 @@ def build_arg_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def legend_visibility(mode: str) -> dict[str, bool]:
+    """Which legend widgets belong to a chart mode. The "model" mode has
+    none: its bands are labelled by plotext's own legend, since nothing
+    highlights them the way the other two modes' clickable chips do."""
+    return {
+        "quota": mode == "tokens",
+        "composition": mode == "tokens",
+        "projects": mode == "pane",
+    }
+
+
 class MetricsTUIApp(App[None]):
     # Without this Textual titles the terminal window after the class, so
     # it read "MetricsTUIApp" - a class name, in the one place a user reads
@@ -931,9 +968,20 @@ class MetricsTUIApp(App[None]):
                 yield SessionDetailPanel(self.mr)
             with TabPane("Panorama", id="tab-panorama"):
                 totals = self.mr.compute_token_type_totals(self.data["records"])
-                yield QuotaSummary(totals, self.mr)
-                yield CompositionLegend(totals, self.mr)
-                yield ProjectLegend(self.mr, self.data["chart_records"])
+                # Visibility is set here, as each legend is built, rather than
+                # fixed up afterwards: "p" recomposes every widget, and a fix-up
+                # queued behind the recompose could leave one frame with all
+                # three legends showing (2026-09-23 review).
+                shown = legend_visibility(self.chart_mode)
+                quota = QuotaSummary(totals, self.mr)
+                quota.display = shown["quota"]
+                yield quota
+                composition = CompositionLegend(totals, self.mr)
+                composition.display = shown["composition"]
+                yield composition
+                projects = ProjectLegend(self.mr, self.data["chart_records"])
+                projects.display = shown["projects"]
+                yield projects
                 # In the mode the reader last picked, not the default: "p"
                 # recomposes every widget, and a fresh chart would silently
                 # drop the slicing they chose (2026-09-22).
@@ -949,16 +997,12 @@ class MetricsTUIApp(App[None]):
 
     def on_mount(self) -> None:
         self.query_one(Tree).focus()
-        self._sync_legend_visibility()
 
     def _sync_legend_visibility(self) -> None:
-        # The "model" mode has no widget of its own: its bands are labelled
-        # by plotext's own legend, since nothing highlights them the way the
-        # other two modes' clickable chips do. So both siblings hide.
-        mode = self.query_one(TrendChart).mode
-        self.query_one(QuotaSummary).display = mode == "tokens"
-        self.query_one(CompositionLegend).display = mode == "tokens"
-        self.query_one(ProjectLegend).display = mode == "pane"
+        shown = legend_visibility(self.query_one(TrendChart).mode)
+        self.query_one(QuotaSummary).display = shown["quota"]
+        self.query_one(CompositionLegend).display = shown["composition"]
+        self.query_one(ProjectLegend).display = shown["projects"]
 
     def on_tree_node_selected(self, event: Any) -> None:
         session_data = event.node.data
@@ -1050,9 +1094,6 @@ class MetricsTUIApp(App[None]):
             self.query_one(Tree).focus()
         else:
             self.query_one(TrendChart).focus()
-        # The recompose also rebuilt the three legend widgets, all visible
-        # by default; on_mount does not run again to hide the wrong ones.
-        self._sync_legend_visibility()
 
 
 def main() -> None:

@@ -518,3 +518,61 @@ def test_every_bar_with_data_still_reaches_the_zero_line():
     chart = tui.TrendChart(mr, records)
     chart.render_chart(now=datetime(2026, 8, 12, 0, 0).astimezone())
     assert len(_zero_row_colours(chart.plt.build())) == 2
+
+
+def _row_segments(line: str) -> list[tuple[str, int]]:
+    """Each run of bar cells on one rendered row, as (colour code, width)."""
+    return [(code, len(run)) for code, run in re.findall(r"\x1b\[([0-9;]*)m(█+)", line)]
+
+
+def test_a_series_that_skips_days_keeps_its_bars_the_width_of_everyone_elses():
+    # Four days. "big" is there every day; "small" only on the first and
+    # the last. plotext sizes a bar by the average spacing of the x values
+    # passed in ONE call, and a series is drawn without its zero days - so
+    # without compensation "small" gets bars three times as wide, painting
+    # its colour across days 2 and 3, where it has nothing. Found in review
+    # (2026-09-23): every render test before this one had two buckets,
+    # where a skipped day cannot happen.
+    def day(sid: str, n: int, tokens: int, project: str) -> dict[str, Any]:
+        return _august_session(sid, day=n, tokens=tokens) | {"project_path": project}
+
+    records = [day(f"b{n}", n, 100, "/p/big") for n in (1, 2, 3, 4)] + [
+        day("s1", 1, 40, "/p/small"),
+        day("s4", 4, 40, "/p/small"),
+    ]
+    chart = tui.TrendChart(mr, records)
+    chart.plt.plotsize(80, 16)
+    chart.render_chart(now=datetime(2026, 8, 30).astimezone())
+    raw = chart.plt.build()
+    big, small = _legend_colour(raw, "big"), _legend_colour(raw, "small")
+
+    zero = _row_segments(
+        next(line for line in raw.splitlines() if re.match(r"^\s*0┤", _ANSI.sub("", line)))
+    )
+    # Big is the bottom of every day's stack: four bars on the zero row, all
+    # big, and small nowhere on it.
+    assert [code for code, _ in zero] == [big] * 4
+    bar_width = zero[0][1]
+    assert {width for _, width in zero} == {bar_width}
+
+    # Above big's top, only small's two bars - each exactly one bar wide.
+    above_big = [
+        _row_segments(line)
+        for line in raw.splitlines()
+        if small in line and big not in line and "small" not in _ANSI.sub("", line)
+    ]
+    assert above_big, "the chart has no row above big's bars to check"
+    for segments in above_big:
+        assert segments == [(small, bar_width), (small, bar_width)], segments
+
+
+def test_a_window_with_no_tokens_at_all_still_draws_its_axis():
+    # Nothing to stack means no bar is drawn - and plotext with no data at
+    # all renders an empty frame with no dates, which reads as broken rather
+    # than as "nothing happened". Found in review (2026-09-23).
+    records = [_august_session("a", day=1, tokens=0), _august_session("b", day=5, tokens=0)]
+    chart = tui.TrendChart(mr, records)
+    chart.render_chart(now=datetime(2026, 8, 12, 0, 0).astimezone())
+    text = _ANSI.sub("", chart.plt.build())
+    assert "01/08" in text
+    assert "05/08" in text

@@ -47,13 +47,16 @@ BEATS: list[tuple[list[str], float]] = [
     (["g"], 2.6),  # chart, sliced by project
     (["t"], 2.4),  # by token type
     (["t"], 2.8),  # by model
-    (["p"], 2.0),  # a different period - the slicing survives it
-    (["p", "p", "p", "p"], 0.1),  # back round to "tudo", held a tenth of a second
     (["g"], 1.4),  # over to the session table
     (["down", "down", "down"], 0.7),
     (["enter"], 1.0),  # expand a project's group
     (["down"], 0.5),  # onto an actual session row, not the group node
     (["enter"], 2.6),  # its detail panel fills
+    (["g"], 1.4),  # back to the chart, still sliced by model
+    # One "p", last: every press raises its own notification, so cycling
+    # back round to the default period would stack five of them on screen.
+    # Last also means the session table above still shows every period.
+    (["p"], 2.6),  # a different period - the slicing survives it
 ]
 
 # Project names the committed fixture invents. At least one has to show up
