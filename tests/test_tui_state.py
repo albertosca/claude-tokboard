@@ -65,7 +65,8 @@ import metrics_core.backfill as backfill_module  # noqa: E402
 import metrics_core.labels as labels_module  # noqa: E402
 import metrics_core.paths as paths_module  # noqa: E402
 from fixtures.build_fixture import build_fixture  # noqa: E402
-from textual.widgets import Footer, TabbedContent  # noqa: E402
+from textual.css.query import NoMatches  # noqa: E402
+from textual.widgets import Footer, TabbedContent, Tree  # noqa: E402
 
 import dashboard_tui as tui  # noqa: E402
 
@@ -286,6 +287,74 @@ def test_tree_holds_focus_immediately_after_mount(monkeypatch, tmp_path):
         "on_mount's self.query_one(Tree).focus() must land focus on the "
         "session Tree rather than leaving Textual's own default"
     )
+
+
+# --- restoring focus before the recomposed Tree exists -------------------
+#
+# "p" recomposes the app and queues _restore_focus_after_period_cycle with
+# call_next. recompose only waits for the widgets it composes directly, not
+# for the Tree nested inside TabbedContent > TabPane, so on a loaded machine
+# the restore can run before the new Tree is mounted: query_one(Tree)
+# raised NoMatches and the exception took the whole app down (seen once in
+# 15 runs beside 128 busy loops, 2026-09-23). These tests produce that
+# ordering deterministically, by making the Tree absent for the first N
+# lookups, instead of by loading the machine.
+
+
+def _absent_for(app: Any, widget_type: type, lookups: int, calls: list[int]) -> Any:
+    real_query_one = app.query_one
+
+    def query_one(selector: Any, *args: Any, **kwargs: Any) -> Any:
+        if selector is widget_type:
+            calls.append(1)
+            if len(calls) <= lookups:
+                raise NoMatches(f"No nodes match {widget_type.__name__} (test: not mounted yet)")
+        return real_query_one(selector, *args, **kwargs)
+
+    return query_one
+
+
+def test_focus_restore_waits_for_a_tree_that_is_not_mounted_yet(monkeypatch, tmp_path):
+    seeded_tui_home(monkeypatch, tmp_path)
+    args = tui.build_arg_parser().parse_args(["--label-budget", "0"])
+
+    async def drive() -> tuple[str, int]:
+        app = tui.MetricsTUIApp(mr, tui.load_data(args, mr=mr), args=args)
+        async with app.run_test(size=(140, 45)) as pilot:
+            await pilot.pause()
+            assert app.active_tab_id == "tab-sessions"
+            app.set_focus(None)
+            await pilot.pause()
+            calls: list[int] = []
+            monkeypatch.setattr(app, "query_one", _absent_for(app, Tree, 2, calls))
+            app._restore_focus_after_period_cycle()
+            for _ in range(5):
+                await pilot.pause()
+            return type(app.focused).__name__, len(calls)
+
+    focused, lookups = asyncio.run(drive())
+    assert focused == "Tree", f"focus ended on {focused!r} after {lookups} lookups"
+    assert lookups == 3, lookups
+
+
+def test_focus_restore_gives_up_quietly_when_the_tree_never_appears(monkeypatch, tmp_path):
+    # Focus is a nicety: a Tree that never shows up must cost a bounded
+    # number of retries and no exception, never a crash.
+    seeded_tui_home(monkeypatch, tmp_path)
+    args = tui.build_arg_parser().parse_args(["--label-budget", "0"])
+
+    async def drive() -> int:
+        app = tui.MetricsTUIApp(mr, tui.load_data(args, mr=mr), args=args)
+        async with app.run_test(size=(140, 45)) as pilot:
+            await pilot.pause()
+            calls: list[int] = []
+            monkeypatch.setattr(app, "query_one", _absent_for(app, Tree, 10**6, calls))
+            app._restore_focus_after_period_cycle()
+            for _ in range(2 * tui.FOCUS_RESTORE_ATTEMPTS):
+                await pilot.pause()
+            return len(calls)
+
+    assert asyncio.run(drive()) == tui.FOCUS_RESTORE_ATTEMPTS
 
 
 def test_the_app_titles_itself_after_the_product_not_its_class(tmp_path, monkeypatch):

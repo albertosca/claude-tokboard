@@ -25,6 +25,7 @@ from rich.text import Text
 from textual.app import App, ComposeResult, RenderResult
 from textual.binding import BindingType
 from textual.containers import Horizontal, VerticalScroll
+from textual.css.query import NoMatches
 from textual.message import Message
 from textual.reactive import reactive
 from textual.widgets import Footer, Static, TabbedContent, TabPane, Tree
@@ -1035,6 +1036,11 @@ def legend_visibility(mode: str) -> dict[str, bool]:
     }
 
 
+# How many refreshes _restore_focus_after_period_cycle waits for the
+# recomposed pane's widget to be mounted before giving up on focusing it.
+FOCUS_RESTORE_ATTEMPTS = 5
+
+
 class MetricsTUIApp(App[None]):
     # Without this Textual titles the terminal window after the class, so
     # it read "MetricsTUIApp" - a class name, in the one place a user reads
@@ -1224,14 +1230,29 @@ class MetricsTUIApp(App[None]):
         lang = self.data["lang"]
         self.notify(self.mr.t("notify.period", lang, name=self.mr.period_label(next_id, lang=lang)))
 
-    def _restore_focus_after_period_cycle(self) -> None:
+    def _restore_focus_after_period_cycle(
+        self, attempts_left: int = FOCUS_RESTORE_ATTEMPTS
+    ) -> None:
         """Focus a widget that actually belongs to the pane recompose
         reopened on (self.active_tab_id), mirroring the pattern
-        action_toggle_tab already uses for the sessions tab."""
-        if self.active_tab_id == "tab-sessions":
-            self.query_one(Tree).focus()
-        else:
-            self.query_one(TrendChart).focus()
+        action_toggle_tab already uses for the sessions tab.
+
+        recompose() only waits for the widgets it composes directly, not for
+        the ones nested inside TabbedContent > TabPane, so on a loaded
+        machine this can run before the new widget is mounted - seen once
+        in 15 runs beside 128 busy loops (2026-09-23), where query_one
+        raised NoMatches and took the whole app down. The widget is looked
+        for again after the next refresh, a bounded number of times, and
+        if it never appears nothing happens: focus is a nicety, a crash is
+        not."""
+        widget_type = Tree if self.active_tab_id == "tab-sessions" else TrendChart
+        try:
+            widget = self.query_one(widget_type)
+        except NoMatches:
+            if attempts_left > 1:
+                self.call_after_refresh(self._restore_focus_after_period_cycle, attempts_left - 1)
+            return
+        widget.focus()
 
 
 def main() -> None:
