@@ -10,7 +10,7 @@
 
 A Claude Code plugin that logs every session and subagent in the background and shows it back to you two ways: an HTML dashboard in your browser, and a full terminal app.
 
-![The HTML dashboard: a stacked trend chart by project, with tabs for token type and model, above a session table grouped by project](assets/dashboard.png)
+![The HTML dashboard: a stacked trend chart by project, with tabs for token type and model, above a session table grouped by project](assets/dashboard-en.png)
 
 <sub>The HTML dashboard. All screenshots are rendered from the repo's synthetic test data - no real sessions.</sub>
 
@@ -22,11 +22,11 @@ A Claude Code plugin that logs every session and subagent in the background and 
 - **Session history.** Every session grouped by project, with its subagents, duration and token breakdown - filterable by period.
 - **Click to highlight.** Click a legend entry or a bar to spotlight one project, token type or model across the chart.
 
-![The terminal app: a session table with a detail panel, then the trend chart cycling through its three slicings of a day](assets/tui.gif)
+![The terminal app: a session table with a detail panel, then the trend chart cycling through its three slicings of a day](assets/tui-en.gif)
 
 <sub>The terminal app - same data, keyboard-driven: <kbd>g</kbd> charts/sessions, <kbd>t</kbd> chart mode, <kbd>p</kbd> period, <kbd>q</kbd> quit.</sub>
 
-> The interface is in Brazilian Portuguese.
+> The interface speaks English and Brazilian Portuguese, following your system language - or set "language": "en" or "pt" in ~/.claude/metrics/config.json.
 
 ## Install
 

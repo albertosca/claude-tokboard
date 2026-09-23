@@ -6,17 +6,18 @@ switch is Alberto's call, not something to automate.
 
 ## Keeping the visual assets true
 
-`assets/dashboard.png` and `assets/tui.gif` are both generated, never hand
-captured, by:
+`assets/dashboard-en.png`, `assets/dashboard-pt.png`, `assets/tui-en.gif`
+and `assets/tui-pt.gif` are all generated, never hand captured, by:
 
 ```bash
 python3 tools/make-demo-assets.py
 ```
 
-It renders both from this repo's own synthetic test fixture into a throwaway
-HOME, so no real session data can reach them. Re-run it whenever the
-dashboards change enough that the images stop being true. It takes about
-eight minutes, almost all of it waiting for headless Chrome to exit.
+It renders all four from this repo's own synthetic test fixture into a
+throwaway HOME, once per language, so no real session data can reach them.
+Re-run it whenever the dashboards change enough that the images stop being
+true. It takes about eight minutes, almost all of it waiting for headless
+Chrome to exit.
 
 "No real data can reach them" is enforced, not intended. Before encoding, the
 script reads the project names out of the reader's own metrics files and

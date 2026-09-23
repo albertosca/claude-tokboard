@@ -10,7 +10,7 @@
 
 Um plugin do Claude Code que registra cada sessão e cada subagente em segundo plano e mostra tudo de volta de dois jeitos: um dashboard HTML no navegador e um app completo de terminal.
 
-![O dashboard HTML: gráfico de barras empilhadas por projeto, com abas por tipo de token e por modelo, acima de uma tabela de sessões agrupada por projeto](assets/dashboard.png)
+![O dashboard HTML: gráfico de barras empilhadas por projeto, com abas por tipo de token e por modelo, acima de uma tabela de sessões agrupada por projeto](assets/dashboard-pt.png)
 
 <sub>O dashboard HTML. Todas as imagens são geradas a partir dos dados sintéticos de teste do próprio repositório - nenhuma sessão real.</sub>
 
@@ -22,11 +22,11 @@ Um plugin do Claude Code que registra cada sessão e cada subagente em segundo p
 - **Histórico de sessões.** Cada sessão agrupada por projeto, com seus subagentes, duração e tokens detalhados - filtrável por período.
 - **Clique para destacar.** Clique numa entrada da legenda ou numa barra para destacar um projeto, tipo de token ou modelo no gráfico inteiro.
 
-![O app de terminal: tabela de sessões com painel de detalhe, e depois o gráfico de tendência passando pelos três recortes de um dia](assets/tui.gif)
+![O app de terminal: tabela de sessões com painel de detalhe, e depois o gráfico de tendência passando pelos três recortes de um dia](assets/tui-pt.gif)
 
 <sub>O app de terminal - os mesmos dados, pelo teclado: <kbd>g</kbd> gráficos/sessões, <kbd>t</kbd> modo do gráfico, <kbd>p</kbd> período, <kbd>q</kbd> sair.</sub>
 
-> A interface é em português.
+> A interface fala inglês e português do Brasil, seguindo o idioma do seu sistema - ou defina "language": "en" ou "pt" em ~/.claude/metrics/config.json.
 
 ## Instalação
 
