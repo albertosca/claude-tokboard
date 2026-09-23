@@ -35,6 +35,7 @@ never an actual write or an actual launch of the real CLI.
 """
 
 import subprocess
+import sys
 from pathlib import Path
 
 import conftest
@@ -172,6 +173,127 @@ class TestRealClaudeDirGuard:
         renamed = tmp_path / "renamed.jsonl"
         target.rename(renamed)
         renamed.unlink()
+
+
+class TestCaseAndSymlinkEscapes:
+    """Fix round 1, M1: two ways a write could reach the real ~/.claude
+    while a naive resolve()-based, case-sensitive comparison sees nothing
+    wrong."""
+
+    def test_a_case_variant_path_is_blocked_on_a_case_insensitive_filesystem(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # macOS's default filesystem (APFS) is case-insensitive but
+        # CASE-PRESERVING: ~/.CLAUDE and ~/.claude name the exact same
+        # physical directory there, even though Path.resolve() does not
+        # correct a caller's case to match what's really on disk. Forced
+        # to "darwin" so this test's result never depends on which OS
+        # actually runs the suite.
+        monkeypatch.setattr(sys, "platform", "darwin")
+        canary = Path(str(_REAL_CLAUDE_DIR).swapcase()) / "no-such-dir-canary" / "x.jsonl"
+        # Neither the real-case nor the case-swapped canary directory
+        # exists - this can never succeed in creating anything, guard or
+        # no guard, exactly like the plain-case canary tests above.
+        assert not canary.parent.exists()
+        with pytest.raises(RealClaudeDirWrite):
+            canary.open("a")
+        assert not canary.parent.exists()
+        _assert_guard_hit_and_clear_it()
+
+    def test_a_case_variant_path_is_not_specially_matched_off_darwin(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Proves the platform check above actually GATES something: on a
+        # case-SENSITIVE platform, a case-swapped path is a genuinely
+        # different (and here, nonexistent) location, so this must fail
+        # with a plain FileNotFoundError - exactly as it would with no
+        # guard installed at all - not RealClaudeDirWrite.
+        monkeypatch.setattr(sys, "platform", "linux")
+        canary = Path(str(_REAL_CLAUDE_DIR).swapcase()) / "no-such-dir-canary" / "x.jsonl"
+        with pytest.raises(FileNotFoundError):
+            canary.open("a")
+
+    def test_a_symlink_inside_the_guarded_dir_pointing_outside_is_still_blocked_lexically(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        # Never touches the real ~/.claude: the guard's own captured
+        # directories are redirected to a throwaway FAKE one for this
+        # test (the same seam Important 1's hook test uses), so the
+        # symlink this test creates lives entirely under tmp_path.
+        # All scaffolding (including the symlink itself) is built BEFORE
+        # the guard's own captured directories are redirected below - a
+        # test setup step, not the operation under test, so it must not
+        # itself trip the (not-yet-installed-here) guard.
+        fake_claude_dir = tmp_path / ".claude"
+        fake_claude_dir.mkdir()
+        outside_target = tmp_path / "outside-target"
+        outside_target.mkdir()
+        link = fake_claude_dir / "skills"
+        link.symlink_to(outside_target)  # a symlink INSIDE the fake guarded dir...
+        target = link / "escape.md"  # ...pointing OUTSIDE it - resolve() alone would miss this
+
+        monkeypatch.setattr(conftest, "_REAL_CLAUDE_DIR", fake_claude_dir.resolve())
+        monkeypatch.setattr(conftest, "_REAL_CLAUDE_DIR_LEXICAL", fake_claude_dir)
+
+        with pytest.raises(RealClaudeDirWrite):
+            target.open("a")
+        assert not target.exists()
+        assert not (outside_target / "escape.md").exists()
+        _assert_guard_hit_and_clear_it()
+
+
+class TestRunningCheckoutIsExempt:
+    """Fix round 1, M4: this repo is a Claude Code plugin - a real install
+    can land it at ~/.claude/plugins/cache/<name>/, nested INSIDE the very
+    directory this guard protects. Python's own import machinery writes a
+    .pyc bytecode cache for every module it imports; without an exemption
+    for the checkout's own tree, merely running the suite from such a
+    location would crash on the first import of one of this repo's own
+    modules (confirmed in scratch - see the fix-round report).
+    """
+
+    def test_a_write_inside_the_running_checkouts_own_tree_is_exempt(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        fake_claude_dir = tmp_path / ".claude"
+        fake_repo_root = fake_claude_dir / "plugins" / "cache" / "fake-claude-tokboard"
+        fake_repo_root.mkdir(parents=True)
+        monkeypatch.setattr(conftest, "_REAL_CLAUDE_DIR", fake_claude_dir.resolve())
+        monkeypatch.setattr(conftest, "_REAL_CLAUDE_DIR_LEXICAL", fake_claude_dir)
+        monkeypatch.setattr(conftest, "REPO_ROOT", fake_repo_root)
+
+        pycache_file = fake_repo_root / "some_module" / "__pycache__" / "x.cpython-314.pyc"
+        pycache_file.parent.mkdir(parents=True)
+        pycache_file.write_text("not real bytecode")  # must NOT raise
+
+        pytest_cache_file = fake_repo_root / ".pytest_cache" / "v" / "cache" / "lastfailed"
+        pytest_cache_file.parent.mkdir(parents=True)
+        pytest_cache_file.write_text("{}")  # must NOT raise
+
+        (fake_repo_root / ".coverage").write_text("")  # must NOT raise
+
+    def test_a_write_elsewhere_inside_the_fake_guarded_dir_is_still_blocked(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        fake_claude_dir = tmp_path / ".claude"
+        fake_repo_root = fake_claude_dir / "plugins" / "cache" / "fake-claude-tokboard"
+        fake_repo_root.mkdir(parents=True)
+        # Real user data, NOT inside the checkout's own tree - built BEFORE
+        # the guard is redirected below, same reasoning as the symlink test
+        # above. The exemption must stay narrow, not become a blanket
+        # bypass of the whole fake ~/.claude just because it happens to
+        # also hold this checkout somewhere inside it.
+        metrics_dir = fake_claude_dir / "metrics"
+        metrics_dir.mkdir()
+
+        monkeypatch.setattr(conftest, "_REAL_CLAUDE_DIR", fake_claude_dir.resolve())
+        monkeypatch.setattr(conftest, "_REAL_CLAUDE_DIR_LEXICAL", fake_claude_dir)
+        monkeypatch.setattr(conftest, "REPO_ROOT", fake_repo_root)
+
+        with pytest.raises(RealClaudeDirWrite):
+            (metrics_dir / "sessions.jsonl").write_text("x")
+        assert not (metrics_dir / "sessions.jsonl").exists()
+        _assert_guard_hit_and_clear_it()
 
 
 class TestGuardHitsSurviveExceptClauses:

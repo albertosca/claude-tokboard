@@ -117,11 +117,78 @@ def _resolved_path_or_none(path_arg: object) -> Path | None:
         return None
 
 
+def _lexical_abspath_or_none(path_arg: object) -> Path | None:
+    """Fix round 1, M1: the same argument, made absolute WITHOUT following
+    any symlink (os.path.abspath never resolves one, unlike
+    Path.resolve()). A target like ~/.claude/skills/escape.md, where
+    skills/ happens to be a symlink pointing OUTSIDE ~/.claude, resolves
+    to somewhere harmless - but it still LEXICALLY names a location
+    inside the real directory, and a test should not get to rely on some
+    symlink there conveniently rerouting a write elsewhere. Never raises,
+    for the same reasons as _resolved_path_or_none."""
+    if not isinstance(path_arg, str | bytes | os.PathLike):
+        return None
+    candidate = os.fspath(path_arg)
+    if isinstance(candidate, bytes):
+        try:
+            candidate = candidate.decode("utf-8", "surrogateescape")
+        except UnicodeDecodeError:
+            return None
+    try:
+        # os.path.abspath, deliberately NOT Path.resolve() - resolve()
+        # follows symlinks, which is exactly the behavior this lexical
+        # form exists to avoid (see the docstring above).
+        return Path(os.path.abspath(candidate))  # noqa: PTH100
+    except (OSError, ValueError):
+        return None
+
+
+def _same_or_within(candidate: Path, base: Path) -> bool:
+    """Fix round 1, M1: `candidate.is_relative_to(base)`, but case-folded
+    on darwin. macOS's default filesystem (APFS) is case-insensitive but
+    CASE-PRESERVING: Path.resolve() does not correct a caller-supplied
+    path's case to match what is actually on disk, so ~/.CLAUDE/x and
+    ~/.claude/x name the exact same physical file there, while a plain
+    (case-sensitive) is_relative_to sees them as unrelated. Checked at
+    CALL time, not cached, so a test can monkeypatch sys.platform to
+    exercise this branch on any machine."""
+    if sys.platform == "darwin":
+        candidate_s = str(candidate).casefold()
+        base_s = str(base).casefold()
+        return candidate_s == base_s or candidate_s.startswith(base_s + os.sep)
+    return candidate.is_relative_to(base)
+
+
+# Fix round 1, M1: the real .claude dir, UNRESOLVED (still absolute -
+# Path.home() always is) - the lexical counterpart to _REAL_CLAUDE_DIR,
+# compared against a candidate's own lexical form. See
+# _lexical_abspath_or_none and _inside_real_claude_dir.
+_REAL_CLAUDE_DIR_LEXICAL = Path.home() / ".claude"
+
+
 def _inside_real_claude_dir(path_arg: object) -> bool:
-    resolved = _resolved_path_or_none(path_arg)
-    if resolved is None:
-        return False
-    return resolved.is_relative_to(_REAL_CLAUDE_DIR)
+    """True if EITHER the resolved or the lexical form of `path_arg` names
+    a location inside the real ~/.claude - except for the running
+    checkout's own tree (fix round 1, M4: REPO_ROOT, and everything under
+    it - .pytest_cache, .coverage, __pycache__ included, since they all
+    live inside REPO_ROOT), which is exempt so the suite can run from an
+    installed copy under ~/.claude/plugins/cache/<name>/ without the
+    guard crashing on Python's own bytecode-cache writes for its imports.
+    That exemption is checked per-candidate, not globally: a write
+    elsewhere inside a REAL ~/.claude that merely happens to CONTAIN such
+    an installed checkout is still blocked.
+    """
+    for candidate, real_dir in (
+        (_resolved_path_or_none(path_arg), _REAL_CLAUDE_DIR),
+        (_lexical_abspath_or_none(path_arg), _REAL_CLAUDE_DIR_LEXICAL),
+    ):
+        if candidate is None:
+            continue
+        if _same_or_within(candidate, REPO_ROOT):
+            continue
+        if _same_or_within(candidate, real_dir):
+            return True
+    return False
 
 
 def _is_write_open(mode: object, flags: object) -> bool:
