@@ -72,3 +72,60 @@ def test_the_default_path_is_the_one_documented(
     path = _write(tmp_path, json.dumps({"project_roots": ["/a/code"]}))
     monkeypatch.setattr(mr.paths, "CONFIG_FILE", path)
     assert mr.load_project_roots() == ["/a/code"]
+
+
+# --- project_roots_from ------------------------------------------------
+#
+# The pure half of load_project_roots (backlog #11): the same failure-mode
+# tolerance, but operating on an already-loaded config dict rather than
+# reading a file - so a caller that already read the config once (main(),
+# load_base_data()) never has to read it a second time just to get the
+# roots out of it. load_project_roots(path) is now a thin wrapper:
+# project_roots_from(load_config(path)).
+
+
+def test_project_roots_from_a_dict_with_a_list_of_roots() -> None:
+    assert mr.project_roots_from({"project_roots": ["/a/code", "/b/work"]}) == [
+        "/a/code",
+        "/b/work",
+    ]
+
+
+def test_project_roots_from_expands_a_tilde() -> None:
+    assert mr.project_roots_from({"project_roots": ["~/code"]}) == [
+        str(Path("~/code").expanduser())
+    ]
+
+
+def test_project_roots_from_an_empty_dict_is_no_roots() -> None:
+    assert mr.project_roots_from({}) == []
+
+
+def test_project_roots_from_a_non_list_value_is_no_roots() -> None:
+    assert mr.project_roots_from({"project_roots": "/a/code"}) == []
+
+
+def test_project_roots_from_drops_non_string_and_empty_entries() -> None:
+    assert mr.project_roots_from({"project_roots": ["/a/code", "", 7, None, "/b/work"]}) == [
+        "/a/code",
+        "/b/work",
+    ]
+
+
+def test_load_project_roots_delegates_to_project_roots_from(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Proves the wrapper shape itself, not just matching output: a spy on
+    # project_roots_from must be called exactly once, with the exact dict
+    # load_config produced - not a re-implementation that happens to agree.
+    path = _write(tmp_path, json.dumps({"project_roots": ["/a/code"]}))
+    calls: list[dict[str, object]] = []
+    original = mr.paths.project_roots_from
+
+    def spy(config: dict[str, object]) -> list[str]:
+        calls.append(config)
+        return original(config)
+
+    monkeypatch.setattr(mr.paths, "project_roots_from", spy)
+    assert mr.load_project_roots(path) == ["/a/code"]
+    assert calls == [{"project_roots": ["/a/code"]}]

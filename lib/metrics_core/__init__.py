@@ -54,6 +54,7 @@ from .paths import (
     WORKTREE_MARKERS,
     load_config,
     load_project_roots,
+    project_roots_from,
     split_worktree,
     worktree_marker_of,
 )
@@ -163,6 +164,7 @@ __all__ = [
     "plan_corrections",
     "project_days_running",
     "project_display_label",
+    "project_roots_from",
     "record_token_total",
     "resolve_language",
     "resolve_period",

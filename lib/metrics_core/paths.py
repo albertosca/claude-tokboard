@@ -8,6 +8,7 @@ sit below them both.
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -61,8 +62,8 @@ def load_config(path: str | None = None) -> dict[str, Any]:
     return config if isinstance(config, dict) else {}
 
 
-def load_project_roots(path: str | None = None) -> list[str]:
-    """The directories the reader has declared their projects live in.
+def project_roots_from(config: Mapping[str, Any]) -> list[str]:
+    """The declared project_roots list, out of an already-loaded config.
 
     A recorded `project_path` is whatever Claude Code's cwd happened to be,
     which is often a subdirectory of the real project - and nothing in the
@@ -74,12 +75,28 @@ def load_project_roots(path: str | None = None) -> list[str]:
 
         {"project_roots": ["/Users/username/code"]}
 
-    Missing file, unreadable file, bad JSON and a non-list value all mean
-    the same thing - no roots declared - because this is a convenience for
-    naming, and a dashboard that refuses to render over a typo'd config
-    would be worse than one that names a few directories awkwardly.
+    A missing key or a non-list value both mean no roots declared -
+    because this is a convenience for naming, and a dashboard that refuses
+    to render over a typo'd config would be worse than one that names a
+    few directories awkwardly. Split out of load_project_roots (backlog
+    #11) so a caller that already has the config dict - main(),
+    load_base_data(), both of which also need resolve_language(config,
+    ...) from the SAME read - never reads the file a second time just for
+    this.
     """
-    roots = load_config(path).get("project_roots")
+    roots = config.get("project_roots")
     if not isinstance(roots, list):
         return []
     return [str(Path(root).expanduser()) for root in roots if isinstance(root, str) and root]
+
+
+def load_project_roots(path: str | None = None) -> list[str]:
+    """The directories the reader has declared their projects live in.
+
+    A thin wrapper - project_roots_from(load_config(path)) - kept because
+    tests and scripts already call this by path rather than holding onto
+    a config dict. Missing file, unreadable file, and bad JSON all fall
+    through load_config's own tolerance to {} before project_roots_from
+    ever sees them.
+    """
+    return project_roots_from(load_config(path))

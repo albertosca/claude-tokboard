@@ -69,6 +69,7 @@ sys.path.insert(0, str(REPO_ROOT / "lib"))
 sys.path.insert(0, str(REPO_ROOT))
 
 import metrics_core as mr  # noqa: E402
+import metrics_core.paths as paths_module  # noqa: E402
 from test_tui_state import isolate_tui_from_the_real_filesystem  # noqa: E402
 
 import dashboard_tui as tui  # noqa: E402
@@ -286,6 +287,35 @@ def test_the_resolved_language_reaches_get_task_label(monkeypatch, tmp_path):
         "get_task_label must be called with the resolved language ('en' "
         f"here), not a hardcoded default - got {captured_langs}"
     )
+
+
+def test_load_base_data_reads_the_config_file_exactly_once(monkeypatch, tmp_path):
+    """load_base_data used to also call mr.load_project_roots() on top of
+    mr.load_config() - two reads of the same file per launch (backlog
+    #11). A spy on load_config, patched in BOTH places it can be reached
+    from (the direct `mr.load_config()` call load_base_data makes itself,
+    and the bare-name call inside paths.py's own load_project_roots, which
+    resolves through paths_module's globals rather than metrics_core's -
+    patching only `mr` would leave a call routed through
+    load_project_roots invisible here) proves the fix: read once, derive
+    project_roots from that SAME dict via mr.project_roots_from.
+    """
+    isolate_tui_from_the_real_filesystem(monkeypatch, tmp_path)
+    session = _session("s1", day=1)
+    _write_sessions(tmp_path, [session])
+
+    calls: list[str | None] = []
+    original = mr.load_config
+
+    def spy(path: str | None = None) -> Any:
+        calls.append(path)
+        return original(path)
+
+    monkeypatch.setattr(mr, "load_config", spy)
+    monkeypatch.setattr(paths_module, "load_config", spy)
+    args = tui.build_arg_parser().parse_args(["--label-budget", "0"])
+    tui.load_base_data(args, mr=mr)
+    assert len(calls) == 1, f"load_config must be read exactly once per run - got {calls}"
 
 
 # ---------------------------------------------------------------------------

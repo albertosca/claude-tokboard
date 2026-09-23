@@ -67,15 +67,19 @@ def load_base_data(args: argparse.Namespace, mr: ModuleType | None = None) -> di
     # dashboard_html.py for the fan-out safeguard that keeps it from
     # collapsing unrelated projects into a shared container directory.
     records = mr.load_records(mr.METRICS_FILE)
+    # Read once (backlog #11: this used to also call mr.load_project_roots(),
+    # a second read of the same file) and derive everything the config can
+    # give from this one dict.
+    config = mr.load_config()
     # Declared in ~/.claude/metrics/config.json; empty when there is no
     # config, which leaves normalize_project_paths exactly as it was.
-    project_roots = mr.load_project_roots()
+    project_roots = mr.project_roots_from(config)
     # Config first, then the machine's locale, then English - see
     # resolve_language's own docstring. Resolved once, here (the expensive,
     # once-per-launch half of the load), and carried in the returned dict so
     # apply_period can copy it into every re-windowed view without
     # re-resolving it on each "p" press.
-    lang = mr.resolve_language(mr.load_config(), os.environ)
+    lang = mr.resolve_language(config, os.environ)
     # Captured before dedupe_sessions discards every snapshot but one per
     # session_id - expand_records_to_daily_deltas needs the FULL raw
     # history to correctly spread a long-running session's token growth

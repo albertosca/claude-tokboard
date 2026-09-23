@@ -563,6 +563,42 @@ def test_main_html_mode_renders_portuguese_by_the_pinned_default(
     assert '<html lang="pt-BR">' in out
 
 
+def test_main_reads_the_config_file_exactly_once(
+    monkeypatch: pytest.MonkeyPatch,
+    isolate_main_from_the_real_filesystem: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # main() used to call both mr.load_project_roots() and mr.load_config()
+    # separately - two reads of the same file per run (backlog #11). A spy
+    # on load_config proves the fix: read once, derive project_roots from
+    # that SAME dict via mr.project_roots_from.
+    #
+    # Patched in BOTH places load_config can be reached from: the direct
+    # `mr.load_config()` call main() makes itself, and the bare-name call
+    # inside paths.py's own load_project_roots (which resolves through
+    # paths_module's globals, not metrics_core's - patching only `mr`
+    # would leave a call routed through load_project_roots invisible to
+    # this spy, silently passing against the very bug this test exists to
+    # catch).
+    home = isolate_main_from_the_real_filesystem
+    _write_jsonl(
+        home / ".claude" / "metrics" / "sessions.jsonl",
+        [_session_record("s1", "/work/proj-a", tokens=10)],
+    )
+    calls: list[str | None] = []
+    original = mr.load_config
+
+    def spy(path: str | None = None) -> dict[str, Any]:
+        calls.append(path)
+        return original(path)
+
+    monkeypatch.setattr(mr, "load_config", spy)
+    monkeypatch.setattr(paths_module, "load_config", spy)
+    _run_main(monkeypatch, ["--html", "--label-budget", "0"])
+    capsys.readouterr()
+    assert len(calls) == 1, f"load_config must be read exactly once per run - got {calls}"
+
+
 def test_main_plain_mode_prints_table_and_summary_and_writes_no_file(
     monkeypatch: pytest.MonkeyPatch,
     isolate_main_from_the_real_filesystem: Path,
