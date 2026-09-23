@@ -512,13 +512,35 @@ def test_expand_groups_by_agent_id_before_session_id_so_subagents_dont_contamina
     # Two subagents dispatched by the SAME parent session_id - if
     # session_id were checked first they'd wrongly be treated as two
     # sequential snapshots of one entity and their deltas would cross.
+    #
+    # Both subagents attribute to the SAME model name on purpose: this also
+    # pins that `previous_by_model`'s differencing state is scoped to each
+    # subagent's own by_id group, the same way the sibling `previous` state
+    # for the four plain totals is. Hoisting `previous_by_model` out of the
+    # `for snapshots in by_id.values():` loop would leave it unreset between
+    # groups, so ag2's per-model delta would be computed against ag1's
+    # leftover state (70 - 50 = 20) instead of against zero (70).
     raw = [
-        {"agent_id": "ag1", "session_id": "shared", **snapshot(5, "t1", input_tokens=50)},
-        {"agent_id": "ag2", "session_id": "shared", **snapshot(5, "t2", input_tokens=70)},
+        {
+            "agent_id": "ag1",
+            "session_id": "shared",
+            **snapshot(5, "t1", input_tokens=50),
+            "tokens_by_model": {"model-x": _bucket(input_tokens=50)},
+        },
+        {
+            "agent_id": "ag2",
+            "session_id": "shared",
+            **snapshot(5, "t2", input_tokens=70),
+            "tokens_by_model": {"model-x": _bucket(input_tokens=70)},
+        },
     ]
     result = mr.expand_records_to_daily_deltas(raw)
     totals_by_agent = {r["agent_id"]: r["input_tokens"] for r in result}
     assert totals_by_agent == {"ag1": 50, "ag2": 70}
+    model_totals_by_agent = {
+        r["agent_id"]: r["tokens_by_model"]["model-x"]["input_tokens"] for r in result
+    }
+    assert model_totals_by_agent == {"ag1": 50, "ag2": 70}
 
 
 def test_expand_sorts_out_of_order_snapshots_before_differencing():
