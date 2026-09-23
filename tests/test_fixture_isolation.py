@@ -55,6 +55,17 @@ REAL_METRICS_DIR = Path("~/.claude/metrics").expanduser()
 RENDERER_SOURCES = ("dashboard_html.py", "dashboard_html_assets.py")
 
 
+def _word_pattern(name: str) -> re.Pattern[str]:
+    """A real name only counts as LEAKED if it appears as a whole word, not
+    merely as a substring - "app" sits inside the quota line's own English
+    text ("Quota (approx.): ...", metrics_core's quota_line message,
+    rendered on every page regardless of any project's name) with nothing
+    at all coming from project data, and a raw substring check would flag
+    it as a leak forever. Same idea as tools/make-demo-assets.py's own
+    _word_pattern, which documents exactly this "approx." case."""
+    return re.compile(rf"(?<!\w){re.escape(name)}(?!\w)")
+
+
 def real_project_names(metrics_dir: Path, renderer_source: str) -> set[str]:
     """The reader's own project names, read from their own metrics files.
 
@@ -65,11 +76,15 @@ def real_project_names(metrics_dir: Path, renderer_source: str) -> set[str]:
     Reading them at test time removes them from the repo AND makes the
     check stronger: every project on the machine instead of three.
 
-    A name that also occurs in the renderer's own source is dropped. The
-    page can print such a word without any data reaching it ("metrics",
-    "tmux"), so finding it proves nothing. A name that is NOT in the
-    renderer's source can only reach the page through data - which is
-    exactly the leak this is looking for.
+    A name that also occurs in the renderer's own source AS A WHOLE WORD
+    (fix round 1, M6: this used to be a raw substring check, which could
+    wrongly DROP a real project by coincidence - a project named "in"
+    sits inside "input", "using", and dozens of other words the renderer
+    source genuinely contains, none of which mean the name is safe UI
+    vocabulary) is dropped. The page can print such a word without any
+    data reaching it ("metrics", "tmux"), so finding it proves nothing. A
+    name that is NOT in the renderer's source can only reach the page
+    through data - which is exactly the leak this is looking for.
     """
     names: set[str] = set()
     for name in ("sessions.jsonl", "subagents.jsonl"):
@@ -83,20 +98,9 @@ def real_project_names(metrics_dir: Path, renderer_source: str) -> set[str]:
                 continue
             if project:
                 base = Path(str(project).rstrip("/")).name
-                if base and base not in renderer_source:
+                if base and not _word_pattern(base).search(renderer_source):
                     names.add(base)
     return names
-
-
-def _word_pattern(name: str) -> re.Pattern[str]:
-    """A real name only counts as LEAKED if it appears as a whole word, not
-    merely as a substring - "app" sits inside the quota line's own English
-    text ("Quota (approx.): ...", metrics_core's quota_line message,
-    rendered on every page regardless of any project's name) with nothing
-    at all coming from project data, and a raw substring check would flag
-    it as a leak forever. Same idea as tools/make-demo-assets.py's own
-    _word_pattern, which documents exactly this "approx." case."""
-    return re.compile(rf"(?<!\w){re.escape(name)}(?!\w)")
 
 
 def leaked_names(html: str, names: set[str]) -> list[str]:
@@ -148,6 +152,15 @@ def test_a_word_the_renderer_itself_prints_is_not_taken_as_a_leak(tmp_path):
         + "not json\n"
     )
     assert real_project_names(tmp_path, "the renderer prints metrics") == {"my-private-app"}
+
+
+def test_a_substring_match_in_the_renderer_source_does_not_wrongly_drop_a_real_name(tmp_path):
+    # M6: "in" sits inside "input" - a raw substring check would have
+    # wrongly treated a real project named "in" as safe UI vocabulary and
+    # dropped it from the leak check entirely, when nothing about "input"
+    # says anything at all about a project by that name.
+    (tmp_path / "sessions.jsonl").write_text(json.dumps({"project_path": "/x/in"}) + "\n")
+    assert real_project_names(tmp_path, "reads the input file") == {"in"}
 
 
 def test_output_landed_inside_the_temporary_home(dashboard_page):
