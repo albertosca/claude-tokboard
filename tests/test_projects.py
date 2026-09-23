@@ -152,6 +152,56 @@ def test_project_days_running_treats_a_future_first_seen_as_today() -> None:
     assert mr.project_days_running({"/a": tomorrow}, "/a", lang="pt") == " · 1º uso hoje"
 
 
+# --- project_days_running counts CALENDAR days, not elapsed 24h periods
+# (Package B follow-up, controller-fixed Minor): a project first used at
+# 23:00 yesterday must read "1 day ago" as soon as the clock crosses
+# midnight, not still "today" until a full 24h has elapsed. `now` is
+# injected here (keyword-only, defaults to real datetime.now() when
+# omitted - production callers never pass it) so these boundary cases
+# don't depend on when the suite happens to run.
+
+
+def test_project_days_running_seen_late_yesterday_is_one_day_ago_after_midnight() -> None:
+    first_seen = "2026-03-14T23:59:00"
+    just_after_midnight = datetime(2026, 3, 15, 0, 1, 0).astimezone()
+    assert (
+        mr.project_days_running({"/a": first_seen}, "/a", lang="en", now=just_after_midnight)
+        == " · first used 1 day ago"
+    )
+    assert (
+        mr.project_days_running({"/a": first_seen}, "/a", lang="pt", now=just_after_midnight)
+        == " · 1º uso há 1 dia"
+    )
+
+
+def test_project_days_running_seen_just_after_midnight_is_still_today_at_end_of_day() -> None:
+    first_seen = "2026-03-15T00:01:00"
+    just_before_midnight = datetime(2026, 3, 15, 23, 59, 0).astimezone()
+    assert (
+        mr.project_days_running({"/a": first_seen}, "/a", lang="en", now=just_before_midnight)
+        == " · first used today"
+    )
+    assert (
+        mr.project_days_running({"/a": first_seen}, "/a", lang="pt", now=just_before_midnight)
+        == " · 1º uso hoje"
+    )
+
+
+def test_project_days_running_counts_calendar_days_crossed_not_hours_elapsed() -> None:
+    # First seen 2 CALENDAR days back at 23:59, viewed the next-next
+    # morning at 00:01 - barely over 24h elapsed, but 2 midnights crossed.
+    first_seen = "2026-03-13T23:59:00"
+    just_after_midnight = datetime(2026, 3, 15, 0, 1, 0).astimezone()
+    assert (
+        mr.project_days_running({"/a": first_seen}, "/a", lang="en", now=just_after_midnight)
+        == " · first used 2 days ago"
+    )
+    assert (
+        mr.project_days_running({"/a": first_seen}, "/a", lang="pt", now=just_after_midnight)
+        == " · 1º uso há 2 dias"
+    )
+
+
 # --- get_open_projects -----------------------------------------------
 
 

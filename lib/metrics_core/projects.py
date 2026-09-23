@@ -89,14 +89,28 @@ def compute_project_totals(
 
 
 def project_days_running(
-    project_first_seen: dict[str, str], project: str | None, *, lang: str
+    project_first_seen: dict[str, str],
+    project: str | None,
+    *,
+    lang: str,
+    now: datetime | None = None,
 ) -> str:
+    # `now` is test-only (real callers never pass it - it defaults to the
+    # real clock) - it exists so the calendar-day boundary below can be
+    # tested without depending on when the suite happens to run.
     first_seen = project_first_seen.get(project) if project is not None else None
     if not first_seen:
         return ""
     try:
         first_dt = datetime.fromisoformat(first_seen.replace("Z", "+00:00")).astimezone()
-        days = (datetime.now().astimezone() - first_dt).days
+        resolved_now = (now or datetime.now()).astimezone()
+        # CALENDAR days, not elapsed 24h periods (Package B follow-up): a
+        # project first used at 23:00 yesterday must read "1 day ago" the
+        # moment the clock crosses midnight, not still "today" until a
+        # full 24h has elapsed. `.date()` compares local calendar dates,
+        # so only the number of midnights crossed counts, not the number
+        # of whole 24h periods.
+        days = (resolved_now.date() - first_dt.date()).days
         # 0 renders as "today", not the plural machinery's "0 days ago".
         # A negative count (clock skew: first_seen recorded in the future)
         # is not a day count at all - it renders the same as today rather
