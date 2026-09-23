@@ -630,6 +630,36 @@ def test_expand_differences_a_model_that_first_appears_in_a_later_snapshot_again
         ), field
 
 
+def test_expand_attributes_the_whole_pre_deploy_session_to_the_first_snapshot_with_a_model_map():
+    # The deploy seam: tokens_by_model capture went live mid-session, so a
+    # session can own a pre-deploy snapshot with no tokens_by_model key at
+    # all, followed by a post-deploy one that has it. There is no per-model
+    # data for the pre-deploy portion to attribute - it is gone, not merely
+    # unattributed - so this pins the behaviour rather than treating it as a
+    # bug: the first delta keeps its non-zero four-field totals and NO
+    # tokens_by_model key (not even an empty one - a plain dict(snapshot)
+    # copy that never had the key), and the second delta's per-model map
+    # equals the post-deploy snapshot's own cumulative map verbatim, because
+    # previous_by_model has no history for a model it has never seen before -
+    # it therefore attributes MORE tokens per-model (250) than its own
+    # four-field delta shows (150), the pre-deploy 100 folded in with it.
+    raw = [
+        {"session_id": "s1", **snapshot(10, "pre", input_tokens=100)},
+        {
+            "session_id": "s1",
+            **snapshot(20, "post", input_tokens=250),
+            "tokens_by_model": {"model-alpha": _bucket(input_tokens=250)},
+        },
+    ]
+
+    result = mr.expand_records_to_daily_deltas(raw)
+
+    assert result[0]["input_tokens"] == 100
+    assert "tokens_by_model" not in result[0]
+    assert result[1]["input_tokens"] == 150
+    assert result[1]["tokens_by_model"] == {"model-alpha": _bucket(input_tokens=250)}
+
+
 # --- fold_subagent_tokens_into_sessions -------------------------------------
 
 

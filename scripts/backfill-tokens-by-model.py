@@ -99,6 +99,11 @@ time that the rows the plan was built from are still the file's prefix,
 carry over verbatim anything appended while the run was in flight, pass the
 whole result through verify_fields with tokens_by_model declared as the only
 permitted addition, and rename into place rather than editing in place.
+verify_fields also refuses a row whose key ORDER changed ("key order
+changed"), not just an added or missing key - a RECOMPUTE hits this if it
+reinserts tokens_by_model at a different position than the run that first
+wrote it, since a plain dict merge only preserves position for a key that
+was already there.
 """
 
 from __future__ import annotations

@@ -469,6 +469,19 @@ def expand_records_to_daily_deltas(raw_records: list[dict[str, Any]]) -> list[di
             # A model first seen in a later snapshot differences against zero;
             # previous_by_model keeps a model it has seen even if a later
             # snapshot omits it, so a reappearance is never counted twice.
+            #
+            # That same zero-start is also the deploy seam: a session with a
+            # pre-deploy snapshot (no tokens_by_model at all) followed by a
+            # post-deploy one lands its whole session-to-date total on the
+            # FIRST snapshot that carries the key, because previous_by_model
+            # has no history for a model it has never seen before - the
+            # pre-deploy portion has no per-model data to attribute at all.
+            # Unfixable at this layer: the earlier delta correctly has
+            # non-zero four-field totals and no per-model map, and the later
+            # one correctly attributes more tokens per-model than its own
+            # four-field delta shows. Pinned, not treated as a bug to fix, by
+            # the deploy-seam test in tests/test_records.py (search for
+            # "pre_deploy" there).
             snapshot_by_model = snapshot.get("tokens_by_model")
             if snapshot_by_model:
                 delta_by_model: dict[str, dict[str, int]] = {}
