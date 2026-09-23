@@ -33,6 +33,13 @@ DEFAULT_CUTOFF = "2026-08-13"
 NEITHER_TOLERANCE = 0.02
 BACKFILL_STATE_FILE = str(Path("~/.claude/metrics/backfill_state.json").expanduser())
 
+# Which id names a unit - the owner of one growing snapshot series - in each
+# metrics file. Subagent rows carry session_id TOO, but it is their parent's:
+# grouping them on it merges every subagent one session dispatched into a
+# single unit, the 2026-08-06 contamination (1012 of 1036 agent_ids
+# mismatched). Session rows never carry agent_id at all.
+UNIT_ID_KEYS: dict[str, str] = {"sessions": "session_id", "subagents": "agent_id"}
+
 
 def sha256_of(path: str) -> str:
     h = hashlib.sha256()
@@ -64,6 +71,122 @@ def index_transcripts(projects_dir: str) -> dict[str, str]:
         if current is None or Path(path).stat().st_size > Path(current).stat().st_size:
             index[session_id] = path
     return index
+
+
+def index_subagent_transcripts(projects_dir: str) -> tuple[dict[str, str], list[str]]:
+    """agent_id -> transcript path, for the files index_transcripts excludes.
+
+    Subagent transcripts sit one level deeper than session ones, at
+    <projects>/<slug>/<session_id>/subagents/<agent_id>.jsonl, and are keyed
+    by AGENT id. index_transcripts deliberately walks only <slug>/*.jsonl and
+    keys by SESSION id - its docstring says the deeper paths belong to
+    subagents.jsonl, not there - so handing it to subagent code hands over an
+    index that cannot hit on any key. Measured 2026-09-16: 44 native subagent
+    snapshots were being skipped as "no transcript" while all 44 files were
+    on disk, migrated into the parent project slug exactly as the session
+    transcripts were.
+
+    The filename carries the agent id with an `agent-` PREFIX that the record
+    itself does not have: the file is `agent-a04a2851b378c2216.jsonl` and the
+    record's agent_id is `a04a2851b378c2216`. Measured 2026-09-16 over the
+    whole tree: 1,005 of 1,005 transcript basenames carry the prefix, 2,124
+    of 2,124 agent_id values do not, and all 1,953 rows with a recorded path
+    have `basename == "agent-" + agent_id`. Keying by the raw basename
+    therefore builds an index that looks populated and never matches - the
+    same class of failure as handing over the session index, one level down.
+
+    An agent id found under more than one slug is AMBIGUITY, not a match:
+    nothing here can tell which copy the record was parsed from, and picking
+    the bigger or the first would be a guess dressed as a resolution. Those
+    ids are left out of the index and returned so the run can name them.
+
+    Shared by scripts/backfill-tokens-by-model.py and
+    scripts/backfill-token-dedup.py, so both find a subagent's transcript
+    the same way.
+    """
+    prefix = "agent-"
+    found: dict[str, list[str]] = collections.defaultdict(list)
+    for path in Path(projects_dir).glob("*/*/subagents/*.jsonl"):
+        stem = path.name[: -len(".jsonl")]
+        found[stem.removeprefix(prefix)].append(str(path))
+    index = {agent_id: paths[0] for agent_id, paths in found.items() if len(paths) == 1}
+    ambiguous = sorted(agent_id for agent_id, paths in found.items() if len(paths) > 1)
+    return index, ambiguous
+
+
+def resolve_transcript(
+    record: dict[str, Any], transcripts: dict[str, str], transcript_key: str, unit_id: Any
+) -> str | None:
+    """The transcript this row was parsed from, or None if it is gone.
+
+    A row that RECORDED a path whose file is no longer there gets a second
+    chance through the by-id index: a session logged from two working
+    directories exists under two project slugs, so a stored path can be stale
+    while the transcript itself is still on disk under the same id.
+
+    A row that recorded NO path never had one - there is nothing on disk to
+    look for, and no recorded path to confirm an index hit against - so it
+    resolves to None and disqualifies its whole unit. The by-id index is a
+    way to relocate a known transcript, not a way to guess one.
+    """
+    recorded = record.get(transcript_key)
+    if not recorded:
+        return None
+    if Path(recorded).exists():
+        return str(recorded)
+    return transcripts.get(unit_id)
+
+
+def subagent_transcripts(records: list[dict[str, Any]], index: dict[str, str]) -> dict[str, str]:
+    """agent_id -> the one transcript every row of that subagent resolves to.
+
+    The subagent counterpart of index_transcripts, in the shape
+    plan_corrections takes: one transcript per unit. Each row goes through
+    resolve_transcript (its recorded agent_transcript_path, relocated through
+    the by-id index when stale), and a unit is left out - so plan_corrections
+    reports it as having no transcript - when any row fails to resolve, or
+    when its rows resolve to different files: nothing here can say which of
+    two files a single as-of series was parsed from.
+    """
+    resolved: dict[str, set[str | None]] = collections.defaultdict(set)
+    for record in records:
+        agent_id = record.get("agent_id")
+        if not agent_id:
+            continue
+        resolved[agent_id].add(resolve_transcript(record, index, "agent_transcript_path", agent_id))
+    units: dict[str, str] = {}
+    for agent_id, paths in resolved.items():
+        (only, *others) = paths
+        if only is not None and not others:
+            units[agent_id] = only
+    return units
+
+
+def file_kind_problem(records: list[dict[str, Any]], kind: str) -> str | None:
+    """Why these rows cannot be the declared kind of metrics file, or None.
+
+    The two files differ by one key: subagent rows carry agent_id, session
+    rows never do. A subagents run over rows without one would group them
+    under None; a sessions run over subagent rows would group them on their
+    PARENT's session_id. Both are the contamination this check exists to
+    refuse up front, before any plan is computed.
+    """
+    total = len(records)
+    if kind == "subagents":
+        missing = sum(1 for record in records if not record.get("agent_id"))
+        if missing:
+            return (
+                f"{missing} of {total} rows have no agent_id - this does not look like "
+                "subagents.jsonl"
+            )
+        return None
+    carrying = sum(1 for record in records if "agent_id" in record)
+    if carrying:
+        return (
+            f"{carrying} of {total} rows carry an agent_id - this looks like "
+            "subagents.jsonl; pass --kind subagents"
+        )
+    return None
 
 
 def scan_transcript(path: str) -> list[tuple[str, bool, tuple[int, ...], str]]:
@@ -170,14 +293,21 @@ def token_sum(record: dict[str, Any]) -> int:
 
 
 def plan_corrections(
-    records: list[dict[str, Any]], transcripts: dict[str, str], cutoff: str
+    records: list[dict[str, Any]],
+    transcripts: dict[str, str],
+    cutoff: str,
+    id_key: str = "session_id",
 ) -> tuple[dict[int, list[int]], collections.Counter[str], list[float]]:
     """Decide which sessions can be recomputed, and to what.
 
     Returns (plan, stats, factors) where plan maps a row index to its new
-    token values. Decisions are taken per SESSION and applied to all of its
-    rows or none of them; every skip reason is counted so the dry run shows
-    exactly what was and was not touched.
+    token values. Decisions are taken per UNIT - the rows sharing `id_key` -
+    and applied to all of its rows or none of them; every skip reason is
+    counted so the dry run shows exactly what was and was not touched.
+
+    `transcripts` is keyed by that same id. For subagents.jsonl pass
+    id_key="agent_id" (see UNIT_ID_KEYS): the session_id on a subagent row
+    is its parent's.
     """
     stats: collections.Counter[str] = collections.Counter()
     factors: list[float] = []
@@ -185,7 +315,7 @@ def plan_corrections(
 
     rows_by_session: dict[Any, list[int]] = collections.defaultdict(list)
     for index, record in enumerate(records):
-        rows_by_session[record.get("session_id")].append(index)
+        rows_by_session[record.get(id_key)].append(index)
 
     for session_id, indexes in rows_by_session.items():
         transcript = transcripts.get(session_id)
@@ -241,17 +371,23 @@ def plan_corrections(
     return plan, stats, factors
 
 
-def find_nonmonotonic_sessions(records: list[dict[str, Any]]) -> set[Any]:
-    """Sessions whose snapshot series is not non-decreasing.
+def find_nonmonotonic_sessions(
+    records: list[dict[str, Any]], id_key: str = "session_id"
+) -> set[Any]:
+    """Units (rows sharing `id_key`) whose snapshot series is not
+    non-decreasing.
 
-    expand_records_to_daily_deltas orders a session's snapshots by
+    expand_records_to_daily_deltas orders a unit's snapshots by
     duration_seconds and differences them, flooring at zero - so a series
-    that goes DOWN silently drops usage. Any such session introduced by this
+    that goes DOWN silently drops usage. Any such unit introduced by this
     rewrite would be a bug; pre-existing ones are reported for comparison.
+    Subagents must pass id_key="agent_id", the key the expander groups them
+    by: merged under their parent's session_id, two healthy agents read as
+    one series that drops.
     """
     by_session: dict[Any, list[dict[str, Any]]] = collections.defaultdict(list)
     for record in records:
-        by_session[record.get("session_id")].append(record)
+        by_session[record.get(id_key)].append(record)
     offenders: set[Any] = set()
     for session_id, snapshots in by_session.items():
         snapshots = sorted(snapshots, key=lambda r: r.get("duration_seconds") or 0)
@@ -360,9 +496,21 @@ def write_backfill_state(
     uncorrectable_rows: int = 0,
     earliest_corrected: str | None = None,
     path: str | None = None,
+    kind: str = "sessions",
 ) -> dict[str, Any]:
+    """Record a successful apply, merged into whatever the file holds.
+
+    One state file serves both metrics files. The sessions entry keeps the
+    flat top-level shape both dashboards read through describe_backfill_state
+    (and that every state written before subagents were deduped has); a
+    subagents run nests its entry under a "subagents" key. Each kind replaces
+    only its own entry, so neither run erases the other's record. A file that
+    does not hold a dict is replaced rather than merged into.
+    """
     path = path or BACKFILL_STATE_FILE
-    state = {
+    existing = load_backfill_state(path)
+    state: dict[str, Any] = existing if isinstance(existing, dict) else {}
+    entry = {
         "cutoff": cutoff,
         "applied_at": applied_at,
         "corrected_rows": corrected_rows,
@@ -374,6 +522,10 @@ def write_backfill_state(
         "uncorrectable_rows": uncorrectable_rows,
         "earliest_corrected": earliest_corrected,
     }
+    if kind == "subagents":
+        state["subagents"] = entry
+    else:
+        state.update(entry)
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
     with target.open("w") as f:

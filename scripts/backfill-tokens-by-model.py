@@ -123,8 +123,10 @@ from typing import Any, NamedTuple, NoReturn
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
 from metrics_core.backfill import (
+    index_subagent_transcripts,
     index_transcripts,
     model_totals_as_of,
+    resolve_transcript,
     scan_transcript,
     sha256_bytes,
     sha256_of,
@@ -209,67 +211,6 @@ class NativeRows(NamedTuple):
     checkable: list[tuple[int, str]]
     undated: list[int]
     unreachable: list[int]
-
-
-def resolve_transcript(
-    record: dict[str, Any], transcripts: dict[str, str], transcript_key: str, unit_id: Any
-) -> str | None:
-    """The transcript this row was parsed from, or None if it is gone.
-
-    A row that RECORDED a path whose file is no longer there gets a second
-    chance through the by-id index: a session logged from two working
-    directories exists under two project slugs, so a stored path can be stale
-    while the transcript itself is still on disk under the same id.
-
-    A row that recorded NO path never had one - there is nothing on disk to
-    look for, and no recorded path to confirm an index hit against - so it
-    resolves to None and (see plan_backfill) disqualifies its whole unit. The
-    by-id index is a way to relocate a known transcript, not a way to guess
-    one.
-    """
-    recorded = record.get(transcript_key)
-    if not recorded:
-        return None
-    if Path(recorded).exists():
-        return str(recorded)
-    return transcripts.get(unit_id)
-
-
-def index_subagent_transcripts(projects_dir: str) -> tuple[dict[str, str], list[str]]:
-    """agent_id -> transcript path, for the files index_transcripts excludes.
-
-    Subagent transcripts sit one level deeper than session ones, at
-    <projects>/<slug>/<session_id>/subagents/<agent_id>.jsonl, and are keyed
-    by AGENT id. index_transcripts deliberately walks only <slug>/*.jsonl and
-    keys by SESSION id - its docstring says the deeper paths belong to
-    subagents.jsonl, not there - so handing it to the subagent half of this
-    script hands over an index that cannot hit on any key. Measured
-    2026-09-16: 44 native subagent snapshots were being skipped as
-    "no transcript" while all 44 files were on disk, migrated into the parent
-    project slug exactly as the session transcripts were.
-
-    The filename carries the agent id with an `agent-` PREFIX that the record
-    itself does not have: the file is `agent-a04a2851b378c2216.jsonl` and the
-    record's agent_id is `a04a2851b378c2216`. Measured 2026-09-16 over the
-    whole tree: 1,005 of 1,005 transcript basenames carry the prefix, 2,124
-    of 2,124 agent_id values do not, and all 1,953 rows with a recorded path
-    have `basename == "agent-" + agent_id`. Keying by the raw basename
-    therefore builds an index that looks populated and never matches - the
-    same class of failure as handing over the session index, one level down.
-
-    An agent id found under more than one slug is AMBIGUITY, not a match:
-    nothing here can tell which copy the record was parsed from, and picking
-    the bigger or the first would be a guess dressed as a resolution. Those
-    ids are left out of the index and returned so the run can name them.
-    """
-    prefix = "agent-"
-    found: dict[str, list[str]] = collections.defaultdict(list)
-    for path in Path(projects_dir).glob("*/*/subagents/*.jsonl"):
-        stem = path.name[: -len(".jsonl")]
-        found[stem.removeprefix(prefix)].append(str(path))
-    index = {agent_id: paths[0] for agent_id, paths in found.items() if len(paths) == 1}
-    ambiguous = sorted(agent_id for agent_id, paths in found.items() if len(paths) > 1)
-    return index, ambiguous
 
 
 def index_for_file(file_name: str, projects_dir: str) -> tuple[dict[str, str], list[str]]:

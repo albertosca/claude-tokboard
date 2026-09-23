@@ -802,3 +802,210 @@ def test_module_guard_calls_main_and_exits_with_its_return_code(tmp_path, monkey
         spec.loader.exec_module(module)
 
     assert excinfo.value.code == 1
+
+
+# --- subagents.jsonl: units are agent_ids, never the parent session_id ----
+
+
+def _subagent_row(
+    agent_id: str, timestamp_end: str, duration: int, tokens: int, path: str
+) -> dict[str, object]:
+    # Mirrors hooks/subagent-metrics-log.py build_record: every subagent row
+    # carries its PARENT's session_id beside its own agent_id.
+    return {
+        "session_id": "parent",
+        "agent_id": agent_id,
+        "agent_type": "general-purpose",
+        "timestamp_end": timestamp_end,
+        "duration_seconds": duration,
+        "input_tokens": tokens,
+        "output_tokens": 0,
+        "cache_read_tokens": 0,
+        "cache_creation_tokens": 0,
+        "agent_transcript_path": path,
+    }
+
+
+def _replayed(
+    timestamp: str, message_id: str, tokens: int, copies: int
+) -> list[tuple[str, str, dict[str, int]]]:
+    usage = {
+        "input_tokens": tokens,
+        "output_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "cache_creation_input_tokens": 0,
+    }
+    return [(timestamp, message_id, usage)] * copies
+
+
+def _subagents_fixture(tmp_path: Path) -> dict[str, Path]:
+    projects = tmp_path / "projects"
+    agents = projects / "some-project" / "parent" / "subagents"
+    agents.mkdir(parents=True)
+    # a1: one message stored twice -> raw 200, deduped 100.
+    _write_transcript(agents / "agent-a1.jsonl", _replayed("2026-08-01T10:00:00", "m1", 100, 2))
+    # a2: one message stored five times -> raw 250, deduped 50. Its row
+    # records a path that has since gone stale; the by-id index finds it.
+    _write_transcript(agents / "agent-a2.jsonl", _replayed("2026-08-01T11:00:00", "m2", 50, 5))
+    # a3: inflated the same way, but written after the cutoff.
+    _write_transcript(agents / "agent-a3.jsonl", _replayed("2026-08-22T09:00:00", "m3", 10, 2))
+    metrics = tmp_path / "subagents.jsonl"
+    rows = [
+        _subagent_row("a1", "2026-08-01T10:00:00", 10, 200, str(agents / "agent-a1.jsonl")),
+        _subagent_row("a2", "2026-08-01T11:00:00", 20, 250, str(tmp_path / "moved" / "x.jsonl")),
+        _subagent_row("a3", "2026-08-22T09:00:00", 5, 20, str(agents / "agent-a3.jsonl")),
+    ]
+    # Durations are chosen so that, merged under "parent" and ordered by
+    # duration, the stored series (20, 200, 250) climbs and the corrected
+    # one (20, 100, 50) drops: a monotonicity check grouped by session_id
+    # would report a regression this rewrite did not introduce.
+    metrics.write_text("".join(json.dumps(row) + "\n" for row in rows))
+    state = tmp_path / "backfill_state.json"
+    state.write_text(
+        json.dumps(
+            {"cutoff": "2026-08-21", "applied_at": "2026-08-21T19:49:23", "corrected_rows": 2798}
+        )
+    )
+    return {
+        "projects": projects,
+        "metrics": metrics,
+        "state": state,
+        "backups": tmp_path / "backups",
+    }
+
+
+def _subagents_argv(paths: dict[str, Path], *extra: str) -> list[str]:
+    return [
+        "backfill-token-dedup.py",
+        "--kind",
+        "subagents",
+        "--metrics-file",
+        str(paths["metrics"]),
+        "--projects-dir",
+        str(paths["projects"]),
+        "--backup-dir",
+        str(paths["backups"]),
+        "--state-file",
+        str(paths["state"]),
+        "--cutoff",
+        "2026-08-21",
+        *extra,
+    ]
+
+
+def test_main_dedups_each_subagent_against_its_own_transcript(
+    tmp_path, script, monkeypatch, capsys
+):
+    # The contamination test for this script: two subagents of one parent
+    # session, each corrected against ITS OWN transcript. Grouped by the
+    # parent session_id they would share one unit that no transcript is
+    # keyed by, and the corrected pair (100 then 50, in duration order)
+    # would read as a series that goes down.
+    paths = _subagents_fixture(tmp_path)
+    monkeypatch.setattr("sys.argv", _subagents_argv(paths, "--apply"))
+
+    exit_code = script.main()
+
+    captured = capsys.readouterr()
+    assert exit_code == 0, captured.err
+    assert "indexed 3 subagent transcripts" in captured.out
+    rows = [json.loads(line) for line in paths["metrics"].read_text().splitlines()]
+    assert [row["input_tokens"] for row in rows] == [100, 50, 20]
+    # a3 sits past the cutoff: inflated, and left alone on purpose.
+    assert rows[2]["input_tokens"] == 20
+
+    backups = list(paths["backups"].glob("subagents.jsonl.backfill-*.bak"))
+    assert len(backups) == 1
+    assert not list(paths["backups"].glob("sessions.jsonl*"))
+
+    state = json.loads(paths["state"].read_text())
+    # The sessions entry the dashboards read is untouched...
+    assert state["cutoff"] == "2026-08-21"
+    assert state["applied_at"] == "2026-08-21T19:49:23"
+    assert state["corrected_rows"] == 2798
+    # ...and this run is recorded beside it.
+    assert state["subagents"]["corrected_rows"] == 2
+    assert state["subagents"]["cutoff"] == "2026-08-21"
+    assert state["subagents"]["earliest_corrected"] == "2026-08-01T10:00:00"
+    assert state["subagents"]["uncorrectable_rows"] == 0
+
+
+def test_main_subagents_dry_run_writes_nothing(tmp_path, script, monkeypatch, capsys):
+    paths = _subagents_fixture(tmp_path)
+    before = paths["metrics"].read_bytes()
+    state_before = paths["state"].read_bytes()
+    monkeypatch.setattr("sys.argv", _subagents_argv(paths))
+
+    assert script.main() == 0
+
+    out = capsys.readouterr().out
+    assert "DRY RUN - nothing written" in out
+    assert "Lines: 3 read, 2 would change" in out
+    assert paths["metrics"].read_bytes() == before
+    assert paths["state"].read_bytes() == state_before
+    assert not paths["backups"].exists()
+
+
+def test_main_refuses_a_subagents_run_on_a_sessions_file(tmp_path, script, monkeypatch, capsys):
+    paths = _subagents_fixture(tmp_path)
+    paths["metrics"].write_text(
+        json.dumps({"session_id": "s1", "timestamp_end": "2026-08-01T00:00:00", "input_tokens": 9})
+        + "\n"
+    )
+    before = paths["metrics"].read_bytes()
+    monkeypatch.setattr("sys.argv", _subagents_argv(paths, "--apply"))
+
+    assert script.main() == 1
+
+    err = capsys.readouterr().err
+    assert "refusing: --kind subagents" in err
+    assert "1 of 1 rows have no agent_id" in err
+    assert paths["metrics"].read_bytes() == before
+    assert not paths["backups"].exists()
+    assert "subagents" not in json.loads(paths["state"].read_text())
+
+
+def test_main_refuses_a_sessions_run_on_a_subagents_file(tmp_path, script, monkeypatch, capsys):
+    # --kind defaults to sessions, so pointing --metrics-file at
+    # subagents.jsonl without it - how this file would have been run before
+    # --kind existed - refuses instead of grouping on the parent session_id.
+    paths = _subagents_fixture(tmp_path)
+    before = paths["metrics"].read_bytes()
+    argv = _subagents_argv(paths, "--apply")
+    del argv[1:3]
+    monkeypatch.setattr("sys.argv", argv)
+
+    assert script.main() == 1
+
+    err = capsys.readouterr().err
+    assert "refusing: --kind sessions" in err
+    assert "3 of 3 rows carry an agent_id" in err
+    assert paths["metrics"].read_bytes() == before
+    assert not paths["backups"].exists()
+
+
+def test_main_defaults_the_metrics_file_from_the_kind(tmp_path, script, monkeypatch, capsys):
+    paths = _subagents_fixture(tmp_path)
+    monkeypatch.setitem(script.METRICS_FILES, "subagents", str(paths["metrics"]))
+    argv = _subagents_argv(paths)
+    del argv[3:5]  # no --metrics-file
+    monkeypatch.setattr("sys.argv", argv)
+
+    assert script.main() == 0
+
+    assert f"read 3 lines from {paths['metrics']}" in capsys.readouterr().out
+
+
+def test_main_names_ambiguous_subagent_transcripts(tmp_path, script, monkeypatch, capsys):
+    paths = _subagents_fixture(tmp_path)
+    twin = paths["projects"] / "other-project" / "parent" / "subagents"
+    twin.mkdir(parents=True)
+    _write_transcript(twin / "agent-a2.jsonl", _replayed("2026-08-01T11:00:00", "m2", 50, 5))
+    monkeypatch.setattr("sys.argv", _subagents_argv(paths))
+
+    assert script.main() == 0
+
+    out = capsys.readouterr().out
+    assert "1 id(s) found under more than one project slug and left unindexed: ['a2']" in out
+    # a2's recorded path is stale and its id is ambiguous: uncorrectable.
+    assert "Lines: 3 read, 1 would change" in out

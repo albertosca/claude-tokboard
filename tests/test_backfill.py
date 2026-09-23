@@ -549,6 +549,172 @@ def test_find_nonmonotonic_sessions_ignores_a_non_decreasing_series():
     assert mr.find_nonmonotonic_sessions(records) == set()
 
 
+# --- subagent units: grouped by agent_id, never by the parent session_id ----
+
+
+def subagent_record(agent_id: str, timestamp_end: str, input_tokens: int) -> dict[str, Any]:
+    # Every subagent row also carries session_id - its PARENT's. Two agents
+    # dispatched by one session therefore share it, which is exactly what a
+    # grouping on session_id cannot tell apart.
+    return dict(record("parent", timestamp_end, input_tokens, 0), agent_id=agent_id)
+
+
+def test_plan_corrections_corrects_two_subagents_of_one_parent_independently(tmp_path):
+    # The contamination test (the 2026-08-06 bug, for this function): two
+    # subagents of the same parent session, each with its own duplicated
+    # transcript. Grouped by agent_id, each is measured against its own
+    # transcript and lands on its own deduped value. Grouped by session_id,
+    # both rows fall into one unit keyed "parent", which has no transcript
+    # of its own - and with a parent transcript present they would both be
+    # measured against it.
+    first = tmp_path / "agent-a1.jsonl"
+    second = tmp_path / "agent-a2.jsonl"
+    parent = tmp_path / "parent.jsonl"
+    write_transcript(
+        first,
+        [
+            ("2026-08-01T10:00:00", "m1", usage(input_tokens=100)),
+            ("2026-08-01T10:00:01", "m1", usage(input_tokens=100)),  # replay
+        ],
+    )
+    write_transcript(
+        second,
+        [
+            ("2026-08-01T11:00:00", "m2", usage(input_tokens=30)),
+            ("2026-08-01T11:00:01", "m2", usage(input_tokens=30)),  # replay
+            ("2026-08-01T11:00:02", "m2", usage(input_tokens=30)),  # replay
+        ],
+    )
+    write_transcript(parent, [("2026-08-01T09:00:00", "p1", usage(input_tokens=7))])
+    records = [
+        subagent_record("a1", "2026-08-01T10:00:01", 200),  # raw: 2 x 100
+        subagent_record("a2", "2026-08-01T11:00:02", 90),  # raw: 3 x 30
+    ]
+    transcripts = {"a1": str(first), "a2": str(second), "parent": str(parent)}
+
+    plan, stats, factors = mr.plan_corrections(
+        records, transcripts, cutoff="2026-08-13", id_key="agent_id"
+    )
+
+    assert plan == {0: [100, 0, 0, 0], 1: [30, 0, 0, 0]}
+    assert +stats == {"corrected": 2}  # unary + drops zero counts
+    assert sorted(factors) == [2.0, 3.0]
+
+
+def test_plan_corrections_still_groups_on_session_id_by_default(tmp_path):
+    # The sessions path is unchanged: without id_key, rows group on
+    # session_id, so a transcript keyed by an agent id is never consulted.
+    path = tmp_path / "agent-a1.jsonl"
+    write_transcript(
+        path,
+        [
+            ("2026-08-01T10:00:00", "m1", usage(input_tokens=100)),
+            ("2026-08-01T10:00:01", "m1", usage(input_tokens=100)),
+        ],
+    )
+    records = [subagent_record("a1", "2026-08-01T10:00:01", 200)]
+    plan, stats, _factors = mr.plan_corrections(records, {"a1": str(path)}, cutoff="2026-08-13")
+    assert plan == {}
+    assert stats["untouched: no transcript on disk"] == 1
+
+
+def test_find_nonmonotonic_sessions_groups_subagents_by_agent_id():
+    # Two agents of one parent: a1 finishes big, a2 finishes small and later.
+    # Each series is non-decreasing on its own; merged under the parent's
+    # session_id they read as a drop, which would refuse a correct rewrite.
+    records = [
+        dict(subagent_record("a1", "x", 500), duration_seconds=10),
+        dict(subagent_record("a2", "x", 40), duration_seconds=20),
+    ]
+    assert mr.find_nonmonotonic_sessions(records, id_key="agent_id") == set()
+    assert mr.find_nonmonotonic_sessions(records) == {"parent"}
+
+
+def test_find_nonmonotonic_sessions_still_flags_a_drop_within_one_subagent():
+    records = [
+        dict(subagent_record("a1", "x", 500), duration_seconds=10),
+        dict(subagent_record("a1", "x", 40), duration_seconds=20),
+    ]
+    assert mr.find_nonmonotonic_sessions(records, id_key="agent_id") == {"a1"}
+
+
+def test_file_kind_problem_accepts_rows_that_match_the_declared_kind():
+    sessions = [record("s1", "x", 1, 0)]
+    subagents = [subagent_record("a1", "x", 1)]
+    assert mr.file_kind_problem(sessions, "sessions") is None
+    assert mr.file_kind_problem(subagents, "subagents") is None
+    assert mr.file_kind_problem([], "subagents") is None
+
+
+def test_file_kind_problem_refuses_a_subagents_run_on_rows_without_agent_id():
+    rows = [record("s1", "x", 1, 0), subagent_record("a1", "x", 1)]
+    problem = mr.file_kind_problem(rows, "subagents")
+    assert problem is not None
+    assert "1 of 2 rows have no agent_id" in problem
+
+
+def test_file_kind_problem_refuses_a_subagents_run_on_rows_whose_agent_id_is_empty():
+    # A null agent_id groups every such row into one unit keyed None: the
+    # same merge as grouping on session_id, one level down.
+    rows = [dict(record("s1", "x", 1, 0), agent_id=None)]
+    problem = mr.file_kind_problem(rows, "subagents")
+    assert problem is not None
+    assert "1 of 1 rows have no agent_id" in problem
+
+
+def test_file_kind_problem_refuses_a_sessions_run_on_subagent_rows():
+    rows = [subagent_record("a1", "x", 1), subagent_record("a2", "x", 1)]
+    problem = mr.file_kind_problem(rows, "sessions")
+    assert problem is not None
+    assert "2 of 2 rows carry an agent_id" in problem
+
+
+def test_subagent_transcripts_resolves_each_unit_through_its_recorded_path(tmp_path):
+    here = tmp_path / "agent-a1.jsonl"
+    here.write_text("")
+    moved = tmp_path / "moved-agent-a2.jsonl"
+    moved.write_text("")
+    records = [
+        dict(subagent_record("a1", "x", 1), agent_transcript_path=str(here)),
+        dict(subagent_record("a1", "y", 2), agent_transcript_path=str(here)),
+        # stale recorded path, relocated through the by-id index
+        dict(subagent_record("a2", "x", 1), agent_transcript_path=str(tmp_path / "gone")),
+        # no recorded path at all: never guessed from the index
+        dict(subagent_record("a3", "x", 1), agent_transcript_path=None),
+        # stale and not in the index
+        dict(subagent_record("a4", "x", 1), agent_transcript_path=str(tmp_path / "gone")),
+        # no agent_id: never a unit of its own, never keyed None
+        dict(subagent_record("a5", "x", 1), agent_id=None, agent_transcript_path=str(here)),
+    ]
+    index = {"a2": str(moved), "a3": str(here)}
+
+    resolved = mr.subagent_transcripts(records, index)
+
+    assert resolved == {"a1": str(here), "a2": str(moved)}
+
+
+def test_subagent_transcripts_drops_a_unit_whose_rows_resolve_to_different_files(tmp_path):
+    first = tmp_path / "one.jsonl"
+    first.write_text("")
+    second = tmp_path / "two.jsonl"
+    second.write_text("")
+    records = [
+        dict(subagent_record("a1", "x", 1), agent_transcript_path=str(first)),
+        dict(subagent_record("a1", "y", 2), agent_transcript_path=str(second)),
+    ]
+    assert mr.subagent_transcripts(records, {}) == {}
+
+
+def test_subagent_transcripts_drops_a_unit_where_one_row_does_not_resolve(tmp_path):
+    here = tmp_path / "agent-a1.jsonl"
+    here.write_text("")
+    records = [
+        dict(subagent_record("a1", "x", 1), agent_transcript_path=str(here)),
+        dict(subagent_record("a1", "y", 2), agent_transcript_path=None),
+    ]
+    assert mr.subagent_transcripts(records, {"a1": str(here)}) == {}
+
+
 # --- daily_totals ---------------------------------------------------------
 
 
@@ -745,6 +911,65 @@ def test_write_backfill_state_records_uncorrectable_rows_and_earliest_corrected(
     assert loaded == written
     assert loaded["uncorrectable_rows"] == 42
     assert loaded["earliest_corrected"] == "2026-07-22T09:00:00"
+
+
+def test_write_backfill_state_for_subagents_keeps_the_sessions_entry(tmp_path):
+    # One state file, two metrics files. The sessions entry stays the flat
+    # top-level shape both dashboards already read; a subagents run nests
+    # its own entry under "subagents" and must not overwrite the sessions one.
+    path = str(tmp_path / "state.json")
+    mr.write_backfill_state(
+        "2026-08-21", "2026-08-21T19:49:23", 2798, earliest_corrected="2026-07-22", path=path
+    )
+    written = mr.write_backfill_state(
+        "2026-08-21",
+        "2026-09-23T20:00:00",
+        150,
+        uncorrectable_rows=7,
+        earliest_corrected="2026-07-10T00:00:00",
+        path=path,
+        kind="subagents",
+    )
+    loaded = mr.load_backfill_state(path)
+    assert loaded == written
+    assert loaded["applied_at"] == "2026-08-21T19:49:23"
+    assert loaded["corrected_rows"] == 2798
+    assert loaded["earliest_corrected"] == "2026-07-22"
+    assert loaded["subagents"] == {
+        "cutoff": "2026-08-21",
+        "applied_at": "2026-09-23T20:00:00",
+        "corrected_rows": 150,
+        "uncorrectable_rows": 7,
+        "earliest_corrected": "2026-07-10T00:00:00",
+    }
+    # The boundary note both dashboards render still describes the sessions run.
+    assert "2026-07-22" in mr.describe_backfill_state(loaded, lang="en")
+
+
+def test_write_backfill_state_for_sessions_keeps_the_subagents_entry(tmp_path):
+    path = str(tmp_path / "state.json")
+    mr.write_backfill_state("2026-08-21", "2026-09-23T20:00:00", 150, path=path, kind="subagents")
+    mr.write_backfill_state("2026-08-25", "2026-09-24T09:00:00", 12, path=path)
+    loaded = mr.load_backfill_state(path)
+    assert loaded is not None
+    assert loaded["cutoff"] == "2026-08-25"
+    assert loaded["corrected_rows"] == 12
+    assert loaded["subagents"]["corrected_rows"] == 150
+
+
+def test_write_backfill_state_for_subagents_over_a_malformed_file(tmp_path):
+    # A hand-edited state that is not a dict is replaced rather than merged
+    # into; the sessions side then reads as never applied, which is true of
+    # what is left on disk.
+    path = tmp_path / "state.json"
+    path.write_text("[1, 2]")
+    mr.write_backfill_state(
+        "2026-08-21", "2026-09-23T20:00:00", 1, path=str(path), kind="subagents"
+    )
+    loaded = mr.load_backfill_state(str(path))
+    assert loaded is not None
+    assert set(loaded) == {"subagents"}
+    assert "2026-08-21" not in mr.describe_backfill_state(loaded, lang="en")
 
 
 def test_describe_backfill_state_when_never_applied():

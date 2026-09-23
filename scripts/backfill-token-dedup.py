@@ -53,6 +53,20 @@ Safety
   verbatim - no line is ever lost;
 - only the four token fields may change, and only downwards; every other
   field is compared byte-for-byte before the rename.
+
+subagents.jsonl
+---------------
+The subagent hook had the same bug, so subagents.jsonl needs the same
+correction, run with --kind subagents. Everything above holds with one
+change of UNIT: a subagent row carries its own agent_id AND its parent's
+session_id, so its series is grouped by agent_id - grouping on session_id
+merges every subagent one session dispatched, the 2026-08-06 contamination
+(1012 of 1036 agent_ids mismatched). Its transcript is found the way
+scripts/backfill-tokens-by-model.py finds it: the row's recorded
+agent_transcript_path, relocated through the by-agent-id index when stale.
+The run refuses when --kind contradicts the rows (agent_id present or
+absent), and records its state under a "subagents" key of the same state
+file, leaving the sessions entry the dashboards read untouched.
 """
 
 from __future__ import annotations
@@ -74,19 +88,25 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 from metrics_core.backfill import (
     BACKFILL_STATE_FILE,
     DEFAULT_CUTOFF,
+    UNIT_ID_KEYS,
     apply_plan,
     daily_totals,
+    file_kind_problem,
     find_nonmonotonic_sessions,
+    index_subagent_transcripts,
     index_transcripts,
     plan_corrections,
     sha256_bytes,
     sha256_of,
+    subagent_transcripts,
     token_sum,
     verify_fields,
     write_backfill_state,
 )
 
-METRICS_FILE = str(Path("~/.claude/metrics/sessions.jsonl").expanduser())
+METRICS_FILES = {
+    kind: str(Path(f"~/.claude/metrics/{kind}.jsonl").expanduser()) for kind in UNIT_ID_KEYS
+}
 BACKUP_DIR = str(Path("~/.claude/metrics/backups").expanduser())
 PROJECTS_DIR = str(Path("~/.claude/projects").expanduser())
 
@@ -182,7 +202,7 @@ def write_atomically(path: str, snapshot_prefix: bytes, new_lines: list[bytes], 
     target = Path(path)
     directory = target.parent
     handle, temporary_name = tempfile.mkstemp(
-        dir=directory, prefix=".sessions.jsonl.", suffix=".new"
+        dir=directory, prefix=f".{target.name}.", suffix=".new"
     )
     temporary = Path(temporary_name)
     tail = b""
@@ -220,7 +240,20 @@ def main() -> int:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    parser.add_argument("--metrics-file", default=METRICS_FILE)
+    parser.add_argument(
+        "--kind",
+        choices=sorted(UNIT_ID_KEYS),
+        default="sessions",
+        help=(
+            "which metrics file this is; decides the unit a snapshot series is grouped "
+            "by (session_id or agent_id). The run refuses if the rows contradict it"
+        ),
+    )
+    parser.add_argument(
+        "--metrics-file",
+        default=None,
+        help="default: ~/.claude/metrics/<kind>.jsonl",
+    )
     parser.add_argument("--projects-dir", default=PROJECTS_DIR)
     parser.add_argument("--backup-dir", default=BACKUP_DIR)
     parser.add_argument(
@@ -245,7 +278,8 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    path = args.metrics_file
+    id_key = UNIT_ID_KEYS[args.kind]
+    path = args.metrics_file or METRICS_FILES[args.kind]
     metrics_path = Path(path)
     if not metrics_path.exists():
         print(f"no metrics file at {path}", file=sys.stderr)
@@ -268,10 +302,25 @@ def main() -> int:
             print(f"line {number} is not valid JSON, aborting: {error}", file=sys.stderr)
             return 1
 
-    transcripts = index_transcripts(args.projects_dir)
-    print(f"indexed {len(transcripts)} session transcripts under {args.projects_dir}")
+    kind_problem = file_kind_problem(records, args.kind)
+    if kind_problem:
+        print(f"refusing: --kind {args.kind}, but {kind_problem}", file=sys.stderr)
+        return 1
 
-    plan, stats, factors = plan_corrections(records, transcripts, args.cutoff)
+    if args.kind == "subagents":
+        index, ambiguous = index_subagent_transcripts(args.projects_dir)
+        print(f"indexed {len(index)} subagent transcripts under {args.projects_dir}")
+        if ambiguous:
+            print(
+                f"  {len(ambiguous)} id(s) found under more than one project slug and "
+                f"left unindexed: {ambiguous[:5]}"
+            )
+        transcripts = subagent_transcripts(records, index)
+    else:
+        transcripts = index_transcripts(args.projects_dir)
+        print(f"indexed {len(transcripts)} session transcripts under {args.projects_dir}")
+
+    plan, stats, factors = plan_corrections(records, transcripts, args.cutoff, id_key)
     corrected = apply_plan(records, plan)
 
     before_total = sum(token_sum(r) for r in records)
@@ -290,8 +339,8 @@ def main() -> int:
         return 1
     print("\nfield-by-field verification: only token fields changed, none increased")
 
-    before_offenders = find_nonmonotonic_sessions(records)
-    after_offenders = find_nonmonotonic_sessions(corrected)
+    before_offenders = find_nonmonotonic_sessions(records, id_key)
+    after_offenders = find_nonmonotonic_sessions(corrected, id_key)
     introduced = after_offenders - before_offenders
     print(
         f"non-monotonic snapshot series: {len(before_offenders)} before, "
@@ -311,7 +360,7 @@ def main() -> int:
         backup_dir = Path(args.backup_dir)
         backup_dir.mkdir(parents=True, exist_ok=True)
         stamp = datetime.now().strftime("%Y-%m-%d-%H%M%S")
-        backup = backup_dir / f"sessions.jsonl.backfill-{stamp}.bak"
+        backup = backup_dir / f"{metrics_path.name}.backfill-{stamp}.bak"
         shutil.copy2(path, backup)
         source_sha = sha256_of(path)
         backup_sha = sha256_of(str(backup))
@@ -355,6 +404,7 @@ def main() -> int:
         uncorrectable_rows=uncorrectable_rows,
         earliest_corrected=earliest_corrected,
         path=args.state_file,
+        kind=args.kind,
     )
     print(f"  backfill state recorded: {args.state_file}")
     return 0
