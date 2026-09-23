@@ -37,10 +37,10 @@ def test_saving_the_agent_cache_while_a_worker_thread_still_writes_it_never_rais
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(labels_module, "AGENT_LABELS_FILE", str(tmp_path / "agent_labels.json"))
-    monkeypatch.setattr(labels_module, "compress_to_label", lambda source: "a label")
+    monkeypatch.setattr(labels_module, "compress_to_label", lambda source, *, lang: "a label")
     monkeypatch.setattr(labels_module, "warm_summary_source", lambda path, max_turns=4: "some text")
 
-    cache: dict[str, str] = {}
+    cache: mr.LabelCache = {}
     budget = mr.LabelBudget(None)
     records = [
         {"agent_id": f"agent-{i}", "agent_transcript_path": "/some/path.jsonl"}
@@ -52,7 +52,7 @@ def test_saving_the_agent_cache_while_a_worker_thread_still_writes_it_never_rais
     def writer() -> None:
         for record in records:
             try:
-                mr.get_agent_label(record, cache, budget)
+                mr.get_agent_label(record, cache, budget, lang="pt")
             except BaseException as exc:
                 errors.append(exc)
         stop.set()
@@ -85,10 +85,10 @@ def test_saving_the_task_cache_while_a_worker_thread_still_writes_it_never_raise
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(labels_module, "TASK_LABELS_FILE", str(tmp_path / "task_labels.json"))
-    monkeypatch.setattr(labels_module, "compress_to_label", lambda source: "a label")
+    monkeypatch.setattr(labels_module, "compress_to_label", lambda source, *, lang: "a label")
     monkeypatch.setattr(labels_module, "cold_summary_source", lambda path, max_turns=6: "some text")
 
-    cache: dict[str, str] = {}
+    cache: mr.LabelCache = {}
     budget = mr.LabelBudget(None)
     records = [
         {"session_id": f"session-{i}", "transcript_path": "/some/path.jsonl"}
@@ -100,7 +100,7 @@ def test_saving_the_task_cache_while_a_worker_thread_still_writes_it_never_raise
     def writer() -> None:
         for record in records:
             try:
-                mr.get_task_label(record, cache, budget)
+                mr.get_task_label(record, cache, budget, lang="pt")
             except BaseException as exc:
                 errors.append(exc)
         stop.set()

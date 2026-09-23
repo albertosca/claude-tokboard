@@ -180,9 +180,9 @@ def test_subagent_with_no_agent_id_is_skipped_without_crashing(monkeypatch, tmp_
     calls: list[dict[str, Any]] = []
     original = mr.get_agent_label
 
-    def spy(record: dict[str, Any], cache: Any, budget: Any) -> Any:
+    def spy(record: dict[str, Any], cache: Any, budget: Any, *, lang: str) -> Any:
         calls.append(record)
-        return original(record, cache, budget)
+        return original(record, cache, budget, lang=lang)
 
     monkeypatch.setattr(mr, "get_agent_label", spy)
     args = tui.build_arg_parser().parse_args(["--label-budget", "0"])
@@ -221,9 +221,9 @@ def test_session_with_no_session_id_is_skipped_without_crashing(monkeypatch, tmp
     calls: list[dict[str, Any]] = []
     original = mr.get_task_label
 
-    def spy(record: dict[str, Any], cache: Any, budget: Any) -> Any:
+    def spy(record: dict[str, Any], cache: Any, budget: Any, *, lang: str) -> Any:
         calls.append(record)
-        return original(record, cache, budget)
+        return original(record, cache, budget, lang=lang)
 
     monkeypatch.setattr(mr, "get_task_label", spy)
     args = tui.build_arg_parser().parse_args(["--label-budget", "0"])

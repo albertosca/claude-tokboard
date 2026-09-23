@@ -1353,7 +1353,7 @@ def main() -> None:
         with ThreadPoolExecutor(max_workers=1) as executor:
             futures = {
                 executor.submit(
-                    mr.get_agent_label, unique_agents[k], agent_label_cache, label_budget
+                    mr.get_agent_label, unique_agents[k], agent_label_cache, label_budget, lang=lang
                 ): k
                 for k in agent_keys
             }
@@ -1399,7 +1399,9 @@ def main() -> None:
         label_by_session_id = {}
         with ThreadPoolExecutor(max_workers=1) as executor:
             futures = {
-                executor.submit(mr.get_task_label, unique_sessions[k], label_cache, label_budget): k
+                executor.submit(
+                    mr.get_task_label, unique_sessions[k], label_cache, label_budget, lang=lang
+                ): k
                 for k in session_keys
             }
             for i, future in enumerate(as_completed(futures), 1):

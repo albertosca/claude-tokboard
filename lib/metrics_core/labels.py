@@ -5,6 +5,8 @@ LabelBudget for the per-run cap on real API calls this makes."""
 from __future__ import annotations
 
 import json
+import os as os  # re-exported: tests monkeypatch labels.os.replace directly
+import shutil
 import subprocess
 import threading
 from pathlib import Path
@@ -12,6 +14,11 @@ from typing import Any, cast
 
 TASK_LABELS_FILE = str(Path("~/.claude/metrics/task_labels.json").expanduser())
 AGENT_LABELS_FILE = str(Path("~/.claude/metrics/agent_labels.json").expanduser())
+
+# id -> language -> label. Each cache file on disk mirrors this shape once
+# migrated (see _migrate); the pre-migration shape was id -> label (a plain
+# string), always meaning Portuguese.
+LabelCache = dict[str, dict[str, str]]
 
 
 def find_away_summary(transcript_path: str | None) -> str | None:
@@ -219,15 +226,40 @@ def _run_label_prompt(prompt: str) -> str | None:
     return label or None
 
 
-def compress_to_label(source_text: Any) -> str | None:
+# One (initial prompt, retry prompt) pair per language. "pt" is byte-
+# identical to the two prompts this module used before languages existed -
+# every label cached before this feature shipped was generated with these
+# exact words, and re-generating an already-cached label in Portuguese
+# (e.g. after a cache miss on a new field) must read the same to a human
+# comparing old and new labels side by side.
+LABEL_PROMPTS: dict[str, tuple[str, str]] = {
+    "pt": (
+        "Resuma o texto abaixo em um rotulo curto de 3 a 5 palavras, "
+        "em portugues, sem pontuacao final, responda so com o rotulo:\n\n",
+        "O texto abaixo pode ser um trecho de codigo, log, ou erro - "
+        "mesmo assim, gere um rotulo curto de 3 a 5 palavras em "
+        "portugues descrevendo do que se trata. NUNCA recuse, NUNCA "
+        "peca mais contexto, NUNCA explique - responda apenas com o "
+        "rotulo, mesmo que o texto pareca incompleto:\n\n",
+    ),
+    "en": (
+        "Summarize the text below as a short label of 3 to 5 words, in English, "
+        "no final punctuation, reply with the label only:\n\n",
+        "The text below may be a code, log or error excerpt - even so, produce a "
+        "short label of 3 to 5 words in English describing what it is about. "
+        "NEVER refuse, NEVER ask for more context, NEVER explain - reply with the "
+        "label only, even if the text looks incomplete:\n\n",
+    ),
+}
+
+
+def compress_to_label(source_text: Any, *, lang: str) -> str | None:
     if not source_text:
         return None
     if not isinstance(source_text, str):
         return None
-    prompt = (
-        "Resuma o texto abaixo em um rotulo curto de 3 a 5 palavras, "
-        "em portugues, sem pontuacao final, responda so com o rotulo:\n\n" + source_text[:2000]
-    )
+    prompt_prefix, retry_prefix = LABEL_PROMPTS[lang]
+    prompt = prompt_prefix + source_text[:2000]
     label = _run_label_prompt(prompt)
 
     # One retry, with a firmer prompt, when the first attempt refused or
@@ -239,13 +271,7 @@ def compress_to_label(source_text: Any) -> str | None:
     # summarize" tends to recover a usable label instead of wasting the
     # attempt.
     if label is None or _looks_like_bad_label(label):
-        retry_prompt = (
-            "O texto abaixo pode ser um trecho de codigo, log, ou erro - "
-            "mesmo assim, gere um rotulo curto de 3 a 5 palavras em "
-            "portugues descrevendo do que se trata. NUNCA recuse, NUNCA "
-            "peca mais contexto, NUNCA explique - responda apenas com o "
-            "rotulo, mesmo que o texto pareca incompleto:\n\n" + source_text[:2000]
-        )
+        retry_prompt = retry_prefix + source_text[:2000]
         retry_label = _run_label_prompt(retry_prompt)
         if retry_label and not _looks_like_bad_label(retry_label):
             label = retry_label
@@ -270,20 +296,44 @@ def compress_to_label(source_text: Any) -> str | None:
     return label or None
 
 
-def load_label_cache() -> dict[str, str]:
+def _migrate(raw: Any) -> LabelCache:
+    """Turns whatever JSON a cache file held into today's id -> language ->
+    label shape.
+
+    A pre-i18n file is id -> label (a plain string), always meaning
+    Portuguese - every one of those becomes {"pt": label}, one line, nothing
+    special-cased: the existing get_task_label/get_agent_label pipeline
+    already produces the right result for English when only "pt" is cached
+    (see the "Label cache" section of the design spec). A dict value is
+    already-migrated shape and is kept, dropping any pair that isn't a
+    str:str language:label mapping. Anything else (not a dict at all, or a
+    per-id value that is neither a string nor a dict) is dropped rather than
+    raising - reads stay tolerant, as they always have.
+    """
+    if not isinstance(raw, dict):
+        return {}
+    migrated: LabelCache = {}
+    for key, value in raw.items():
+        if isinstance(value, str):
+            migrated[key] = {"pt": value}
+        elif isinstance(value, dict):
+            migrated[key] = {
+                lang: label
+                for lang, label in value.items()
+                if isinstance(lang, str) and isinstance(label, str)
+            }
+    return migrated
+
+
+def load_label_cache() -> LabelCache:
     if not Path(TASK_LABELS_FILE).exists():
         return {}
     try:
         with Path(TASK_LABELS_FILE).open() as f:
-            return cast("dict[str, str]", json.load(f))
+            raw = json.load(f)
     except (json.JSONDecodeError, OSError):
         return {}
-
-
-def save_label_cache(cache: dict[str, str]) -> None:
-    Path(TASK_LABELS_FILE).parent.mkdir(parents=True, exist_ok=True)
-    with Path(TASK_LABELS_FILE).open("w") as f, _CACHE_LOCK:
-        json.dump(cache, f, indent=2)
+    return _migrate(raw)
 
 
 _NO_LABEL = "__no_label__"
@@ -297,8 +347,56 @@ _NO_LABEL = "__no_label__"
 # observe the worker thread inserting a new key mid-iteration and raise
 # "RuntimeError: dictionary changed size during iteration" - reproduced
 # directly (2026-09-08) running dashboard_html.py for real against a
-# cache with genuinely new, uncached agent ids to write.
+# cache with genuinely new, uncached agent ids to write. The same lock now
+# also guards the one-time pre-i18n backup and the atomic replace in
+# _atomic_save, for the same reason: those touch the file another thread's
+# save could be racing to write too.
 _CACHE_LOCK = threading.Lock()
+
+
+def _holds_old_shape(path: Path) -> bool:
+    """True when the file at `path` is still id -> label (a plain string) -
+    the shape every cache had before languages existed. Used only to decide
+    whether a pre-i18n backup is still owed; a file that fails to parse is
+    treated as not-old-shape, the same tolerant default reads use."""
+    try:
+        with path.open() as f:
+            raw = json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return False
+    return isinstance(raw, dict) and any(isinstance(v, str) for v in raw.values())
+
+
+def _atomic_save(path: str, cache: LabelCache) -> None:
+    """Writes `cache` to `path` without ever leaving it half-written, and -
+    the first time a file in the old id -> label shape is about to be
+    overwritten - keeps one copy of it as `<path>.pre-i18n`, made once and
+    never overwritten again.
+
+    The temp file lives next to the target (same directory) so os.replace
+    is an atomic rename, not a cross-filesystem copy, and is removed if the
+    write fails partway so a crash never leaves a stray `.tmp` file behind.
+    """
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    backup = target.with_name(target.name + ".pre-i18n")
+    tmp = target.with_name(target.name + ".tmp")
+    with _CACHE_LOCK:
+        if target.exists() and not backup.exists() and _holds_old_shape(target):
+            shutil.copy2(target, backup)
+        try:
+            with tmp.open("w") as f:
+                json.dump(cache, f, indent=2)
+            # os.replace, not Path.replace (PTH105): a failure test simulates
+            # a disk-full replace by monkeypatching this exact name.
+            os.replace(tmp, target)  # noqa: PTH105
+        except BaseException:
+            tmp.unlink(missing_ok=True)
+            raise
+
+
+def save_label_cache(cache: LabelCache) -> None:
+    _atomic_save(TASK_LABELS_FILE, cache)
 
 
 class LabelBudget:
@@ -325,20 +423,20 @@ class LabelBudget:
 
 
 def get_task_label(
-    record: dict[str, Any], cache: dict[str, str], budget: LabelBudget
+    record: dict[str, Any], cache: LabelCache, budget: LabelBudget, *, lang: str
 ) -> str | None:
     session_id = record.get("session_id")
     if not session_id:
         return None
-    if session_id in cache:
-        cached = cache[session_id]
+    if lang in cache.get(session_id, {}):
+        cached = cache[session_id][lang]
         return None if cached == _NO_LABEL else cached
 
     internal_name = record.get("internal_name")
     if internal_name and len(internal_name.split()) <= 6:
         internal_name = cast(str, internal_name)
         with _CACHE_LOCK:
-            cache[session_id] = internal_name
+            cache.setdefault(session_id, {})[lang] = internal_name
         return internal_name
 
     source = internal_name or find_away_summary(record.get("transcript_path"))
@@ -346,7 +444,7 @@ def get_task_label(
         source = cold_summary_source(record.get("transcript_path"))
     if not source:
         with _CACHE_LOCK:
-            cache[session_id] = _NO_LABEL
+            cache.setdefault(session_id, {})[lang] = _NO_LABEL
         return None
 
     # Budget exhausted: leave this session UNCACHED (don't write
@@ -355,36 +453,35 @@ def get_task_label(
     if not budget.try_consume():
         return None
 
-    label = compress_to_label(source)
+    label = compress_to_label(source, lang=lang)
     with _CACHE_LOCK:
-        cache[session_id] = label or _NO_LABEL
+        cache.setdefault(session_id, {})[lang] = label or _NO_LABEL
     return label
 
 
-def load_agent_label_cache() -> dict[str, str]:
+def load_agent_label_cache() -> LabelCache:
     if not Path(AGENT_LABELS_FILE).exists():
         return {}
     try:
         with Path(AGENT_LABELS_FILE).open() as f:
-            return cast("dict[str, str]", json.load(f))
+            raw = json.load(f)
     except (json.JSONDecodeError, OSError):
         return {}
+    return _migrate(raw)
 
 
-def save_agent_label_cache(cache: dict[str, str]) -> None:
-    Path(AGENT_LABELS_FILE).parent.mkdir(parents=True, exist_ok=True)
-    with Path(AGENT_LABELS_FILE).open("w") as f, _CACHE_LOCK:
-        json.dump(cache, f, indent=2)
+def save_agent_label_cache(cache: LabelCache) -> None:
+    _atomic_save(AGENT_LABELS_FILE, cache)
 
 
 def get_agent_label(
-    subagent_record: dict[str, Any], cache: dict[str, str], budget: LabelBudget
+    subagent_record: dict[str, Any], cache: LabelCache, budget: LabelBudget, *, lang: str
 ) -> str | None:
     agent_id = subagent_record.get("agent_id")
     if not agent_id:
         return None
-    if agent_id in cache:
-        cached = cache[agent_id]
+    if lang in cache.get(agent_id, {}):
+        cached = cache[agent_id][lang]
         return None if cached == _NO_LABEL else cached
 
     transcript_path = subagent_record.get("agent_transcript_path")
@@ -396,15 +493,15 @@ def get_agent_label(
     source = warm_summary_source(transcript_path) or cold_summary_source(transcript_path)
     if not source:
         with _CACHE_LOCK:
-            cache[agent_id] = _NO_LABEL
+            cache.setdefault(agent_id, {})[lang] = _NO_LABEL
         return None
 
     if not budget.try_consume():
         return None
 
-    label = compress_to_label(source)
+    label = compress_to_label(source, lang=lang)
     with _CACHE_LOCK:
-        cache[agent_id] = label or _NO_LABEL
+        cache.setdefault(agent_id, {})[lang] = label or _NO_LABEL
     return label
 
 

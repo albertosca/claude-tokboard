@@ -199,7 +199,9 @@ def load_base_data(args: argparse.Namespace, mr: ModuleType | None = None) -> di
     with ThreadPoolExecutor(max_workers=1) as executor:
         agent_labels = list(
             executor.map(
-                lambda k: mr.get_agent_label(unique_agents[k], agent_label_cache, label_budget),
+                lambda k: mr.get_agent_label(
+                    unique_agents[k], agent_label_cache, label_budget, lang=lang
+                ),
                 agent_keys,
             )
         )
@@ -234,7 +236,9 @@ def load_base_data(args: argparse.Namespace, mr: ModuleType | None = None) -> di
     with ThreadPoolExecutor(max_workers=1) as executor:
         task_labels = list(
             executor.map(
-                lambda k: mr.get_task_label(unique_sessions[k], label_cache, label_budget),
+                lambda k: mr.get_task_label(
+                    unique_sessions[k], label_cache, label_budget, lang=lang
+                ),
                 session_keys,
             )
         )

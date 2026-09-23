@@ -78,8 +78,8 @@ def test_isolation_never_touches_real_label_cache_files() -> None:
     task_before = real_task_file.stat().st_mtime if real_task_file.exists() else None
     agent_before = real_agent_file.stat().st_mtime if real_agent_file.exists() else None
 
-    mr.save_label_cache({"probe": "value"})
-    mr.save_agent_label_cache({"probe": "value"})
+    mr.save_label_cache({"probe": {"pt": "value"}})
+    mr.save_agent_label_cache({"probe": {"pt": "value"}})
 
     if task_before is None:
         assert not real_task_file.exists()
@@ -418,14 +418,14 @@ def test_compress_to_label_returns_label_for_good_input(monkeypatch: pytest.Monk
         "run",
         lambda cmd, **kw: FakeCompletedProcess(0, "good label"),
     )
-    assert mr.compress_to_label("some source text") == "good label"
+    assert mr.compress_to_label("some source text", lang="pt") == "good label"
 
 
 def test_compress_to_label_returns_none_when_both_attempts_return_none(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(subprocess, "run", lambda cmd, **kw: FakeCompletedProcess(1, ""))
-    assert mr.compress_to_label("some source text") is None
+    assert mr.compress_to_label("some source text", lang="pt") is None
 
 
 def test_compress_to_label_retries_and_recovers_from_a_bad_first_label(
@@ -440,7 +440,7 @@ def test_compress_to_label_retries_and_recovers_from_a_bad_first_label(
         return responses.pop(0)
 
     monkeypatch.setattr(subprocess, "run", fake_run)
-    assert mr.compress_to_label("some source text") == "recovered label"
+    assert mr.compress_to_label("some source text", lang="pt") == "recovered label"
 
 
 def test_compress_to_label_returns_none_when_both_attempts_look_bad(
@@ -455,19 +455,19 @@ def test_compress_to_label_returns_none_when_both_attempts_look_bad(
         return responses.pop(0)
 
     monkeypatch.setattr(subprocess, "run", fake_run)
-    assert mr.compress_to_label("some source text") is None
+    assert mr.compress_to_label("some source text", lang="pt") is None
 
 
 def test_compress_to_label_returns_none_for_empty_source() -> None:
-    assert mr.compress_to_label("") is None
+    assert mr.compress_to_label("", lang="pt") is None
 
 
 def test_compress_to_label_returns_none_for_none_source() -> None:
-    assert mr.compress_to_label(None) is None
+    assert mr.compress_to_label(None, lang="pt") is None
 
 
 def test_compress_to_label_returns_none_for_non_string_source() -> None:
-    assert mr.compress_to_label(123) is None
+    assert mr.compress_to_label(123, lang="pt") is None
 
 
 def test_compress_to_label_bounds_the_prompt_length_for_a_very_long_source_text(
@@ -485,7 +485,7 @@ def test_compress_to_label_bounds_the_prompt_length_for_a_very_long_source_text(
 
     monkeypatch.setattr(subprocess, "run", fake_run)
     very_long_source = "x" * 10_000
-    mr.compress_to_label(very_long_source)
+    mr.compress_to_label(very_long_source, lang="pt")
     # The prompt is the fixed instruction text plus the (possibly
     # truncated) source - assert the source contribution is bounded at
     # 2000 chars, not the full 10,000-char input.
@@ -499,7 +499,7 @@ def test_compress_to_label_truncates_a_long_but_not_bad_label_with_ellipsis(
     mid_label = ("lorem " * 15).strip()
     assert 60 < len(mid_label) <= 120
     monkeypatch.setattr(subprocess, "run", lambda cmd, **kw: FakeCompletedProcess(0, mid_label))
-    result = mr.compress_to_label("some source text")
+    result = mr.compress_to_label("some source text", lang="pt")
     assert result is not None
     assert result.endswith("…")
     assert len(result) == 60
@@ -513,8 +513,8 @@ def test_load_label_cache_missing_file_returns_empty_dict() -> None:
 
 
 def test_save_then_load_label_cache_round_trips() -> None:
-    mr.save_label_cache({"session-1": "a nice label"})
-    assert mr.load_label_cache() == {"session-1": "a nice label"}
+    mr.save_label_cache({"session-1": {"pt": "a nice label"}})
+    assert mr.load_label_cache() == {"session-1": {"pt": "a nice label"}}
 
 
 def test_load_label_cache_corrupt_file_returns_empty_dict() -> None:
@@ -531,8 +531,8 @@ def test_load_agent_label_cache_missing_file_returns_empty_dict() -> None:
 
 
 def test_save_then_load_agent_label_cache_round_trips() -> None:
-    mr.save_agent_label_cache({"agent-1": "a nice label"})
-    assert mr.load_agent_label_cache() == {"agent-1": "a nice label"}
+    mr.save_agent_label_cache({"agent-1": {"pt": "a nice label"}})
+    assert mr.load_agent_label_cache() == {"agent-1": {"pt": "a nice label"}}
 
 
 def test_load_agent_label_cache_corrupt_file_returns_empty_dict() -> None:
@@ -570,7 +570,7 @@ def test_label_budget_zero_limit_refuses_immediately() -> None:
 
 
 def test_get_task_label_returns_none_without_session_id() -> None:
-    assert mr.get_task_label({}, {}, mr.LabelBudget(None)) is None
+    assert mr.get_task_label({}, {}, mr.LabelBudget(None), lang="pt") is None
 
 
 def test_get_task_label_cache_hit_returns_cached_value_without_generating(
@@ -578,8 +578,8 @@ def test_get_task_label_cache_hit_returns_cached_value_without_generating(
 ) -> None:
     calls: list[list[str]] = []
     monkeypatch.setattr(subprocess, "run", recording_fake_run(calls))
-    cache = {"s1": "cached label"}
-    result = mr.get_task_label({"session_id": "s1"}, cache, mr.LabelBudget(None))
+    cache = {"s1": {"pt": "cached label"}}
+    result = mr.get_task_label({"session_id": "s1"}, cache, mr.LabelBudget(None), lang="pt")
     assert result == "cached label"
     assert calls == []
 
@@ -589,8 +589,8 @@ def test_get_task_label_cache_hit_no_label_marker_returns_none_without_generatin
 ) -> None:
     calls: list[list[str]] = []
     monkeypatch.setattr(subprocess, "run", recording_fake_run(calls))
-    cache = {"s1": "__no_label__"}
-    result = mr.get_task_label({"session_id": "s1"}, cache, mr.LabelBudget(None))
+    cache = {"s1": {"pt": "__no_label__"}}
+    result = mr.get_task_label({"session_id": "s1"}, cache, mr.LabelBudget(None), lang="pt")
     assert result is None
     assert calls == []
 
@@ -600,11 +600,11 @@ def test_get_task_label_short_internal_name_used_directly_without_generating(
 ) -> None:
     calls: list[list[str]] = []
     monkeypatch.setattr(subprocess, "run", recording_fake_run(calls))
-    cache: dict[str, str] = {}
+    cache: mr.LabelCache = {}
     record = {"session_id": "s1", "internal_name": "short name here"}
-    result = mr.get_task_label(record, cache, mr.LabelBudget(None))
+    result = mr.get_task_label(record, cache, mr.LabelBudget(None), lang="pt")
     assert result == "short name here"
-    assert cache == {"s1": "short name here"}
+    assert cache == {"s1": {"pt": "short name here"}}
     assert calls == []
 
 
@@ -619,12 +619,12 @@ def test_get_task_label_six_word_internal_name_used_directly_without_generating(
     # straddle nothing.
     calls: list[list[str]] = []
     monkeypatch.setattr(subprocess, "run", recording_fake_run(calls))
-    cache: dict[str, str] = {}
+    cache: mr.LabelCache = {}
     six_word_name = "one two three four five six"
     record = {"session_id": "s1", "internal_name": six_word_name}
-    result = mr.get_task_label(record, cache, mr.LabelBudget(None))
+    result = mr.get_task_label(record, cache, mr.LabelBudget(None), lang="pt")
     assert result == six_word_name
-    assert cache == {"s1": six_word_name}
+    assert cache == {"s1": {"pt": six_word_name}}
     assert calls == []
 
 
@@ -642,17 +642,17 @@ def test_get_task_label_long_internal_name_is_used_as_source_text_for_generation
         return FakeCompletedProcess(0, "generated label")
 
     monkeypatch.setattr(subprocess, "run", fake_run)
-    cache: dict[str, str] = {}
+    cache: mr.LabelCache = {}
     long_name = "one two three four five six seven"
     record = {
         "session_id": "s1",
         "internal_name": long_name,
         "transcript_path": "/nonexistent/does-not-exist.jsonl",
     }
-    result = mr.get_task_label(record, cache, mr.LabelBudget(None))
+    result = mr.get_task_label(record, cache, mr.LabelBudget(None), lang="pt")
     assert result == "generated label"
     assert long_name in captured["prompt"]
-    assert cache == {"s1": "generated label"}
+    assert cache == {"s1": {"pt": "generated label"}}
 
 
 def test_get_task_label_falls_back_to_away_summary(
@@ -669,9 +669,9 @@ def test_get_task_label_falls_back_to_away_summary(
         return FakeCompletedProcess(0, "generated label")
 
     monkeypatch.setattr(subprocess, "run", fake_run)
-    cache: dict[str, str] = {}
+    cache: mr.LabelCache = {}
     record = {"session_id": "s1", "transcript_path": str(path)}
-    result = mr.get_task_label(record, cache, mr.LabelBudget(None))
+    result = mr.get_task_label(record, cache, mr.LabelBudget(None), lang="pt")
     assert result == "generated label"
     assert "an away summary" in captured["prompt"]
 
@@ -688,9 +688,9 @@ def test_get_task_label_falls_back_to_cold_summary_source(
         return FakeCompletedProcess(0, "generated label")
 
     monkeypatch.setattr(subprocess, "run", fake_run)
-    cache: dict[str, str] = {}
+    cache: mr.LabelCache = {}
     record = {"session_id": "s1", "transcript_path": str(path)}
-    result = mr.get_task_label(record, cache, mr.LabelBudget(None))
+    result = mr.get_task_label(record, cache, mr.LabelBudget(None), lang="pt")
     assert result == "generated label"
     assert "first turn text" in captured["prompt"]
 
@@ -700,10 +700,10 @@ def test_get_task_label_with_no_source_caches_no_label_marker_without_generating
 ) -> None:
     calls: list[list[str]] = []
     monkeypatch.setattr(subprocess, "run", recording_fake_run(calls))
-    cache: dict[str, str] = {}
-    result = mr.get_task_label({"session_id": "s1"}, cache, mr.LabelBudget(None))
+    cache: mr.LabelCache = {}
+    result = mr.get_task_label({"session_id": "s1"}, cache, mr.LabelBudget(None), lang="pt")
     assert result is None
-    assert cache == {"s1": "__no_label__"}
+    assert cache == {"s1": {"pt": "__no_label__"}}
     assert calls == []
 
 
@@ -716,9 +716,9 @@ def test_get_task_label_budget_exhausted_leaves_session_uncached(
     )
     calls: list[list[str]] = []
     monkeypatch.setattr(subprocess, "run", recording_fake_run(calls))
-    cache: dict[str, str] = {}
+    cache: mr.LabelCache = {}
     record = {"session_id": "s1", "transcript_path": str(path)}
-    result = mr.get_task_label(record, cache, mr.LabelBudget(0))
+    result = mr.get_task_label(record, cache, mr.LabelBudget(0), lang="pt")
     assert result is None
     assert cache == {}
     assert calls == []
@@ -736,11 +736,11 @@ def test_get_task_label_generates_and_caches_on_success(
         "run",
         lambda cmd, **kw: FakeCompletedProcess(0, "generated label"),
     )
-    cache: dict[str, str] = {}
+    cache: mr.LabelCache = {}
     record = {"session_id": "s1", "transcript_path": str(path)}
-    result = mr.get_task_label(record, cache, mr.LabelBudget(None))
+    result = mr.get_task_label(record, cache, mr.LabelBudget(None), lang="pt")
     assert result == "generated label"
-    assert cache == {"s1": "generated label"}
+    assert cache == {"s1": {"pt": "generated label"}}
 
 
 def test_get_task_label_caches_no_label_marker_when_generation_runs_but_refuses(
@@ -751,9 +751,10 @@ def test_get_task_label_caches_no_label_marker_when_generation_runs_but_refuses(
     # for the retry) and compress_to_label came back None because both
     # attempts looked like refusals. The negative cache still has to be
     # written here so this permanently-unlabelable session is attempted
-    # once, not on every future render - `cache[session_id] = label or ""`
-    # would satisfy every other test in this file while writing a falsy
-    # empty string that reads as "not yet tried" instead of the sentinel.
+    # once, not on every future render - `cache.setdefault(session_id, {})
+    # [lang] = label or ""` would satisfy every other test in this file
+    # while writing a falsy empty string that reads as "not yet tried"
+    # instead of the sentinel.
     path = tmp_path / "t.jsonl"
     write_transcript(
         path, [{"type": "system", "subtype": "away_summary", "content": "an away summary"}]
@@ -763,18 +764,18 @@ def test_get_task_label_caches_no_label_marker_when_generation_runs_but_refuses(
         "run",
         lambda cmd, **kw: FakeCompletedProcess(0, "i cannot do that"),
     )
-    cache: dict[str, str] = {}
+    cache: mr.LabelCache = {}
     record = {"session_id": "s1", "transcript_path": str(path)}
-    result = mr.get_task_label(record, cache, mr.LabelBudget(None))
+    result = mr.get_task_label(record, cache, mr.LabelBudget(None), lang="pt")
     assert result is None
-    assert cache == {"s1": "__no_label__"}
+    assert cache == {"s1": {"pt": "__no_label__"}}
 
 
 # --- get_agent_label ------------------------------------------------------------
 
 
 def test_get_agent_label_returns_none_without_agent_id() -> None:
-    assert mr.get_agent_label({}, {}, mr.LabelBudget(None)) is None
+    assert mr.get_agent_label({}, {}, mr.LabelBudget(None), lang="pt") is None
 
 
 def test_get_agent_label_cache_hit_returns_cached_value_without_generating(
@@ -782,8 +783,8 @@ def test_get_agent_label_cache_hit_returns_cached_value_without_generating(
 ) -> None:
     calls: list[list[str]] = []
     monkeypatch.setattr(subprocess, "run", recording_fake_run(calls))
-    cache = {"a1": "cached label"}
-    result = mr.get_agent_label({"agent_id": "a1"}, cache, mr.LabelBudget(None))
+    cache = {"a1": {"pt": "cached label"}}
+    result = mr.get_agent_label({"agent_id": "a1"}, cache, mr.LabelBudget(None), lang="pt")
     assert result == "cached label"
     assert calls == []
 
@@ -793,8 +794,8 @@ def test_get_agent_label_cache_hit_no_label_marker_returns_none_without_generati
 ) -> None:
     calls: list[list[str]] = []
     monkeypatch.setattr(subprocess, "run", recording_fake_run(calls))
-    cache = {"a1": "__no_label__"}
-    result = mr.get_agent_label({"agent_id": "a1"}, cache, mr.LabelBudget(None))
+    cache = {"a1": {"pt": "__no_label__"}}
+    result = mr.get_agent_label({"agent_id": "a1"}, cache, mr.LabelBudget(None), lang="pt")
     assert result is None
     assert calls == []
 
@@ -804,10 +805,10 @@ def test_get_agent_label_with_no_source_caches_no_label_marker_without_generatin
 ) -> None:
     calls: list[list[str]] = []
     monkeypatch.setattr(subprocess, "run", recording_fake_run(calls))
-    cache: dict[str, str] = {}
-    result = mr.get_agent_label({"agent_id": "a1"}, cache, mr.LabelBudget(None))
+    cache: mr.LabelCache = {}
+    result = mr.get_agent_label({"agent_id": "a1"}, cache, mr.LabelBudget(None), lang="pt")
     assert result is None
-    assert cache == {"a1": "__no_label__"}
+    assert cache == {"a1": {"pt": "__no_label__"}}
     assert calls == []
 
 
@@ -818,9 +819,9 @@ def test_get_agent_label_budget_exhausted_leaves_agent_uncached(
     write_transcript(path, [{"type": "user", "message": {"content": "some turn text"}}])
     calls: list[list[str]] = []
     monkeypatch.setattr(subprocess, "run", recording_fake_run(calls))
-    cache: dict[str, str] = {}
+    cache: mr.LabelCache = {}
     record = {"agent_id": "a1", "agent_transcript_path": str(path)}
-    result = mr.get_agent_label(record, cache, mr.LabelBudget(0))
+    result = mr.get_agent_label(record, cache, mr.LabelBudget(0), lang="pt")
     assert result is None
     assert cache == {}
     assert calls == []
@@ -923,13 +924,13 @@ def test_get_agent_label_prefers_the_warm_source_over_the_cold_one(
     )
     seen_sources: list[str] = []
 
-    def fake_compress(source: str) -> str:
+    def fake_compress(source: str, *, lang: str) -> str:
         seen_sources.append(source)
         return "a label"
 
     monkeypatch.setattr(labels_module, "compress_to_label", fake_compress)
     record = {"agent_id": "a1", "agent_transcript_path": str(path)}
-    label = mr.get_agent_label(record, {}, mr.LabelBudget(None))
+    label = mr.get_agent_label(record, {}, mr.LabelBudget(None), lang="pt")
     assert label == "a label"
     assert seen_sources == ["Spec Compliance: Compliant."]
 
@@ -941,13 +942,13 @@ def test_get_agent_label_falls_back_to_cold_source_when_no_assistant_text_exists
     write_transcript(path, [{"type": "user", "message": {"content": "Review one task."}}])
     seen_sources: list[str] = []
 
-    def fake_compress(source: str) -> str:
+    def fake_compress(source: str, *, lang: str) -> str:
         seen_sources.append(source)
         return "a label"
 
     monkeypatch.setattr(labels_module, "compress_to_label", fake_compress)
     record = {"agent_id": "a1", "agent_transcript_path": str(path)}
-    label = mr.get_agent_label(record, {}, mr.LabelBudget(None))
+    label = mr.get_agent_label(record, {}, mr.LabelBudget(None), lang="pt")
     assert label == "a label"
     assert seen_sources == ["Review one task."]
 
@@ -962,11 +963,11 @@ def test_get_agent_label_generates_and_caches_on_success(
         "run",
         lambda cmd, **kw: FakeCompletedProcess(0, "generated label"),
     )
-    cache: dict[str, str] = {}
+    cache: mr.LabelCache = {}
     record = {"agent_id": "a1", "agent_transcript_path": str(path)}
-    result = mr.get_agent_label(record, cache, mr.LabelBudget(None))
+    result = mr.get_agent_label(record, cache, mr.LabelBudget(None), lang="pt")
     assert result == "generated label"
-    assert cache == {"a1": "generated label"}
+    assert cache == {"a1": {"pt": "generated label"}}
 
 
 def test_get_agent_label_caches_no_label_marker_when_generation_runs_but_refuses(
@@ -985,11 +986,11 @@ def test_get_agent_label_caches_no_label_marker_when_generation_runs_but_refuses
         "run",
         lambda cmd, **kw: FakeCompletedProcess(0, "i cannot do that"),
     )
-    cache: dict[str, str] = {}
+    cache: mr.LabelCache = {}
     record = {"agent_id": "a1", "agent_transcript_path": str(path)}
-    result = mr.get_agent_label(record, cache, mr.LabelBudget(None))
+    result = mr.get_agent_label(record, cache, mr.LabelBudget(None), lang="pt")
     assert result is None
-    assert cache == {"a1": "__no_label__"}
+    assert cache == {"a1": {"pt": "__no_label__"}}
 
 
 # --- group_subagents_by_session ---------------------------------------------

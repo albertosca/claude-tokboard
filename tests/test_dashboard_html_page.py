@@ -761,12 +761,12 @@ def test_main_saves_label_caches_at_exactly_the_save_every_boundary(
         real_save_agent = mr.save_agent_label_cache
         real_save_session = mr.save_label_cache
 
-        def counting_save_agent(cache: dict[str, str]) -> None:
+        def counting_save_agent(cache: mr.LabelCache) -> None:
             nonlocal agent_save_calls
             agent_save_calls += 1
             real_save_agent(cache)
 
-        def counting_save_session(cache: dict[str, str]) -> None:
+        def counting_save_session(cache: mr.LabelCache) -> None:
             nonlocal session_save_calls
             session_save_calls += 1
             real_save_session(cache)
