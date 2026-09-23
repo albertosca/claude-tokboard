@@ -832,7 +832,7 @@ class TrendChart(PlotextPlot):
             series_lists = [input_totals, output_totals, cache_read_totals, cache_creation_totals]
             series_labels = ["input", "output", "cache read", "cache creation"]
             title = "chart_title.tokens"
-        max_total = max(sum(day) for day in zip(*series_lists, strict=True))
+        max_total = max((sum(day) for day in zip(*series_lists, strict=True)), default=0)
         # plotext's default y-axis ticks are raw, unformatted floats (e.g.
         # "1591684.7") - unreadable next to token counts everywhere else in
         # this dashboard already using k/M/B/T suffixes. Overriding with

@@ -687,6 +687,39 @@ def test_a_zero_token_bucket_at_the_start_keeps_its_date():
     assert labels[0] == "01/08", labels
 
 
+def _mounted_axis_labels(records: list[dict[str, Any]], now: datetime) -> list[str]:
+    """_axis_labels through the production width path: the chart mounted
+    at 100 columns, sized and redrawn by its own render(). At 40 columns
+    and under plotext drops the long " · 25%" label for lack of room
+    (measured 2026-09-23), which would pin nothing."""
+
+    class ChartOnly(App[None]):
+        def compose(self) -> ComposeResult:
+            yield tui.TrendChart(mr, records, lang="pt")
+
+    async def drive() -> list[str]:
+        async with ChartOnly().run_test(size=(100, 12)) as pilot:
+            await pilot.pause()
+            chart = pilot.app.query_one(tui.TrendChart)
+            chart.render_chart(now=now)
+            await pilot.pause()
+            return str(chart.render()).splitlines()[-1].split()
+
+    return asyncio.run(drive())
+
+
+def test_a_mounted_chart_keeps_a_zero_token_bucket_at_either_edge():
+    end = [_august_session(f"s{d}", day=d, tokens=100) for d in (1, 5, 10)]
+    end.append(_august_session("s12", day=12, tokens=0))
+    labels = _mounted_axis_labels(end, datetime(2026, 8, 12, 6, 0).astimezone())
+    assert labels[-3:] == ["12/08", "·", "25%"], labels
+
+    start = [_august_session("s1", day=1, tokens=0)]
+    start += [_august_session(f"s{d}", day=d, tokens=100) for d in (5, 10, 12)]
+    labels = _mounted_axis_labels(start, datetime(2026, 8, 30).astimezone())
+    assert labels[0] == "01/08", labels
+
+
 # ---------------------------------------------------------------------------
 # Neighbouring days never share a screen cell
 # ---------------------------------------------------------------------------
