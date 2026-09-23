@@ -175,6 +175,99 @@ class TestRealClaudeDirGuard:
         renamed.unlink()
 
 
+class TestClaudeLaunchMatchingIsPrecise:
+    """Fix round 1, M3: _launches_real_claude_cli must match the ACTUAL
+    command being run, not any argument that merely mentions "claude" -
+    the earlier version scanned every argv position and would have
+    blocked ["echo", "claude"]. Every "blocked" case empties PATH first
+    (same safe-canary shape as test_launching_the_real_claude_cli_is_
+    blocked above), so a guard regression can only ever surface as
+    FileNotFoundError, never a real launch of anything.
+    """
+
+    @pytest.mark.parametrize(
+        "argv",
+        [
+            ["claude", "--version"],
+            ["/nonexistent/bin/claude", "-p", "x"],
+            ["nice", "-n", "15", "claude", "-p", "x"],
+            [b"claude"],
+            [Path("claude")],
+            ["sh", "-c", "claude -p x"],
+            ["/usr/bin/env", "claude"],
+        ],
+        ids=[
+            "bare-claude",
+            "absolute-path",
+            "nice-wrapper",
+            "bytes-argv0",
+            "pathlike-argv0",
+            "sh-dash-c",
+            "env-wrapper",
+        ],
+    )
+    def test_blocks_every_real_launch_shape(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        argv: list[str | bytes | Path],
+    ) -> None:
+        monkeypatch.setenv("PATH", str(tmp_path))
+        with pytest.raises(RealClaudeDirWrite):
+            subprocess.Popen(argv)
+        _assert_guard_hit_and_clear_it()
+
+    def test_blocks_shell_true(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        # shell=True: CPython itself normalizes this to ["/bin/sh", "-c",
+        # "claude --version"] before the audit event fires (confirmed in
+        # scratch) - covered by the same code path as sh-dash-c above, but
+        # exercised via the actual kwarg a caller would really use.
+        monkeypatch.setenv("PATH", str(tmp_path))
+        with pytest.raises(RealClaudeDirWrite):
+            subprocess.Popen("claude --version", shell=True)
+        _assert_guard_hit_and_clear_it()
+
+    def test_blocks_nice_inside_a_shell_true_command(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        monkeypatch.setenv("PATH", str(tmp_path))
+        with pytest.raises(RealClaudeDirWrite):
+            subprocess.Popen("nice -n 15 claude -p x", shell=True)
+        _assert_guard_hit_and_clear_it()
+
+    def test_blocks_an_executable_kwarg_that_differs_from_argv0(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        # Popen lets `executable` differ from argv[0] entirely - the real
+        # command run is `executable`, regardless of what argv[0] says.
+        monkeypatch.setenv("PATH", str(tmp_path))
+        with pytest.raises(RealClaudeDirWrite):
+            subprocess.Popen(["x"], executable="claude")
+        _assert_guard_hit_and_clear_it()
+
+    @pytest.mark.parametrize(
+        "argv",
+        [
+            ["/bin/echo", "claude"],
+            ["/usr/bin/grep", "-c", "claude", "/dev/null"],
+            ["/bin/echo", "x/claude"],
+            ["claudette"],
+        ],
+        ids=["echo-claude", "grep-claude", "echo-path-with-claude", "claudette-lookalike"],
+    )
+    def test_does_not_block_claude_as_a_mere_argument_or_lookalike(self, argv: list[str]) -> None:
+        # Real, harmless commands actually run (echo/grep do nothing to
+        # any file); "claudette" doesn't exist on a bare test machine, so
+        # THAT one is a plain FileNotFoundError - the only thing under
+        # test is that RealClaudeDirWrite is never the one raised.
+        try:
+            subprocess.run(argv, capture_output=True)
+        except RealClaudeDirWrite:
+            pytest.fail(f"{argv} was wrongly blocked as a claude CLI launch")
+        except OSError:
+            pass
+
+
 class TestCaseAndSymlinkEscapes:
     """Fix round 1, M1: two ways a write could reach the real ~/.claude
     while a naive resolve()-based, case-sensitive comparison sees nothing

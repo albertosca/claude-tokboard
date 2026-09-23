@@ -8,6 +8,7 @@ resolves inside a throwaway directory.
 
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -210,22 +211,87 @@ def _decoded_or_none(value: object) -> str | None:
     return None
 
 
-def _launches_real_claude_cli(executable: object, popen_args: object) -> bool:
-    """subprocess.Popen(executable, args, cwd, env): argv entries can be
-    str, bytes, or (rarely) os.PathLike - never assume str. Matches a bare
-    `claude ...` and the `nice claude ...` form (argv[0] == "nice" with
-    "claude" elsewhere in argv), per the brief."""
-    names = [executable] if executable is not None else []
+def _decoded_item_or_none(item: object) -> str | None:
+    """Like _decoded_or_none, plus os.PathLike - an argv entry (or
+    `executable`) can legitimately be any of str/bytes/os.PathLike."""
+    if isinstance(item, os.PathLike):
+        item = os.fspath(item)
+    return _decoded_or_none(item)
+
+
+def _argv_tokens(popen_args: object) -> list[str]:
+    """The actual argv, decoded to str where possible: every element of
+    `args` if it is a list/tuple (the shape subprocess.Popen's own audit
+    event always carries by the time it fires - confirmed in scratch:
+    even a bare string command or shell=True is normalized to this by
+    CPython itself first), or a single-element list built from `args`
+    itself if it is a str/bytes/PathLike. Entries that cannot be decoded
+    are dropped rather than crashing the hook. Deliberately does NOT
+    include `executable` - see _launches_real_claude_cli, which merging
+    them here used to double-count when executable already equals
+    argv[0] (the overwhelmingly common case), throwing off the
+    nice/env wrapper-skipping logic below."""
+    raw: list[object] = []
     if isinstance(popen_args, list | tuple):
-        names.extend(popen_args)
-    basenames = []
-    for name in names:
-        decoded = _decoded_or_none(name) if not isinstance(name, os.PathLike) else os.fspath(name)
-        if decoded:
-            basenames.append(Path(decoded).name)
-    if any(b == "claude" for b in basenames):
+        raw.extend(popen_args)
+    elif isinstance(popen_args, str | bytes | os.PathLike):
+        raw.append(popen_args)
+    return [t for item in raw if (t := _decoded_item_or_none(item))]
+
+
+_WRAPPER_BASENAMES = frozenset({"nice", "env"})
+_SHELL_BASENAMES = frozenset({"sh", "bash", "zsh"})
+_CLAUDE_WORD = re.compile(r"\bclaude\b")
+
+
+def _wrapper_target(argv: list[str]) -> str | None:
+    """The first token after a `nice`/`env` wrapper's own leading flags
+    (`-n`, `-15`, ...), bare numeric arguments (`nice -n 15 claude ...`),
+    and (for `env`) `VAR=value` assignments - the command such a wrapper
+    ultimately runs. argv[0] is the wrapper itself; the caller has
+    already checked it."""
+    for tok in argv[1:]:
+        if tok.startswith("-") or tok.isdigit():
+            continue
+        if "=" in tok and tok.split("=", 1)[0].isidentifier():
+            continue
+        return tok
+    return None
+
+
+def _launches_real_claude_cli(executable: object, popen_args: object) -> bool:
+    """Fix round 1, M3: matches the ACTUAL command being run, not any
+    argument that merely MENTIONS "claude" - `["echo", "claude"]` and
+    `["grep", "-c", "claude", "/dev/null"]` must never match; the earlier
+    version scanned every argv position and did. Three shapes count:
+    `executable` itself (checked independently of argv - Popen lets
+    `executable` differ from argv[0] entirely, e.g.
+    Popen(["x"], executable="claude")); a `nice`/`env` wrapper's real
+    target within argv (skipping the wrapper's own flags); or, for a
+    shell invoked with -c (covers both a literal `sh -c ...` argv and
+    Popen's own shell=True, which CPython normalizes to exactly this
+    shape before this audit event ever fires - confirmed in scratch), a
+    whole-word regex match against the shell command string - a coarser,
+    deliberately OVER-blocking check for that one case, since a shell
+    string cannot be parsed safely without a real shell parser and the
+    guard would rather block a false positive than miss a real launch
+    inside one.
+    """
+    argv = _argv_tokens(popen_args)
+    exec_name = _decoded_item_or_none(executable) if executable is not None else None
+    if exec_name is None and argv:
+        exec_name = argv[0]  # CPython always populates `executable` in practice, but defensively
+    if exec_name is not None and Path(exec_name).name == "claude":
         return True
-    return bool(basenames) and basenames[0] == "nice" and "claude" in basenames[1:]
+    if not argv:
+        return False
+    argv_basename = Path(argv[0]).name
+    if argv_basename in _WRAPPER_BASENAMES:
+        target = _wrapper_target(argv)
+        if target is not None and Path(target).name == "claude":
+            return True
+    is_shell_dash_c = argv_basename in _SHELL_BASENAMES and len(argv) >= 3 and argv[1] == "-c"
+    return bool(is_shell_dash_c and _CLAUDE_WORD.search(argv[2]))
 
 
 def _audit_real_claude_dir_guard(event: str, args: tuple[object, ...]) -> None:
