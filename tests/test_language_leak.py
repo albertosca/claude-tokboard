@@ -153,17 +153,44 @@ def test_the_detector_fires_on_an_injected_leak() -> None:
 
 
 def _string_leaves(value: object) -> list[str]:
-    """Every string anywhere inside a JSON-shaped value - a dict's values,
-    a list's items, recursively - so this keeps working unchanged the day
-    tests/fixtures/build_fixture.py grows a new field (an agent type, a
-    task label, a branch name, a tag), not just today's project_path."""
+    """Every string anywhere inside a JSON-shaped value - a dict's KEYS as
+    well as its values (fix round 1, M5: tokens_by_model's own keys are
+    model names, e.g. "claude-opus-5", and are rendered - a dict-values-only
+    walk silently skipped them), a list's items, recursively - so this
+    keeps working unchanged the day tests/fixtures/build_fixture.py grows a
+    new field (an agent type, a task label, a branch name, a tag), not
+    just today's project_path."""
     if isinstance(value, str):
         return [value]
     if isinstance(value, dict):
-        return [s for v in value.values() for s in _string_leaves(v)]
+        return [s for k, v in value.items() for s in (*_string_leaves(k), *_string_leaves(v))]
     if isinstance(value, list):
         return [s for v in value for s in _string_leaves(v)]
     return []
+
+
+def test_string_leaves_walks_dict_keys_as_well_as_values() -> None:
+    # M5: tokens_by_model's own keys are model names and ARE rendered
+    # (dashboard_html.py's model legend, dashboard_tui.py's own chart mode)
+    # - a values-only walk would silently miss a leak riding in one.
+    assert _string_leaves({"zero-duration-agent": 1}) == ["zero-duration-agent"]
+
+
+# Fix round 1, M5: shared with _seed_one_subagent_under_week_1 below - one
+# subagent dict, not two copies to drift out of sync - so THIS test also
+# covers the leak test's own seeded subagent data, not just what
+# build_fixture.py itself writes.
+_SEEDED_SUBAGENT: dict[str, Any] = {
+    "session_id": "week-1",
+    "agent_id": "sub-a",
+    "agent_type": "general-purpose",
+    "input_tokens": 10,
+    "output_tokens": 20,
+    "cache_read_tokens": 1,
+    "cache_creation_tokens": 1,
+    "tool_call_count": 3,
+    "duration_seconds": 12.5,
+}
 
 
 def test_fixture_user_data_is_language_neutral(tmp_path: Path) -> None:
@@ -175,13 +202,22 @@ def test_fixture_user_data_is_language_neutral(tmp_path: Path) -> None:
     leak the moment it reached a rendered page or screen. See
     tests/fixtures/build_fixture.py's own docstring for the rule this
     enforces; this is the enforcement.
+
+    Covers build_fixture.py's own records AND this file's own
+    _SEEDED_SUBAGENT (fix round 1, M5) - the latter is exactly the shape of
+    data that already collided once (see _seed_one_subagent_under_week_1's
+    docstring for the "zero-duration-agent" incident this would have
+    caught).
     """
     from datetime import datetime
 
     from fixtures.build_fixture import build_fixture
 
     built = build_fixture(str(tmp_path), datetime.now().astimezone())
-    strings = sorted({s for record in built["records"] for s in _string_leaves(record)})
+    strings = sorted(
+        {s for record in built["records"] for s in _string_leaves(record)}
+        | set(_string_leaves(_SEEDED_SUBAGENT))
+    )
     assert strings, "collected no strings at all - the fixture's own shape changed"
 
     offenders = {
@@ -362,19 +398,8 @@ def _seed_one_subagent_under_week_1(mp: pytest.MonkeyPatch, home: Path) -> Path:
     from test_tui_state import seeded_tui_home
 
     seeded_tui_home(mp, home)
-    subagent = {
-        "session_id": "week-1",
-        "agent_id": "sub-a",
-        "agent_type": "general-purpose",
-        "input_tokens": 10,
-        "output_tokens": 20,
-        "cache_read_tokens": 1,
-        "cache_creation_tokens": 1,
-        "tool_call_count": 3,
-        "duration_seconds": 12.5,
-    }
     subagents_path = home / ".claude" / "metrics" / "subagents.jsonl"
-    subagents_path.write_text(json.dumps(subagent) + "\n")
+    subagents_path.write_text(json.dumps(_SEEDED_SUBAGENT) + "\n")
     return home
 
 
