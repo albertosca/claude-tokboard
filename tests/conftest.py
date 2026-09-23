@@ -28,13 +28,42 @@ from fixtures.build_fixture import build_fixture
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
-class RealClaudeDirWrite(RuntimeError):
+class RealClaudeDirWrite(BaseException):
     """Raised by the process-wide audit hook below the moment test code is
     about to write to, delete from, rename into/out of, or otherwise mutate
     the AUTHOR'S REAL ~/.claude directory - or launch the real `claude`
     CLI - no matter which metrics_core path constant a given test
     remembered (or forgot) to patch. See _install_real_claude_dir_guard.
+
+    Subclasses BaseException, NOT RuntimeError/Exception (fix round 1,
+    Important 1) - a plain `except Exception:` already exists downstream
+    of code this guard protects (lib/metrics_core/labels.py's
+    _run_label_prompt, hooks/metrics-log.py's and
+    hooks/subagent-metrics-log.py's main()), and those would silently
+    swallow a RuntimeError, still preventing the write but leaving a
+    regressed test green for the wrong reason. Confirmed in scratch that a
+    BaseException raised from inside an audit hook propagates past
+    `except Exception:` while still aborting the operation. Every raise
+    site also appends to REAL_CLAUDE_DIR_WRITE_HITS below (via _raise) as
+    a second line of defense for the rare downstream `except BaseException:`
+    - see the autouse _fail_loudly_on_swallowed_guard_hits fixture.
     """
+
+
+# Every message _raise() below ever raised with, appended BEFORE raising -
+# so it survives even a downstream `except BaseException:` that would
+# otherwise leave no trace at all that the guard ever fired. The autouse
+# _fail_loudly_on_swallowed_guard_hits fixture asserts this is empty after
+# every test and clears it; a test that deliberately triggers a hit (via
+# pytest.raises(RealClaudeDirWrite) or by exercising a swallow site) must
+# clear it itself before returning, or that assertion fails LOUDLY instead
+# of the hit disappearing unnoticed.
+REAL_CLAUDE_DIR_WRITE_HITS: list[str] = []
+
+
+def _raise(message: str) -> None:
+    REAL_CLAUDE_DIR_WRITE_HITS.append(message)
+    raise RealClaudeDirWrite(message)
 
 
 # Captured ONCE, at import time of this module - before any fixture in the
@@ -43,6 +72,13 @@ class RealClaudeDirWrite(RuntimeError):
 # conftest.py is imported before pytest collects a single test, which is as
 # early as pytest offers.
 _REAL_CLAUDE_DIR = (Path.home() / ".claude").resolve()
+# The real home itself (not its .claude subdirectory) - fix round 1,
+# Important 2: a subprocess.Popen'd Python child has its OWN process, and
+# sys.addaudithook installs are per-process - a child's writes never pass
+# through THIS hook at all. The only thing this hook can check from the
+# parent side is whether the child's env redirects HOME away from the real
+# one before it ever starts. See _child_env_leaves_home_unguarded.
+_REAL_HOME = Path.home().resolve()
 
 # The write-ish bits the "open" audit event's int `flags` argument can
 # carry. Confirmed against this exact interpreter (Python 3.14.7, macOS) in
@@ -129,13 +165,13 @@ def _audit_real_claude_dir_guard(event: str, args: tuple[object, ...]) -> None:
     if event == "open":
         path, mode, flags = args
         if _is_write_open(mode, flags) and _inside_real_claude_dir(path):
-            raise RealClaudeDirWrite(f"write-mode open() of real {path!r}")
+            _raise(f"write-mode open() of real {path!r}")
     elif event in ("os.mkdir", "os.rmdir", "os.remove", "os.truncate", "shutil.rmtree"):
         # All four single-path mutating events; shutil.rmtree fires before
         # any recursive walk starts, so raising here pre-empts the whole
         # tree rather than racing it file by file.
         if _inside_real_claude_dir(args[0]):
-            raise RealClaudeDirWrite(f"{event} of real {args[0]!r}")
+            _raise(f"{event} of real {args[0]!r}")
     elif event == "os.rename":
         # Fired by BOTH os.rename() AND os.replace() (verified in scratch -
         # there is no separate "os.replace" event). Check both sides: this
@@ -143,7 +179,7 @@ def _audit_real_claude_dir_guard(event: str, args: tuple[object, ...]) -> None:
         # something being moved in.
         src, dst = args[0], args[1]
         if _inside_real_claude_dir(src) or _inside_real_claude_dir(dst):
-            raise RealClaudeDirWrite(f"os.rename touching real {src!r} / {dst!r}")
+            _raise(f"os.rename touching real {src!r} / {dst!r}")
     elif event in ("os.symlink", "os.link", "shutil.copyfile"):
         # os.symlink: (link_target_text, link_path, dir_fd) - the path
         # actually CREATED is args[1]; args[0] is just the link's target
@@ -155,11 +191,11 @@ def _audit_real_claude_dir_guard(event: str, args: tuple[object, ...]) -> None:
         # All three: only the SECOND element is a path being created/
         # written.
         if _inside_real_claude_dir(args[1]):
-            raise RealClaudeDirWrite(f"{event} creating real {args[1]!r}")
+            _raise(f"{event} creating real {args[1]!r}")
     elif event == "subprocess.Popen":
         executable, popen_args = args[0], args[1]
         if _launches_real_claude_cli(executable, popen_args):
-            raise RealClaudeDirWrite("subprocess launch of the real `claude` CLI from a test")
+            _raise("subprocess launch of the real `claude` CLI from a test")
 
 
 def _install_real_claude_dir_guard() -> None:
@@ -184,6 +220,46 @@ def _install_real_claude_dir_guard() -> None:
 
 
 _install_real_claude_dir_guard()
+
+
+@pytest.fixture(autouse=True)
+def _fail_loudly_on_swallowed_guard_hits() -> Iterator[None]:
+    """Fix round 1, Important 1(b): a second, independent line of defense
+    on top of RealClaudeDirWrite being a BaseException. Even a downstream
+    `except BaseException:` (rare, but the guard cannot rule it out any
+    more than it could rule out `except Exception:` before this fix) would
+    still leave a regressed test looking green - the write is still
+    prevented, but nothing says so. This fixture makes that failure LOUD
+    instead: any test whose body (or whose OTHER fixtures' teardown) causes
+    a guard hit that nothing re-raised past THIS fixture's own teardown
+    fails here, by name, with the recorded message(s).
+
+    Declared before _isolate_from_real_metrics_by_default on purpose, so it
+    is the OUTERMOST autouse fixture: pytest tears fixtures down in the
+    reverse of their setup order, so this one's own teardown (the assert
+    below) runs LAST - after every other fixture in the test, not just the
+    test body itself, has already torn down. A guard hit recorded during
+    another fixture's cleanup would otherwise go unnoticed by a narrower
+    check.
+
+    A test that intentionally triggers a hit (pytest.raises(RealClaudeDirWrite),
+    or exercising a known swallow site like _run_label_prompt or a hook's
+    main()) MUST clear REAL_CLAUDE_DIR_WRITE_HITS itself before returning -
+    otherwise this fixture fails even a test that behaved exactly as
+    expected, which is deliberate: an uncleared hit means the test asserted
+    on the exception but never confirmed the guard was the one that
+    prevented the write, which is the whole point of recording hits at all.
+    """
+    REAL_CLAUDE_DIR_WRITE_HITS.clear()
+    yield
+    hits = list(REAL_CLAUDE_DIR_WRITE_HITS)
+    REAL_CLAUDE_DIR_WRITE_HITS.clear()
+    assert not hits, (
+        "the real-~/.claude write guard fired during this test but nothing "
+        f"propagated it all the way out: {hits} - if this test means to trigger "
+        "a hit on purpose, it must assert on RealClaudeDirWrite AND clear "
+        "conftest.REAL_CLAUDE_DIR_WRITE_HITS itself before returning"
+    )
 
 
 @pytest.fixture(autouse=True)
