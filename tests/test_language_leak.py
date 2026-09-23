@@ -26,6 +26,7 @@ sys.path.insert(0, str(REPO))
 sys.path.insert(0, str(REPO / "tests"))
 
 PT_DIACRITICS = re.compile(r"[ãõçáéíóúâêôà]")
+PLACEHOLDER = re.compile(r"\{[^}]*\}")
 
 
 def _words_in(value: str, others: list[str]) -> bool:
@@ -33,17 +34,42 @@ def _words_in(value: str, others: list[str]) -> bool:
     return any(pattern.search(other) for other in others)
 
 
+def _template_fragments(value: str) -> list[str]:
+    """The fixed text around a templated value's `{placeholder}`s, each
+    stripped of the punctuation/whitespace that glues it to a placeholder
+    ("Subagentes despachados ({n})" -> ["Subagentes despachados", ""])."""
+    return [re.sub(r"^[^\w]+|[^\w]+$", "", part) for part in PLACEHOLDER.split(value)]
+
+
 def _markers(lang: str) -> list[str]:
-    """Catalog values that belong ONLY to the other language."""
+    """Catalog values that belong ONLY to the other language.
+
+    A templated value ("Subagentes despachados ({n})") is split on its
+    `{placeholder}`s first, so the fixed-text fragments around the
+    placeholder are still checked - skipping the whole value here used to
+    let a Portuguese fragment ride, untranslated and unnoticed, inside an
+    otherwise-English render.
+    """
     other = "en" if lang == "pt" else "pt"
     mine = [texts[lang] for texts in mr.MESSAGES.values()]
     found = []
     for texts in mr.MESSAGES.values():
         value = texts[other].strip()
-        if value == texts[lang].strip() or "{" in value:
+        mine_value = texts[lang].strip()
+        if value == mine_value:
             continue
-        if not _words_in(value, mine):
-            found.append(value)
+        if "{" not in value:
+            if not _words_in(value, mine):
+                found.append(value)
+            continue
+        mine_fragments = _template_fragments(mine_value)
+        for i, fragment in enumerate(_template_fragments(value)):
+            if not fragment:
+                continue
+            if i < len(mine_fragments) and fragment == mine_fragments[i]:
+                continue
+            if not _words_in(fragment, mine):
+                found.append(fragment)
     return found
 
 
@@ -104,6 +130,11 @@ def test_the_detector_fires_on_an_injected_leak() -> None:
         "Sessions ... Nenhum subagente nesta sessão. ...", "en"
     )
     assert "Sessions" in language_leaks("Sessões ... Sessions", "pt")
+    # Templated catalog values ("Subagentes despachados ({n})", the
+    # "partial" suffix) used to be skipped outright because they contain
+    # "{" - so a Portuguese leak riding inside one of them passed silently.
+    assert language_leaks("Subagentes despachados (3)", "en")
+    assert language_leaks("beta (parcial, 58%)", "en")
 
 
 # --- the TUI half --------------------------------------------------------
