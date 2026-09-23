@@ -4,6 +4,7 @@ a machine with no data at all only by accident, and its numbers would
 drift daily."""
 
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -87,8 +88,19 @@ def real_project_names(metrics_dir: Path, renderer_source: str) -> set[str]:
     return names
 
 
+def _word_pattern(name: str) -> re.Pattern[str]:
+    """A real name only counts as LEAKED if it appears as a whole word, not
+    merely as a substring - "app" sits inside the quota line's own English
+    text ("Quota (approx.): ...", metrics_core's quota_line message,
+    rendered on every page regardless of any project's name) with nothing
+    at all coming from project data, and a raw substring check would flag
+    it as a leak forever. Same idea as tools/make-demo-assets.py's own
+    _word_pattern, which documents exactly this "approx." case."""
+    return re.compile(rf"(?<!\w){re.escape(name)}(?!\w)")
+
+
 def leaked_names(html: str, names: set[str]) -> list[str]:
-    return sorted(n for n in names if n in html)
+    return sorted(n for n in names if n and _word_pattern(n).search(html))
 
 
 def test_no_real_metrics_leak_into_the_page(dashboard_page):
@@ -111,6 +123,20 @@ def test_the_leak_detector_fires_on_a_leak():
     names = {"some-real-project", "another-one"}
     assert leaked_names("<html>alpha some-real-project</html>", names) == ["some-real-project"]
     assert leaked_names("<html>alpha beta</html>", names) == []
+
+
+def test_the_leak_detector_matches_whole_words_not_substrings():
+    # "app" sits inside "approx." - the quota line's own English text
+    # (metrics_core's quota_line message, rendered on every page regardless
+    # of any project's name: "Quota (approx.): {input} in ...") - with
+    # nothing at all coming from project data. A raw substring check would
+    # flag "app" as a leak on every single page forever, exactly like
+    # tools/make-demo-assets.py's own _word_pattern docstring warns about
+    # for "approx." specifically. Matching by whole word instead - the same
+    # idea as that helper - does not.
+    assert leaked_names("<html>Quota (approx.): 1 in</html>", {"app"}) == []
+    # "app" as an actual whole word must still be caught.
+    assert leaked_names("<html>the app is here</html>", {"app"}) == ["app"]
 
 
 def test_a_word_the_renderer_itself_prints_is_not_taken_as_a_leak(tmp_path):
