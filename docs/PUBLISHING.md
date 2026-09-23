@@ -19,12 +19,7 @@ Re-run it whenever the dashboards change enough that the images stop being
 true. It takes about eight minutes, almost all of it waiting for headless
 Chrome to exit.
 
-"No real data can reach them" is enforced, not intended. Before encoding, the
-script reads the project names out of the reader's own metrics files and
-refuses to continue if any of them appears in a frame - and refuses just as
-loudly if a frame names none of the fixture's projects, since a frame that
-rendered nothing would otherwise pass the first check. Both arms were
-canaried. The guard exists because an earlier version of this script leaked:
+"No real data can reach them" is enforced, not intended. Before encoding, the script reads the project names out of the reader's own metrics files and refuses to continue if any of them appears in a frame as a whole word - except a name that is also a word of the interface's own vocabulary in the language being rendered (e.g. a real project literally named "projects" colliding with the English key bar's "More/fewer projects"), which is dropped from the check first since it can never be told apart from data; only the count of names dropped this way is ever printed, never the names. It refuses just as loudly if a frame names none of the fixture's projects, since a frame that rendered nothing would otherwise pass the first check. Both arms were canaried. The guard exists because an earlier version of this script leaked:
 metrics_core resolves METRICS_FILE from HOME at IMPORT time, so setting
 os.environ["HOME"] afterwards aimed it at the real ~/.claude/metrics, and the
 recording came out full of real projects and real token counts. It never

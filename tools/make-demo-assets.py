@@ -298,7 +298,10 @@ def refuse_if_it_shows_real_data(work: Path, count: int, lang: str) -> None:
     sys.path[:0] = [str(REPO / "lib")]
     import metrics_core as mr
 
-    catalog = " ".join(texts[lang] for texts in mr.MESSAGES.values())
+    # Placeholder tokens ({input}, {n}, {date}, ...) never render as
+    # literal text - a real project named "input" or "date" must NOT be
+    # excused just because that word appears inside a template's braces.
+    catalog = " ".join(re.sub(r"\{[^{}]*\}", " ", texts[lang]) for texts in mr.MESSAGES.values())
     vocabulary = {n for n in real if n and _word_pattern(n).search(catalog)}
     if vocabulary:
         print(
