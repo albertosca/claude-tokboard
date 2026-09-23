@@ -79,14 +79,14 @@ def render_composition_legend(totals: dict[str, int], *, lang: str) -> str:
     # test_render_composition_legend_missing_series_defaults_to_zero's
     # `out.count(">0<") == 4` is actually counting.
     quota_input, quota_output = mr.compute_quota_totals(totals)
-    quota_line = (
-        '<div class="quota-line" title="Aproximação baseada na regra de '
-        "rate-limit da API da Anthropic (input + cache_creation contam pra "
-        "ITPM, cache_read não conta, output é um limite separado). O "
-        'Claude Code não publica a fórmula exata da própria quota.">'
-        f"Quota (aprox.): {mr.format_tokens(quota_input)} entrada · "
-        f"{mr.format_tokens(quota_output)} saída</div>"
+    quota_text = mr.t(
+        "quota_line",
+        lang,
+        input=mr.format_tokens(quota_input),
+        output=mr.format_tokens(quota_output),
     )
+    quota_tooltip = html.escape(mr.t("quota_tooltip", lang))
+    quota_line = f'<div class="quota-line" title="{quota_tooltip}">{quota_text}</div>'
     return quota_line + '<div class="comp-legend">' + "".join(chips) + "</div>"
 
 
@@ -210,9 +210,10 @@ def render_group_header(
             member_periods.append(period.id)
         total_tokens = mr.format_tokens(sum(mr.record_token_total(r) for r in scoped))
         hidden_attr = "" if period.id == mr.DEFAULT_PERIOD_ID else " hidden"
+        session_count = mr.tn("sessions", len(scoped), lang)
         counts.append(
             f'<span class="group-count period-block" data-period="{period.id}"{hidden_attr}>'
-            f"({len(scoped)} sessões · {total_tokens} tokens)</span>"
+            f"({session_count} · {total_tokens} tokens)</span>"
         )
     return (
         f'<div class="group-header collapsed {group["class"]}" '
@@ -226,19 +227,19 @@ def render_group_header(
 
 
 def render_session_header(show_tmux: bool = True, *, lang: str) -> str:
-    tmux_span = '<span class="tmux-window">aba</span>' if show_tmux else ""
+    tmux_span = f'<span class="tmux-window">{mr.t("col.tmux", lang)}</span>' if show_tmux else ""
     return (
         '<div class="session-row session-header">'
         '<span class="sid">id</span>'
         '<span class="subagent-col">🤖</span>'
-        '<span class="date-col">data</span>'
+        f'<span class="date-col">{mr.t("col.date", lang)}</span>'
         f"{tmux_span}"
-        '<span class="label-col">tarefa</span>'
+        f'<span class="label-col">{mr.t("col.task", lang)}</span>'
         '<span class="tag-col">tag</span>'
         '<span class="branch-col">branch</span>'
         '<span class="tokens-total">tokens</span>'
-        '<span class="comp-header">composição</span>'
-        '<span class="duration-col">duração</span>'
+        f'<span class="comp-header">{mr.t("col.composition", lang)}</span>'
+        f'<span class="duration-col">{mr.t("col.duration", lang)}</span>'
         "</div>"
     )
 
@@ -255,14 +256,18 @@ def render_detail_panel(
     title = ""
     subagents = [s for s in subagents if mr.record_token_total(s) > 0]
     if not subagents:
-        body = '<p class="empty">Nenhum subagente nesta sessão.</p>'
+        body = f'<p class="empty">{mr.t("detail.no_subagents", lang)}</p>'
     else:
         ordered = sorted(subagents, key=lambda s: s.get("timestamp_start") or "", reverse=True)
-        title = f'<h4 class="subagent-title">Subagentes despachados ({len(ordered)})</h4>'
+        title = (
+            f'<h4 class="subagent-title">'
+            f"{mr.t('detail.subagents_title', lang, n=len(ordered))}</h4>"
+        )
         header = (
             '<div class="subagent-row subagent-header">'
-            "<span>data</span><span>tarefa</span><span>tokens</span>"
-            "<span>tools</span><span>duração</span>"
+            f"<span>{mr.t('col.date', lang)}</span><span>{mr.t('col.task', lang)}</span>"
+            "<span>tokens</span>"
+            f"<span>tools</span><span>{mr.t('col.duration', lang)}</span>"
             "</div>"
         )
         rows = [header]
@@ -273,7 +278,7 @@ def render_detail_panel(
             if agent_label:
                 task_text = f"{agent_type} — {html.escape(agent_label)}"
             else:
-                task_text = f"{agent_type} (sem transcript salvo)"
+                task_text = f"{agent_type} {mr.t('no_transcript', lang)}"
             date_str = mr.format_date(subagent.get("timestamp_start"), lang=lang)
             # A composition bar instead of the old "{in}/{out} tok" text
             # (2026-07-21) - the slash format was ambiguous about which
@@ -312,7 +317,7 @@ def render_detail_panel(
         f'<div class="detail-panel{open_class}" id="detail-{session_id}" '
         f'data-periods="{" ".join(period_ids)}">'
         f'<button class="detail-close" onclick="closeDetail(\'{session_id}\')" '
-        'aria-label="Fechar">×</button>'  # noqa: RUF001 - multiplication sign in shipped HTML, not a confusable identifier
+        f'aria-label="{mr.t("detail.close", lang)}">×</button>'  # noqa: RUF001 - multiplication sign in shipped HTML, not a confusable identifier
         f"<h3>{session_id}</h3>{title}{body}</div>"
     )
 
@@ -453,7 +458,9 @@ def render_trend_chart(
     # still partial - `hatch_url` is None for a complete last bucket, so
     # every bars_for_* segment's `if hatch_url and i == n - 1` guard below
     # is skipped entirely and nothing about a complete chart changes.
-    partial_note = f" (parcial, {round(partial_frac * 100)}%)" if partial_frac is not None else ""
+    partial_note = (
+        mr.t("partial", lang, pct=round(partial_frac * 100)) if partial_frac is not None else ""
+    )
 
     def hatch_overlay(hatch_id: str, x: float, y: float, w: float, h: float) -> str:
         return (
@@ -560,7 +567,7 @@ def render_trend_chart(
             segments: list[tuple[str, str, int]] = [
                 (mr.model_display_label(m), model_class[m], by_model.get(m, 0)) for m in model_order
             ]
-            segments.append(("sem modelo", unattributed_class, unattributed))
+            segments.append((mr.t("no_model", lang), unattributed_class, unattributed))
             y_cursor: float = padding_top + plot_height
             for label, css_class, value in segments:
                 if value <= 0:
@@ -685,7 +692,7 @@ def render_trend_chart(
         # -> plain basename, so raw_name and label naturally match and
         # the ":" is dropped.
         parent = mr.color_group_key(project)
-        raw_name = html.escape(Path((parent or "").rstrip("/")).name or "sem projeto")
+        raw_name = html.escape(Path((parent or "").rstrip("/")).name or mr.t("no_project", lang))
         label = html.escape(mr.project_display_label(parent, lang=lang))
         chip_text = raw_name if raw_name == label else f"{raw_name}:{label}"
         pane_legend_chips.append(
@@ -706,7 +713,7 @@ def render_trend_chart(
     model_legend_chips.append(
         f'<span class="legend-chip" onclick="highlightModel(\'{unattributed_class}\', event)">'
         f'<span class="legend-swatch {unattributed_class}"></span>'
-        "sem modelo</span>"
+        f"{mr.t('no_model', lang)}</span>"
     )
     model_legend_html = f'<div class="project-chart-legend">{"".join(model_legend_chips)}</div>'
 
@@ -714,11 +721,11 @@ def render_trend_chart(
         '<div class="trend-container">'
         '<div class="trend-mode-tabs">'
         f'<span class="tab-btn active" id="trend-btn-pane-{period_id}" '
-        f"onclick=\"showTrendMode('pane', '{period_id}')\">Por projeto</span>"
+        f"onclick=\"showTrendMode('pane', '{period_id}')\">{mr.t('mode.pane', lang)}</span>"
         f'<span class="tab-btn" id="trend-btn-tokens-{period_id}" '
-        f"onclick=\"showTrendMode('tokens', '{period_id}')\">Por tipo de token</span>"
+        f"onclick=\"showTrendMode('tokens', '{period_id}')\">{mr.t('mode.tokens', lang)}</span>"
         f'<span class="tab-btn" id="trend-btn-model-{period_id}" '
-        f"onclick=\"showTrendMode('model', '{period_id}')\">Por modelo</span>"
+        f"onclick=\"showTrendMode('model', '{period_id}')\">{mr.t('mode.model', lang)}</span>"
         "</div>"
         f'<div class="trend-pane active" id="trend-pane-pane-{period_id}">'
         f'<div class="trend-scroll" data-floor-hit="{str(scrollable).lower()}">{pane_svg}</div>'
@@ -826,7 +833,7 @@ def render_project_totals_chart(
             # to the label instead of being lost. An SVG <title> element
             # explains what the marker means to readers who might think it
             # is scoped to the period filter.
-            open_marker = " <title>aberto agora</title>●" if is_open else ""
+            open_marker = f" <title>{mr.t('open_now', lang)}</title>●" if is_open else ""
             days_running = mr.project_days_running(project_first_seen, project, lang=lang)
             seg_rects = []
             x_cursor: float = label_x
@@ -894,10 +901,11 @@ def render_project_totals_chart(
             f'<svg viewBox="0 0 {width} {hidden_height}" class="project-chart-svg" '
             f'id="project-chart-more-{period_id}" style="display:none">{"".join(hidden_rows)}</svg>'
         )
+        past_projects_text = mr.tn("past_projects", len(hidden_projects), lang)
         more_html = (
             f'<div class="project-chart-toggle" id="project-chart-toggle-{period_id}" '
             f"onclick=\"toggleProjectsMore('{period_id}')\">"
-            f"+ {len(hidden_projects)} projetos históricos</div>"
+            f"{past_projects_text}</div>"
             f"{hidden_svg}"
         )
 
@@ -911,12 +919,13 @@ def render_project_totals_chart(
     }
     legend = render_composition_legend(overall_totals, lang=lang) + (
         '<div class="project-chart-legend"><span class="legend-chip">'
-        "● sessão aberta agora</span></div>"
+        f"{mr.t('legend.open_session_html', lang)}</span></div>"
     )
     return (
         '<div class="project-chart-container">'
-        '<h3 class="project-chart-title">Total de tokens por projeto</h3>'
-        '<p class="project-chart-sort-note">ordenado por atividade mais recente primeiro</p>'
+        f'<h3 class="project-chart-title">{mr.t("project_totals_title", lang)}</h3>'
+        '<p class="project-chart-sort-note">'
+        f"{mr.t('project_totals_sort_note', lang)}</p>"
         f"{legend}"
         f"{visible_svg}"
         f"{more_html}"
@@ -1125,9 +1134,9 @@ def render_html(
     tabs_html = (
         '<div class="tab-bar">'
         '<span class="tab-btn active" id="tab-btn-sessions" '
-        "onclick=\"showTab('sessions')\">Sessões</span>"
+        f"onclick=\"showTab('sessions')\">{mr.t('tab.sessions', lang)}</span>"
         '<span class="tab-btn" id="tab-btn-panorama" '
-        "onclick=\"showTab('panorama')\">Panorama</span>"
+        f"onclick=\"showTab('panorama')\">{mr.t('tab.panorama', lang)}</span>"
         "</div>"
     )
     sessions_tab_html = (
@@ -1151,9 +1160,11 @@ def render_html(
     default_highlight = " ".join(
         ["series-1", "series-2", "series-3", "series-4", *sorted(set(group_colors.values()))]
     )
+    html_lang = "pt-BR" if lang == "pt" else "en"
+    page_title = html.escape(mr.t("page_title", lang))
     return (
-        "<!DOCTYPE html><html><head><meta charset='utf-8'>"
-        f"<title>Claude Code Metrics Dashboard</title>{STYLE}</head>"
+        f"<!DOCTYPE html><html lang=\"{html_lang}\"><head><meta charset='utf-8'>"
+        f"<title>{page_title}</title>{STYLE}</head>"
         f'<body data-highlight="{default_highlight}">'
         f"{render_period_filter(lang=lang)}"
         f"{trend_blocks_html}"

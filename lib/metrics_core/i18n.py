@@ -35,6 +35,20 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "Quota (approx.): {input} in · {output} out",
         "pt": "Quota (aprox.): {input} entrada · {output} saída",
     },
+    # The tooltip on the quota line above - missed by the plan's own
+    # replacement table (found by the leak detector, not the plan).
+    "quota_tooltip": {
+        "en": "Approximation based on the Anthropic API's rate-limit rule "
+        "(input + cache_creation count towards ITPM, cache_read does not, "
+        "output is a separate limit). Claude Code does not publish its "
+        "own quota's exact formula.",
+        "pt": "Aproximação baseada na regra de rate-limit da API da "
+        "Anthropic (input + cache_creation contam pra ITPM, cache_read "
+        "não conta, output é um limite separado). O Claude Code não "
+        "publica a fórmula exata da própria quota.",
+    },
+    # The detail panel's close button - also missed by the plan's table.
+    "detail.close": {"en": "Close", "pt": "Fechar"},
     # Charts.
     "chart_title.pane": {"en": "Tokens per day (by project)", "pt": "Tokens por dia (por projeto)"},
     "chart_title.tokens": {

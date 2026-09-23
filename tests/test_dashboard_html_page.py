@@ -520,6 +520,49 @@ def test_main_html_mode_writes_the_dashboard_to_the_expected_path_and_prints_it(
     assert expected_path.read_text().startswith("<!DOCTYPE html>")
 
 
+def test_main_html_mode_renders_english_when_the_config_says_so(
+    monkeypatch: pytest.MonkeyPatch,
+    isolate_main_from_the_real_filesystem: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # Proves main() itself calls resolve_language and threads the result
+    # through to render_html - a hardcoded `lang = "pt"` inside main() would
+    # leave every other test in this file green (they all pass lang="pt"
+    # straight to render_html) and only this one would catch it.
+    home = isolate_main_from_the_real_filesystem
+    (home / ".claude" / "metrics" / "config.json").write_text(json.dumps({"language": "en"}))
+    _write_jsonl(
+        home / ".claude" / "metrics" / "sessions.jsonl",
+        [_session_record("s1", "/work/proj-a", tokens=10)],
+    )
+    _run_main(monkeypatch, ["--html", "--label-budget", "0"])
+    capsys.readouterr()
+
+    out = (home / ".claude" / "metrics" / "dashboard.html").read_text()
+    assert '<html lang="en">' in out
+    assert "Sessions" in out
+
+
+def test_main_html_mode_renders_portuguese_by_the_pinned_default(
+    monkeypatch: pytest.MonkeyPatch,
+    isolate_main_from_the_real_filesystem: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # The autouse isolation fixture pins config.json to {"language": "pt"} -
+    # this is the other half of the pair above, over the default this file's
+    # every other main()-html test relies on without asserting it directly.
+    home = isolate_main_from_the_real_filesystem
+    _write_jsonl(
+        home / ".claude" / "metrics" / "sessions.jsonl",
+        [_session_record("s1", "/work/proj-a", tokens=10)],
+    )
+    _run_main(monkeypatch, ["--html", "--label-budget", "0"])
+    capsys.readouterr()
+
+    out = (home / ".claude" / "metrics" / "dashboard.html").read_text()
+    assert '<html lang="pt-BR">' in out
+
+
 def test_main_plain_mode_prints_table_and_summary_and_writes_no_file(
     monkeypatch: pytest.MonkeyPatch,
     isolate_main_from_the_real_filesystem: Path,

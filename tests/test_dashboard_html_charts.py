@@ -843,7 +843,9 @@ def test_render_project_totals_chart_visible_slice_bound_pinned_at_ten_and_eleve
     assert "project-chart-toggle" not in out_10
 
     assert "project-chart-toggle" in out_11
-    assert "+ 1 projetos históricos" in out_11
+    # Singular now (Task 3's allowed plural fix) - the old code always said
+    # "projetos históricos" even for exactly one.
+    assert "+ 1 projeto histórico" in out_11
     # The 11th (lowest-spend) project appears only inside the hidden svg,
     # not among the visible rows.
     visible_11 = out_11.split('id="project-chart-more-p1"')[0]

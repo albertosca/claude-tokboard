@@ -79,19 +79,17 @@ def _render_html(home: Path, lang: str) -> str:
     return _visible_html_text(fixture_page_html(home, lang))
 
 
-@pytest.mark.parametrize(
-    "lang",
-    [
-        pytest.param(
-            "en", marks=pytest.mark.xfail(strict=True, reason="Task 3 translates the HTML")
-        ),
-        "pt",
-    ],
-)
+@pytest.mark.parametrize("lang", ["en", "pt"])
 def test_the_html_dashboard_speaks_only_its_own_language(tmp_path: Path, lang: str) -> None:
     # The machine locale is pinned to pt_BR on purpose: the English page
     # must come out English because the CONFIG says so (Review Focus 1).
-    assert language_leaks(_render_html(tmp_path, lang), lang) == []
+    rendered = _render_html(tmp_path, lang)
+    # A positive assertion first (addition B): an empty page, or one that
+    # never rendered the group headers at all, would pass the leak check
+    # below for the wrong reason - it has to actually say something in
+    # its own language before "says nothing foreign" means anything.
+    assert ("Sessões" if lang == "pt" else "Sessions") in rendered
+    assert language_leaks(rendered, lang) == []
 
 
 def test_the_detector_fires_on_an_injected_leak() -> None:
