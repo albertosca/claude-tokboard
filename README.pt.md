@@ -26,7 +26,9 @@ Um plugin do Claude Code que registra cada sessão e cada subagente em segundo p
 
 <sub>O app de terminal - os mesmos dados, pelo teclado: <kbd>g</kbd> gráficos/sessões, <kbd>t</kbd> modo do gráfico, <kbd>p</kbd> período, <kbd>q</kbd> sair.</sub>
 
-> A interface fala inglês e português do Brasil, seguindo o idioma do seu sistema - ou defina "language": "en" ou "pt" em ~/.claude/metrics/config.json.
+> A interface fala inglês e português do Brasil, seguindo o locale do seu terminal - ou defina "language": "en" ou "pt" em ~/.claude/metrics/config.json.
+
+> A partir da 2.1.0, os rótulos de tarefa de IA ficam em cache por idioma. A primeira execução migra `~/.claude/metrics/task_labels.json` e `agent_labels.json` e guarda os arquivos antigos como `task_labels.json.pre-i18n` e `agent_labels.json.pre-i18n`. Copiá-los de volta restaura tudo numa versão anterior.
 
 ## Instalação
 

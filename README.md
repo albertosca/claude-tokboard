@@ -26,7 +26,9 @@ A Claude Code plugin that logs every session and subagent in the background and 
 
 <sub>The terminal app - same data, keyboard-driven: <kbd>g</kbd> charts/sessions, <kbd>t</kbd> chart mode, <kbd>p</kbd> period, <kbd>q</kbd> quit.</sub>
 
-> The interface speaks English and Brazilian Portuguese, following your system language - or set "language": "en" or "pt" in ~/.claude/metrics/config.json.
+> The interface speaks English and Brazilian Portuguese, following your terminal's locale - or set "language": "en" or "pt" in ~/.claude/metrics/config.json.
+
+> Since 2.1.0, AI task labels are cached per language. The first run migrates `~/.claude/metrics/task_labels.json` and `agent_labels.json` and keeps the old files as `task_labels.json.pre-i18n` and `agent_labels.json.pre-i18n`. Copying those back restores them for an older version.
 
 ## Install
 
