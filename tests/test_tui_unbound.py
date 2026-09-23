@@ -193,7 +193,15 @@ def test_import_metrics_report_returns_the_real_metrics_core_module(monkeypatch,
 # ---------------------------------------------------------------------------
 
 
-async def _drive_toggle_more_projects() -> dict[str, Any]:
+async def _drive_toggle_more_projects(
+    monkeypatch: pytest.MonkeyPatch, home: Path
+) -> dict[str, Any]:
+    # seeded_tui_home, not a bare call to load_data: without it this drove
+    # dashboard_tui against the machine's REAL ~/.claude/metrics (real
+    # session data, real config/locale, and - after Task 5's atomic
+    # migrating save - a real WRITE to the real label caches). Found and
+    # fixed 2026-09-23, see tests/test_real_metrics_isolation.py.
+    seeded_tui_home(monkeypatch, home)
     args = tui.build_arg_parser().parse_args(["--label-budget", "0"])
     async with tui.MetricsTUIApp(mr, tui.load_data(args, mr=mr), args=args).run_test(
         size=(140, 45)
@@ -217,8 +225,10 @@ async def _drive_toggle_more_projects() -> dict[str, Any]:
         }
 
 
-def test_m_toggles_project_ranking_expanded_state():
-    result = _run(_drive_toggle_more_projects())
+def test_m_toggles_project_ranking_expanded_state(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    result = _run(_drive_toggle_more_projects(monkeypatch, tmp_path))
     assert result["before"] is False
     assert result["after_one_press"] is True, (
         "pressing 'm' did not flip ProjectRankingList.expanded - "
@@ -232,7 +242,11 @@ def test_m_toggles_project_ranking_expanded_state():
 # ---------------------------------------------------------------------------
 
 
-async def _drive_g_twice() -> dict[str, Any]:
+async def _drive_g_twice(monkeypatch: pytest.MonkeyPatch, home: Path) -> dict[str, Any]:
+    # seeded_tui_home for the same reason as _drive_toggle_more_projects
+    # above - this drove the real app against the real ~/.claude/metrics
+    # until 2026-09-23.
+    seeded_tui_home(monkeypatch, home)
     args = tui.build_arg_parser().parse_args(["--label-budget", "0"])
     async with tui.MetricsTUIApp(mr, tui.load_data(args, mr=mr), args=args).run_test(
         size=(140, 45)
@@ -258,8 +272,10 @@ async def _drive_g_twice() -> dict[str, Any]:
         }
 
 
-def test_second_g_switches_back_to_sessions_and_refocuses_the_tree():
-    result = _run(_drive_g_twice())
+def test_second_g_switches_back_to_sessions_and_refocuses_the_tree(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    result = _run(_drive_g_twice(monkeypatch, tmp_path))
     assert result["active_after_first_g"] == "tab-panorama"
     assert result["active_after_second_g"] == "tab-sessions", (
         "a second 'g' must return to the Sessões tab, not stay on or cycle past Panorama"
