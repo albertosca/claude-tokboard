@@ -7,20 +7,26 @@ from __future__ import annotations
 import collections
 from datetime import datetime, timedelta
 
-Period = collections.namedtuple("Period", ("id", "label"))
+from .i18n import t
+
+Period = collections.namedtuple("Period", ("id",))
 
 # Order is display order: narrowest first, "everything" last.
 PERIODS = (
-    Period("ontem", "ontem"),
-    Period("desde-segunda", "desde segunda"),
-    Period("15-dias", "15 dias"),
-    Period("mes", "último mês"),
-    Period("tudo", "tudo"),
+    Period("ontem"),
+    Period("desde-segunda"),
+    Period("15-dias"),
+    Period("mes"),
+    Period("tudo"),
 )
 
 DEFAULT_PERIOD_ID = "tudo"
 
 _VALID_IDS = {p.id for p in PERIODS}
+
+
+def period_label(period_id: str, *, lang: str) -> str:
+    return t(f"period.{period_id}", lang)
 
 
 def _start_of_day(moment: datetime) -> datetime:

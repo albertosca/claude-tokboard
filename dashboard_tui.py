@@ -13,6 +13,7 @@ own .venv (see scripts/setup-tui-venv.sh to create it):
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
@@ -69,6 +70,12 @@ def load_base_data(args: argparse.Namespace, mr: ModuleType | None = None) -> di
     # Declared in ~/.claude/metrics/config.json; empty when there is no
     # config, which leaves normalize_project_paths exactly as it was.
     project_roots = mr.load_project_roots()
+    # Config first, then the machine's locale, then English - see
+    # resolve_language's own docstring. Resolved once, here (the expensive,
+    # once-per-launch half of the load), and carried in the returned dict so
+    # apply_period can copy it into every re-windowed view without
+    # re-resolving it on each "p" press.
+    lang = mr.resolve_language(mr.load_config(), os.environ)
     # Captured before dedupe_sessions discards every snapshot but one per
     # session_id - expand_records_to_daily_deltas needs the FULL raw
     # history to correctly spread a long-running session's token growth
@@ -248,6 +255,7 @@ def load_base_data(args: argparse.Namespace, mr: ModuleType | None = None) -> di
         "project_first_seen": project_first_seen,
         "project_last_seen": project_last_seen,
         "open_projects": open_projects,
+        "lang": lang,
     }
 
 
@@ -282,6 +290,7 @@ def apply_period(
         "project_first_seen": base["project_first_seen"],
         "project_last_seen": base["project_last_seen"],
         "open_projects": base["open_projects"],
+        "lang": base["lang"],
         "period_id": period_id,
         # The period-independent source this view was derived from, carried
         # along so any holder of a view can re-window it without reloading.
@@ -309,6 +318,8 @@ def build_session_tree(
     records: list[dict[str, Any]],
     subagents_by_session: dict[str, list[dict[str, Any]]],
     mr: ModuleType,
+    *,
+    lang: str,
 ) -> Tree[Any]:
     group_colors = mr.assign_group_colors(records)
     groups = mr.build_project_groups(records, group_colors)
@@ -324,7 +335,7 @@ def build_session_tree(
         visible_records = [r for r in group["records"] if mr.record_token_total(r) > 0]
         if not visible_records:
             continue
-        label = mr.project_display_label(project_path)
+        label = mr.project_display_label(project_path, lang=lang)
         total_tokens = sum(mr.record_token_total(r) for r in visible_records)
         group_node = tree.root.add(
             f"{label} ({len(visible_records)} sessões · {mr.format_tokens(total_tokens)} tokens)",
@@ -332,7 +343,7 @@ def build_session_tree(
         )
         for record in visible_records:
             session_id = record.get("session_id") or ""
-            date_str = mr.format_date(record.get("timestamp_start"))
+            date_str = mr.format_date(record.get("timestamp_start"), lang=lang)
             task_label = record.get("task_label") or "-"
             tokens = mr.format_tokens(mr.record_token_total(record))
             duration = record.get("duration_seconds")
@@ -357,9 +368,10 @@ def build_session_tree(
 
 
 class SessionDetailPanel(VerticalScroll):
-    def __init__(self, mr: ModuleType, **kwargs: Any) -> None:
+    def __init__(self, mr: ModuleType, *, lang: str, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.mr = mr
+        self.lang = lang
         self._body = Static("")
 
     def compose(self) -> ComposeResult:
@@ -400,10 +412,11 @@ class QuotaSummary(Static):
     math (its width would grow to whatever this line's own text needs)
     and make a click on this line get misread as a click on a chip."""
 
-    def __init__(self, totals: dict[str, int], mr: ModuleType, **kwargs: Any) -> None:
+    def __init__(self, totals: dict[str, int], mr: ModuleType, *, lang: str, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.totals = totals
         self.mr = mr
+        self.lang = lang
 
     def render(self) -> str:
         quota_input, quota_output = self.mr.compute_quota_totals(self.totals)
@@ -428,10 +441,11 @@ class CompositionLegend(Static):
         ("series-4", "cache creation"),
     ]
 
-    def __init__(self, totals: dict[str, int], mr: ModuleType, **kwargs: Any) -> None:
+    def __init__(self, totals: dict[str, int], mr: ModuleType, *, lang: str, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.totals = totals
         self.mr = mr
+        self.lang = lang
 
     def render(self) -> str:
         chips = []
@@ -486,8 +500,8 @@ def compute_pane_projects(
     return top_keys, has_other
 
 
-def pane_series_label(mr: ModuleType, key: str | None) -> str:
-    return "outros" if key == PANE_OTHER_KEY else mr.project_display_label(key)
+def pane_series_label(mr: ModuleType, key: str | None, *, lang: str) -> str:
+    return "outros" if key == PANE_OTHER_KEY else mr.project_display_label(key, lang=lang)
 
 
 def draw_stacked_bars(
@@ -581,12 +595,15 @@ class TrendChart(PlotextPlot):
         mr: ModuleType,
         chart_records: list[dict[str, Any]],
         mode: str = "pane",
+        *,
+        lang: str,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
         self.mr = mr
         self.chart_records = chart_records
         self.mode = mode
+        self.lang = lang
         self.highlighted: set[str] | None = None
         self.project_highlighted: set[str | None] | None = None
 
@@ -627,8 +644,10 @@ class TrendChart(PlotextPlot):
             self.refresh()
             return
         parse_fmt = self.mr.GRANULARITY_CONFIG[granularity]["parse_fmt"]
-        tick_fmt = self.mr.GRANULARITY_CONFIG[granularity]["tick_fmt"]
-        labels = [datetime.strptime(d["day"], parse_fmt).strftime(tick_fmt) for d in days]
+        labels = [
+            self.mr.tick_label(granularity, datetime.strptime(d["day"], parse_fmt), self.lang)
+            for d in days
+        ]
         # The last bucket is always a fraction of a full one while it's
         # still running (backlog, 2026-09-02: "the newest bar always reads
         # as a decline") - annotated on its own label rather than greyed
@@ -653,7 +672,7 @@ class TrendChart(PlotextPlot):
                 for k in series_keys:
                     series_data[k].append(day_totals[k])
             series_lists = [series_data[k] for k in series_keys]
-            series_labels = [pane_series_label(self.mr, k) for k in series_keys]
+            series_labels = [pane_series_label(self.mr, k, lang=self.lang) for k in series_keys]
             palette = [
                 PANE_COLORS[i] if i < len(PANE_COLORS) else PANE_OTHER_COLOR
                 for i in range(len(series_keys))
@@ -756,10 +775,13 @@ class ProjectLegend(Static):
             self.projects = projects
             super().__init__()
 
-    def __init__(self, mr: ModuleType, chart_records: list[dict[str, Any]], **kwargs: Any) -> None:
+    def __init__(
+        self, mr: ModuleType, chart_records: list[dict[str, Any]], *, lang: str, **kwargs: Any
+    ) -> None:
         super().__init__(**kwargs)
         self.mr = mr
         self.chart_records = chart_records
+        self.lang = lang
 
     def _series_keys(self) -> list[str | None]:
         top_keys, has_other = compute_pane_projects(self.mr, self.chart_records)
@@ -771,7 +793,7 @@ class ProjectLegend(Static):
             return "[dim]Sem dados.[/dim]"
         chips = []
         for key in series_keys:
-            label = pane_series_label(self.mr, key)
+            label = pane_series_label(self.mr, key, lang=self.lang)
             is_highlighted = self.highlighted is not None and key in self.highlighted
             style = "bold reverse" if is_highlighted else ""
             chip = f"[{style}]{label}[/{style}]" if style else label
@@ -806,6 +828,8 @@ class ProjectRankingList(Static):
         project_first_seen: dict[str, str],
         project_last_seen: dict[str, str],
         open_projects: set[str],
+        *,
+        lang: str,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
@@ -814,6 +838,7 @@ class ProjectRankingList(Static):
         self.project_first_seen = project_first_seen
         self.project_last_seen = project_last_seen
         self.open_projects = open_projects
+        self.lang = lang
 
     def toggle_more(self) -> None:
         self.expanded = not self.expanded
@@ -837,11 +862,13 @@ class ProjectRankingList(Static):
         lines = ["[bold]Total de tokens por projeto[/bold]", ""]
         for project in shown:
             total = totals[project]
-            label = self.mr.project_display_label(project)
+            label = self.mr.project_display_label(project, lang=self.lang)
             bar_len = int((total / max_total) * 30)
             is_open = project in self.open_projects
             bar_char = "█" if is_open else "▓"
-            days_running = self.mr.project_days_running(self.project_first_seen, project)
+            days_running = self.mr.project_days_running(
+                self.project_first_seen, project, lang=self.lang
+            )
             formatted_total = self.mr.format_tokens(total)
             lines.append(f"{label[:24]:<26}{bar_char * bar_len:<32}{formatted_total}{days_running}")
 
@@ -955,16 +982,17 @@ class MetricsTUIApp(App[None]):
         self.chart_mode = "pane"
 
     def compose(self) -> ComposeResult:
+        lang = self.data["lang"]
         yield Static(
-            self.mr.describe_backfill_state(self.mr.load_backfill_state()),
+            self.mr.describe_backfill_state(self.mr.load_backfill_state(), lang=lang),
             classes="backfill-note",
         )
         with TabbedContent(initial=self.active_tab_id):
             with TabPane("Sessões", id="tab-sessions"), Horizontal():
                 yield build_session_tree(
-                    self.data["records"], self.data["subagents_by_session"], self.mr
+                    self.data["records"], self.data["subagents_by_session"], self.mr, lang=lang
                 )
-                yield SessionDetailPanel(self.mr)
+                yield SessionDetailPanel(self.mr, lang=lang)
             with TabPane("Panorama", id="tab-panorama"):
                 totals = self.mr.compute_token_type_totals(self.data["records"])
                 # Visibility is set here, as each legend is built, rather than
@@ -972,25 +1000,28 @@ class MetricsTUIApp(App[None]):
                 # queued behind the recompose could leave one frame with all
                 # three legends showing (2026-09-23 review).
                 shown = legend_visibility(self.chart_mode)
-                quota = QuotaSummary(totals, self.mr)
+                quota = QuotaSummary(totals, self.mr, lang=lang)
                 quota.display = shown["quota"]
                 yield quota
-                composition = CompositionLegend(totals, self.mr)
+                composition = CompositionLegend(totals, self.mr, lang=lang)
                 composition.display = shown["composition"]
                 yield composition
-                projects = ProjectLegend(self.mr, self.data["chart_records"])
+                projects = ProjectLegend(self.mr, self.data["chart_records"], lang=lang)
                 projects.display = shown["projects"]
                 yield projects
                 # In the mode the reader last picked, not the default: "p"
                 # recomposes every widget, and a fresh chart would silently
                 # drop the slicing they chose (2026-09-22).
-                yield TrendChart(self.mr, self.data["daily_chart_records"], mode=self.chart_mode)
+                yield TrendChart(
+                    self.mr, self.data["daily_chart_records"], mode=self.chart_mode, lang=lang
+                )
                 yield ProjectRankingList(
                     self.mr,
                     self.data["chart_records"],
                     self.data["project_first_seen"],
                     self.data["project_last_seen"],
                     self.data["open_projects"],
+                    lang=lang,
                 )
         yield Footer()
 
@@ -1082,8 +1113,7 @@ class MetricsTUIApp(App[None]):
         # the time this runs, query_one(Tree) already returns the NEW tree,
         # not the one about to be torn down.
         self.call_next(self._restore_focus_after_period_cycle)
-        period_labels = {p.id: p.label for p in self.mr.PERIODS}
-        self.notify(f"período: {period_labels[next_id]}")
+        self.notify(f"período: {self.mr.period_label(next_id, lang=self.data['lang'])}")
 
     def _restore_focus_after_period_cycle(self) -> None:
         """Focus a widget that actually belongs to the pane recompose

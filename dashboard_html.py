@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import html
+import os
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
@@ -59,7 +60,7 @@ SERIES_NAMES = {
 }
 
 
-def render_composition_legend(totals: dict[str, int]) -> str:
+def render_composition_legend(totals: dict[str, int], *, lang: str) -> str:
     chips = []
     for css_class, name in SERIES_NAMES.items():
         chips.append(
@@ -121,6 +122,8 @@ def render_session_row(
     subagent_count: int = 0,
     show_tmux: bool = True,
     period_ids: tuple[str, ...] = ("tudo",),
+    *,
+    lang: str,
 ) -> str:
     session_id = record.get("session_id") or ""
     tag = html.escape(record.get("tag") or "-")
@@ -134,7 +137,7 @@ def render_session_row(
     if len(raw_task_label) > 80:
         raw_task_label = raw_task_label[:80].rsplit(" ", 1)[0].rstrip(".,;:") + "…"
     task_label = html.escape(raw_task_label)
-    date_str = mr.format_date(record.get("timestamp_start"))
+    date_str = mr.format_date(record.get("timestamp_start"), lang=lang)
     duration_str = mr.format_duration(record.get("duration_seconds"))
     total_tokens = mr.format_tokens(mr.record_token_total(record))
     active_class = " active" if is_active else ""
@@ -185,6 +188,8 @@ def render_group_header(
     group_index: int,
     group: dict[str, Any],
     period_windows: dict[str, tuple[datetime, datetime] | None],
+    *,
+    lang: str,
 ) -> str:
     # Period-aware since 2026-08-13. The header used to state one all-time
     # "N sessões · X tokens" that no period ever re-scoped, so under "ontem"
@@ -195,7 +200,7 @@ def render_group_header(
     # be hidden outright when no session of its own belongs to the active
     # period - a header reading "0 sessões" would be worse than no header.
     project_path = group["project"]
-    label = mr.project_display_label(project_path)
+    label = mr.project_display_label(project_path, lang=lang)
     title_attr = f' title="{html.escape(project_path)}"' if project_path else ""
     member_periods = []
     counts = []
@@ -220,7 +225,7 @@ def render_group_header(
     )
 
 
-def render_session_header(show_tmux: bool = True) -> str:
+def render_session_header(show_tmux: bool = True, *, lang: str) -> str:
     tmux_span = '<span class="tmux-window">aba</span>' if show_tmux else ""
     return (
         '<div class="session-row session-header">'
@@ -243,6 +248,8 @@ def render_detail_panel(
     subagents: list[dict[str, Any]],
     is_active: bool,
     period_ids: tuple[str, ...] = ("tudo",),
+    *,
+    lang: str,
 ) -> str:
     open_class = " open" if is_active else ""
     title = ""
@@ -267,7 +274,7 @@ def render_detail_panel(
                 task_text = f"{agent_type} — {html.escape(agent_label)}"
             else:
                 task_text = f"{agent_type} (sem transcript salvo)"
-            date_str = mr.format_date(subagent.get("timestamp_start"))
+            date_str = mr.format_date(subagent.get("timestamp_start"), lang=lang)
             # A composition bar instead of the old "{in}/{out} tok" text
             # (2026-07-21) - the slash format was ambiguous about which
             # number was which, and this also gives subagent rows the
@@ -315,10 +322,11 @@ def render_trend_chart(
     group_colors: dict[str | None, str],
     period_id: str,
     now: datetime | None = None,
+    *,
+    lang: str,
 ) -> str:
     granularity, days = mr.aggregate_by_day(records)
     parse_fmt = mr.GRANULARITY_CONFIG[granularity]["parse_fmt"]
-    tick_fmt = mr.GRANULARITY_CONFIG[granularity]["tick_fmt"]
     n = len(days)
     if n < 2:
         return ""
@@ -418,7 +426,7 @@ def render_trend_chart(
         idx = round(t * (n - 1) / (tick_count - 1)) if tick_count > 1 else 0
         x = padding_left + idx * step + bar_width / 2
         bucket_dt = datetime.strptime(days[idx]["day"], parse_fmt)
-        tick_date = bucket_dt.strftime(tick_fmt)
+        tick_date = mr.tick_label(granularity, bucket_dt, lang)
         if idx == n - 1 and partial_frac is not None:
             tick_date += f" · {round(partial_frac * 100)}%"
         x_axis.append(
@@ -474,7 +482,7 @@ def render_trend_chart(
                 seg_height = (value / max_pane) * plot_height if max_pane else 0
                 y_cursor -= seg_height
                 group_class = group_colors.get(project, "group-color-none")
-                project_label = mr.project_display_label(project)
+                project_label = mr.project_display_label(project, lang=lang)
                 note = partial_note if i == n - 1 else ""
                 bars.append(
                     f'<rect x="{x:.1f}" y="{y_cursor:.1f}" '
@@ -678,7 +686,7 @@ def render_trend_chart(
         # the ":" is dropped.
         parent = mr.color_group_key(project)
         raw_name = html.escape(Path((parent or "").rstrip("/")).name or "sem projeto")
-        label = html.escape(mr.project_display_label(parent))
+        label = html.escape(mr.project_display_label(parent, lang=lang))
         chip_text = raw_name if raw_name == label else f"{raw_name}:{label}"
         pane_legend_chips.append(
             f'<span class="legend-chip" '
@@ -757,6 +765,8 @@ def render_project_totals_chart(
     project_last_seen: dict[str, str],
     open_projects: set[str],
     period_id: str,
+    *,
+    lang: str,
 ) -> str:
     ordered_projects, _totals, _max_total = mr.compute_project_totals(records, project_last_seen)
     # Segmented by token type (2026-07-20) instead of one flat bar, so the
@@ -808,7 +818,7 @@ def render_project_totals_chart(
         y = 14
         for project in projects:
             total = totals[project]
-            label = mr.project_display_label(project)
+            label = mr.project_display_label(project, lang=lang)
             title_attr = f' title="{html.escape(project)}"' if project else ""
             is_open = project in open_projects
             # Bar color now carries token-type (to match the legend), so
@@ -817,7 +827,7 @@ def render_project_totals_chart(
             # explains what the marker means to readers who might think it
             # is scoped to the period filter.
             open_marker = " <title>aberto agora</title>●" if is_open else ""
-            days_running = mr.project_days_running(project_first_seen, project)
+            days_running = mr.project_days_running(project_first_seen, project, lang=lang)
             seg_rects = []
             x_cursor: float = label_x
             for css_class, value in series_by_project.get(project, {}).items():
@@ -899,7 +909,7 @@ def render_project_totals_chart(
         css_class: sum(series.get(css_class, 0) for series in series_by_project.values())
         for css_class in ("series-1", "series-2", "series-3", "series-4")
     }
-    legend = render_composition_legend(overall_totals) + (
+    legend = render_composition_legend(overall_totals, lang=lang) + (
         '<div class="project-chart-legend"><span class="legend-chip">'
         "● sessão aberta agora</span></div>"
     )
@@ -935,21 +945,21 @@ def build_group_colors(
     return mr.assign_group_colors(list(chart_records) + list(daily_chart_records))
 
 
-def render_backfill_note() -> str:
-    text = mr.describe_backfill_state(mr.load_backfill_state())
+def render_backfill_note(*, lang: str) -> str:
+    text = mr.describe_backfill_state(mr.load_backfill_state(), lang=lang)
     return f'<span class="backfill-note">{html.escape(text)}</span>'
 
 
-def render_period_filter() -> str:
+def render_period_filter(*, lang: str) -> str:
     chips = []
     for period in mr.PERIODS:
         active = " active" if period.id == mr.DEFAULT_PERIOD_ID else ""
         chips.append(
             f'<button type="button" class="period-chip{active}" '
             f'data-period="{period.id}" onclick="selectPeriod(\'{period.id}\')">'
-            f"{html.escape(period.label)}</button>"
+            f"{html.escape(mr.period_label(period.id, lang=lang))}</button>"
         )
-    return f'<div class="period-filter">{"".join(chips)}{render_backfill_note()}</div>'
+    return f'<div class="period-filter">{"".join(chips)}{render_backfill_note(lang=lang)}</div>'
 
 
 def render_html(
@@ -962,6 +972,8 @@ def render_html(
     project_last_seen: dict[str, str],
     open_projects: set[str],
     now: datetime,
+    *,
+    lang: str,
 ) -> str:
     group_colors = build_group_colors(chart_records, daily_chart_records)
 
@@ -1004,7 +1016,7 @@ def render_html(
     rows_html = []
     panels_html = []
     for group_index, group in visible_groups:
-        rows_html.append(render_group_header(group_index, group, period_windows))
+        rows_html.append(render_group_header(group_index, group, period_windows, lang=lang))
         for record in group["records"]:
             session_id = record.get("session_id") or ""
             label = record.get("task_label")
@@ -1024,11 +1036,16 @@ def render_html(
                     visible_subagent_count,
                     show_tmux=has_tmux_data,
                     period_ids=periods_for(record),
+                    lang=lang,
                 )
             )
             panels_html.append(
                 render_detail_panel(
-                    session_id, session_subagents, False, period_ids=periods_for(record)
+                    session_id,
+                    session_subagents,
+                    False,
+                    period_ids=periods_for(record),
+                    lang=lang,
                 )
             )
 
@@ -1078,20 +1095,26 @@ def render_html(
         hidden_attr = "" if period.id == mr.DEFAULT_PERIOD_ID else " hidden"
         trend_blocks.append(
             f'<div class="period-block" data-period="{period.id}"{hidden_attr}>'
-            + render_trend_chart(scoped_daily, group_colors, period.id, now=now)
+            + render_trend_chart(scoped_daily, group_colors, period.id, now=now, lang=lang)
             + "</div>"
         )
         panorama_blocks.append(
             f'<div class="period-block" data-period="{period.id}"{hidden_attr}>'
             + render_project_totals_chart(
-                scoped_chart, project_first_seen, project_last_seen, open_projects, period.id
+                scoped_chart,
+                project_first_seen,
+                project_last_seen,
+                open_projects,
+                period.id,
+                lang=lang,
             )
             + "</div>"
         )
         legend_blocks.append(
             f'<div class="period-block" data-period="{period.id}"{hidden_attr}>'
             + render_composition_legend(
-                mr.compute_token_type_totals(mr.filter_sessions_by_window(records, window))
+                mr.compute_token_type_totals(mr.filter_sessions_by_window(records, window)),
+                lang=lang,
             )
             + "</div>"
         )
@@ -1111,7 +1134,7 @@ def render_html(
         '<div class="tab-pane active" id="tab-sessions">'
         '<div class="main-row">'
         f'<div class="session-list">{legend_blocks_html}'
-        f"{render_session_header(has_tmux_data)}{''.join(rows_html)}</div>"
+        f"{render_session_header(has_tmux_data, lang=lang)}{''.join(rows_html)}</div>"
         f'<div class="detail-container">{"".join(panels_html)}</div>'
         "</div>"
         "</div>"
@@ -1132,7 +1155,7 @@ def render_html(
         "<!DOCTYPE html><html><head><meta charset='utf-8'>"
         f"<title>Claude Code Metrics Dashboard</title>{STYLE}</head>"
         f'<body data-highlight="{default_highlight}">'
-        f"{render_period_filter()}"
+        f"{render_period_filter(lang=lang)}"
         f"{trend_blocks_html}"
         f"{tabs_html}"
         f"{sessions_tab_html}"
@@ -1179,6 +1202,10 @@ def main() -> None:
     # Declared in ~/.claude/metrics/config.json; empty when there is no
     # config, which leaves normalize_project_paths exactly as it was.
     project_roots = mr.load_project_roots()
+    # Config first, then the machine's locale, then English - see
+    # resolve_language's own docstring. Resolved once, here, and threaded
+    # to every renderer explicitly rather than re-read per call.
+    lang = mr.resolve_language(mr.load_config(), os.environ)
     # Captured before dedupe_sessions discards every snapshot but one per
     # session_id - expand_records_to_daily_deltas needs the FULL raw
     # history to correctly spread a long-running session's token growth
@@ -1385,6 +1412,7 @@ def main() -> None:
             project_last_seen,
             open_projects,
             render_now,
+            lang=lang,
         )
         output_path = Path("~/.claude/metrics/dashboard.html").expanduser()
         with output_path.open("w") as f:

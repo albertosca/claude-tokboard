@@ -43,6 +43,7 @@ the only acceptable behaviour for a dependency this suite genuinely has.
 """
 
 import asyncio
+import json
 import subprocess
 import sys
 from datetime import datetime
@@ -99,6 +100,15 @@ def isolate_tui_from_the_real_filesystem(mp: pytest.MonkeyPatch, home: Path) -> 
     # reader's REAL ~/.claude/metrics/config.json would otherwise rename
     # projects underneath every test that builds its own HOME.
     mp.setattr(paths_module, "CONFIG_FILE", str(metrics / "config.json"))
+
+    # The language is pinned twice, both ways a run can resolve it, so the
+    # suite never depends on the locale of the machine running it: config
+    # first (the real mechanism), and the locale variables too, for the
+    # tests that write their own config.json without a "language".
+    (metrics / "config.json").write_text(json.dumps({"language": "pt"}))
+    mp.setenv("LC_ALL", "pt_BR.UTF-8")
+    mp.setenv("LC_MESSAGES", "")
+    mp.setenv("LANG", "")
 
     # --label-budget 0 must never reach a real `claude -p` call. Failing
     # loudly here - the same mechanism tests/test_dashboard_html_page.py

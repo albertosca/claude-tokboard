@@ -52,31 +52,31 @@ def test_first_and_last_seen_skip_records_missing_either_field():
 
 
 def test_project_display_label_falls_back_when_there_is_no_path():
-    assert mr.project_display_label(None) == "sem projeto"
-    assert mr.project_display_label("") == "sem projeto"
+    assert mr.project_display_label(None, lang="pt") == "sem projeto"
+    assert mr.project_display_label("", lang="pt") == "sem projeto"
 
 
 def test_project_display_label_is_the_basename():
-    assert mr.project_display_label("/home/me/proj") == "proj"
-    assert mr.project_display_label("/home/me/proj/") == "proj"
+    assert mr.project_display_label("/home/me/proj", lang="pt") == "proj"
+    assert mr.project_display_label("/home/me/proj/", lang="pt") == "proj"
 
 
 def test_project_display_label_names_a_worktree_after_its_parent():
-    assert mr.project_display_label(WORKTREE) == "proj / feature-x"
-    assert mr.project_display_label(WORKTREE + "/nested/deeper") == "proj / feature-x"
+    assert mr.project_display_label(WORKTREE, lang="pt") == "proj / feature-x"
+    assert mr.project_display_label(WORKTREE + "/nested/deeper", lang="pt") == "proj / feature-x"
 
 
 def test_project_display_label_ignores_a_worktree_marker_with_no_name_after_it():
     # The marker is present but nothing follows it, so there is no
     # worktree name to show - falls through to the plain basename.
-    assert mr.project_display_label("/home/me/proj/.claude/worktrees/") == "worktrees"
+    assert mr.project_display_label("/home/me/proj/.claude/worktrees/", lang="pt") == "worktrees"
 
 
 def test_project_display_label_of_root_is_empty():
     # "/" rstrips to "", so both Path("").name and the `or normalized`
     # fallback are empty - the function returns "". Verified against the
     # real implementation before this test was written, not assumed.
-    assert mr.project_display_label("/") == ""
+    assert mr.project_display_label("/", lang="pt") == ""
 
 
 def test_project_display_label_falls_through_when_marker_is_followed_by_a_slash():
@@ -87,7 +87,9 @@ def test_project_display_label_falls_through_when_marker_is_followed_by_a_slash(
     # worktree_name", falling through to the plain-basename return.
     # Verified against the real implementation before this test was
     # written, not assumed.
-    assert mr.project_display_label("/home/me/proj/.claude/worktrees//nested") == "nested"
+    assert (
+        mr.project_display_label("/home/me/proj/.claude/worktrees//nested", lang="pt") == "nested"
+    )
 
 
 # --- color_group_key -------------------------------------------------
@@ -110,17 +112,17 @@ def test_color_group_key_of_a_worktree_is_its_parent_project():
 
 
 def test_project_days_running_is_empty_without_a_first_seen():
-    assert mr.project_days_running({}, "/a") == ""
-    assert mr.project_days_running({"/a": "2026-03-01T10:00:00"}, None) == ""
+    assert mr.project_days_running({}, "/a", lang="pt") == ""
+    assert mr.project_days_running({"/a": "2026-03-01T10:00:00"}, None, lang="pt") == ""
 
 
 def test_project_days_running_is_empty_on_an_unparseable_timestamp():
-    assert mr.project_days_running({"/a": "not a timestamp"}, "/a") == ""
+    assert mr.project_days_running({"/a": "not a timestamp"}, "/a", lang="pt") == ""
 
 
 def test_project_days_running_counts_days_since_first_use():
     ten_days_ago = (datetime.now().astimezone() - timedelta(days=10)).isoformat()
-    assert mr.project_days_running({"/a": ten_days_ago}, "/a") == " · 1º uso há 10 dias"
+    assert mr.project_days_running({"/a": ten_days_ago}, "/a", lang="pt") == " · 1º uso há 10 dias"
 
 
 # --- get_open_projects -----------------------------------------------
@@ -253,8 +255,10 @@ PLAIN_WORKTREE = "/home/me/proj/.worktrees/feature-x"
 
 
 def test_project_display_label_names_a_plain_worktree_after_its_parent_too():
-    assert mr.project_display_label(PLAIN_WORKTREE) == "proj / feature-x"
-    assert mr.project_display_label(PLAIN_WORKTREE + "/nested/deeper") == "proj / feature-x"
+    assert mr.project_display_label(PLAIN_WORKTREE, lang="pt") == "proj / feature-x"
+    assert (
+        mr.project_display_label(PLAIN_WORKTREE + "/nested/deeper", lang="pt") == "proj / feature-x"
+    )
 
 
 def test_color_group_key_of_a_plain_worktree_is_its_parent_project():
@@ -264,7 +268,7 @@ def test_color_group_key_of_a_plain_worktree_is_its_parent_project():
 def test_a_directory_merely_named_worktrees_is_not_a_worktree_marker():
     # The marker is a path SEGMENT. A project whose own name ends in
     # ".worktrees", or a file called that, must not be split.
-    assert mr.project_display_label("/home/me/my.worktrees") == "my.worktrees"
+    assert mr.project_display_label("/home/me/my.worktrees", lang="pt") == "my.worktrees"
     assert mr.color_group_key("/home/me/my.worktrees") == "/home/me/my.worktrees"
 
 
@@ -272,4 +276,4 @@ def test_the_claude_marker_still_wins_inside_a_plain_worktrees_directory():
     # Both markers present: the Claude one is more specific and is what
     # the path was actually created by, so it decides.
     both = "/home/me/proj/.worktrees/a/.claude/worktrees/b"
-    assert mr.project_display_label(both) == "a / b"
+    assert mr.project_display_label(both, lang="pt") == "a / b"

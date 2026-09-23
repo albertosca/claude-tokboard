@@ -190,13 +190,13 @@ def test_render_html_wires_style_and_script_from_assets() -> None:
     # If render_html ever stops threading these two constants through, the
     # page silently ships with no CSS/JS - assert the literal constants
     # appear so an accidental unwiring fails loudly.
-    out = dashboard_html.render_html(**_empty_render_html_kwargs())
+    out = dashboard_html.render_html(**_empty_render_html_kwargs(), lang="pt")
     assert dashboard_html_assets.STYLE in out
     assert dashboard_html_assets.SCRIPT in out
 
 
 def test_render_html_empty_record_set_produces_a_valid_page_without_raising() -> None:
-    out = dashboard_html.render_html(**_empty_render_html_kwargs())
+    out = dashboard_html.render_html(**_empty_render_html_kwargs(), lang="pt")
     assert out.startswith("<!DOCTYPE html>")
     assert out.rstrip().endswith("</html>")
 
@@ -212,7 +212,7 @@ def test_render_html_default_highlight_opens_with_every_series_and_project_color
     group_colors = dashboard_html.build_group_colors(chart_records, [])
     kwargs = _empty_render_html_kwargs()
     kwargs["chart_records"] = chart_records
-    out = dashboard_html.render_html(**kwargs)
+    out = dashboard_html.render_html(**kwargs, lang="pt")
 
     body_tags = parse_html(out).find_all("body")
     assert len(body_tags) == 1
@@ -235,13 +235,17 @@ def test_render_html_marks_exactly_one_default_period_active_per_block_family(
     # not chart internals (already covered by test_dashboard_html_charts.py).
     call_order: list[int] = []
 
-    def fake_trend(records: Any, group_colors: Any, period_id: str, now: Any = None) -> str:
+    def fake_trend(
+        records: Any, group_colors: Any, period_id: str, now: Any = None, *, lang: str
+    ) -> str:
         return f"TREND::{period_id}"
 
-    def fake_panorama(records: Any, pfs: Any, pls: Any, op: Any, period_id: str) -> str:
+    def fake_panorama(
+        records: Any, pfs: Any, pls: Any, op: Any, period_id: str, *, lang: str
+    ) -> str:
         return f"PANORAMA::{period_id}"
 
-    def fake_legend(totals: Any) -> str:
+    def fake_legend(totals: Any, *, lang: str) -> str:
         idx = len(call_order)
         call_order.append(idx)
         return f"LEGEND::{mr.PERIODS[idx].id}"
@@ -250,7 +254,7 @@ def test_render_html_marks_exactly_one_default_period_active_per_block_family(
     monkeypatch.setattr(dashboard_html, "render_project_totals_chart", fake_panorama)
     monkeypatch.setattr(dashboard_html, "render_composition_legend", fake_legend)
 
-    out = dashboard_html.render_html(**_empty_render_html_kwargs())
+    out = dashboard_html.render_html(**_empty_render_html_kwargs(), lang="pt")
     blocks = parse_html(out).find_all("div", "period-block")
     # The module's own comment (862-884) measured this shape on the test
     # fixture's real page: 3 families x 5 periods = 15 period-block divs.
@@ -300,7 +304,7 @@ def test_render_html_omits_a_group_whose_every_session_is_zero_token() -> None:
     live_record = _session_record("live1", "/work/proj-b", tokens=100)
     kwargs = _empty_render_html_kwargs()
     kwargs["records"] = [zero_record, live_record]
-    out = dashboard_html.render_html(**kwargs)
+    out = dashboard_html.render_html(**kwargs, lang="pt")
     assert 'id="row-zero1"' not in out
     assert 'id="row-live1"' in out
 
@@ -312,7 +316,7 @@ def test_render_html_numbers_a_task_label_only_when_shared_by_two_or_more_sessio
     r4 = _session_record("nolabel1", "/work/proj-a", tokens=10)  # no task_label key at all
     kwargs = _empty_render_html_kwargs()
     kwargs["records"] = [r1, r2, r3, r4]
-    out = dashboard_html.render_html(**kwargs)
+    out = dashboard_html.render_html(**kwargs, lang="pt")
 
     label_spans = [n.text() for n in parse_html(out).find_all("span", "label-col")]
     assert label_spans.count("same label (1)") == 1
@@ -351,7 +355,7 @@ def test_render_html_computes_each_records_own_period_membership_and_passes_it_t
     kwargs = _empty_render_html_kwargs()
     kwargs["records"] = [record]
     kwargs["period_windows"] = _period_windows(_now())
-    dashboard_html.render_html(**kwargs)
+    dashboard_html.render_html(**kwargs, lang="pt")
 
     assert captured["row_period_ids"] == ("15-dias", "mes", "tudo")
     assert captured["panel_period_ids"] == ("15-dias", "mes", "tudo")
@@ -369,7 +373,7 @@ def test_render_html_counts_only_nonzero_token_subagents_and_defaults_to_no_suba
     kwargs = _empty_render_html_kwargs()
     kwargs["records"] = [with_subagents, without_subagents]
     kwargs["subagents_by_session"] = subagents_by_session
-    out = dashboard_html.render_html(**kwargs)
+    out = dashboard_html.render_html(**kwargs, lang="pt")
 
     rows = {
         n.attrs.get("id"): n

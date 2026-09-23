@@ -76,19 +76,19 @@ def test_format_duration_at_an_hour_switches_again_and_pads_minutes():
 
 
 def test_format_date_empty_or_none_is_a_dash():
-    assert mr.format_date(None) == "-"
-    assert mr.format_date("") == "-"
+    assert mr.format_date(None, lang="pt") == "-"
+    assert mr.format_date("", lang="pt") == "-"
 
 
 def test_format_date_unparseable_is_a_dash():
-    assert mr.format_date("not a timestamp") == "-"
+    assert mr.format_date("not a timestamp", lang="pt") == "-"
 
 
 def test_format_date_renders_day_month_and_local_time():
     # Built from the local zone so this asserts a real formatted value
     # without hardcoding the machine's UTC offset.
     moment = datetime(2026, 3, 7, 14, 5).astimezone()
-    assert mr.format_date(moment.isoformat()) == "07/03 14:05"
+    assert mr.format_date(moment.isoformat(), lang="pt") == "07/03 14:05"
 
 
 def test_format_date_accepts_a_trailing_z_and_converts_to_local():
@@ -96,7 +96,7 @@ def test_format_date_accepts_a_trailing_z_and_converts_to_local():
     # is that UTC instant expressed in the local zone.
     utc_moment = datetime(2026, 3, 7, 14, 5, tzinfo=timezone.utc)
     expected = utc_moment.astimezone().strftime("%d/%m %H:%M")
-    assert mr.format_date("2026-03-07T14:05:00Z") == expected
+    assert mr.format_date("2026-03-07T14:05:00Z", lang="pt") == expected
 
 
 # --- model_display_label ---------------------------------------------

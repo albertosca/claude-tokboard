@@ -14,6 +14,7 @@ import json
 from pathlib import Path
 from typing import Any, cast
 
+from .i18n import t
 from .records import expand_records_to_daily_deltas
 from .transcript_ingest import SYNTHETIC_MODEL, TOKEN_FIELDS, USAGE_KEYS, model_key
 
@@ -380,7 +381,7 @@ def write_backfill_state(
     return state
 
 
-def describe_backfill_state(state: dict[str, Any] | None) -> str:
+def describe_backfill_state(state: dict[str, Any] | None, *, lang: str) -> str:
     """Plain-language boundary note, rendered verbatim by both dashboards.
 
     Degrades to the "never applied" note on any malformed state - missing
@@ -390,21 +391,14 @@ def describe_backfill_state(state: dict[str, Any] | None) -> str:
     already guards against corrupt JSON; this guards against JSON that
     parses fine but isn't the shape expected here.
     """
-    never_applied = (
-        f"duplicação de tokens ainda não corrigida no histórico "
-        f"(dados anteriores a {DEFAULT_CUTOFF} podem estar inflados)"
-    )
+    never_applied = t("backfill.never_applied", lang, cutoff=DEFAULT_CUTOFF)
     if not isinstance(state, dict):
         return never_applied
     cutoff = state.get("cutoff")
     applied_at = state.get("applied_at")
     if not isinstance(cutoff, str) or not isinstance(applied_at, str):
         return never_applied
-    note = (
-        f"duplicação corrigida para sessões encerradas antes de {cutoff} "
-        f"(aplicado em {applied_at[:10]}); sessões sem transcript "
-        f"salvo continuam com contagem inflada"
-    )
+    note = t("backfill.applied", lang, cutoff=cutoff, applied=applied_at[:10])
     # The OTHER boundary (2026-08-24 backlog entry): correction is also
     # bounded by transcript retention, not just the cutoff date above. A
     # reader can't otherwise tell "that week was genuinely busier" from
@@ -413,8 +407,5 @@ def describe_backfill_state(state: dict[str, Any] | None) -> str:
     # 1.6-2x factor the correction removes elsewhere.
     earliest_corrected = state.get("earliest_corrected")
     if isinstance(earliest_corrected, str) and earliest_corrected:
-        note += (
-            f"; dados antes de {earliest_corrected[:10]} podem ainda estar "
-            "inflados, sem transcript pra corrigir"
-        )
+        note += t("backfill.retention", lang, date=earliest_corrected[:10])
     return note

@@ -56,7 +56,7 @@ from .paths import (
     split_worktree,
     worktree_marker_of,
 )
-from .periods import DEFAULT_PERIOD_ID, PERIODS, Period, resolve_period
+from .periods import DEFAULT_PERIOD_ID, PERIODS, Period, period_label, resolve_period
 from .projects import (
     assign_group_colors,
     build_project_groups,
@@ -157,6 +157,7 @@ __all__ = [
     "normalize_project_paths",
     "parse_transcript",
     "partial_bucket_fraction",
+    "period_label",
     "plan_corrections",
     "project_days_running",
     "project_display_label",

@@ -15,14 +15,14 @@ def test_render_backfill_note_wraps_the_description_in_a_span(monkeypatch):
     monkeypatch.setattr(
         dashboard_html.mr,  # type: ignore[attr-defined]  # mr is dashboard_html's internal metrics_core import, not re-exported under strict's implicit-reexport check
         "describe_backfill_state",
-        lambda state: "a <b> note",
+        lambda state, lang: "a <b> note",
     )
     assert (
-        dashboard_html.render_backfill_note()
+        dashboard_html.render_backfill_note(lang="pt")
         == '<span class="backfill-note">a &lt;b&gt; note</span>'
     )
 
 
 def test_render_period_filter_includes_the_backfill_note(monkeypatch):
-    monkeypatch.setattr(dashboard_html, "render_backfill_note", lambda: "<span>NOTE</span>")
-    assert "<span>NOTE</span>" in dashboard_html.render_period_filter()
+    monkeypatch.setattr(dashboard_html, "render_backfill_note", lambda lang: "<span>NOTE</span>")
+    assert "<span>NOTE</span>" in dashboard_html.render_period_filter(lang="pt")

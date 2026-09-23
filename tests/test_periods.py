@@ -61,7 +61,7 @@ def test_unknown_period_is_rejected():
         mr.resolve_period("semana-passada", NOW)
 
 
-def test_every_period_has_a_portuguese_label():
+def test_every_period_has_a_label_in_both_languages():
     assert [p.id for p in mr.PERIODS] == [
         "ontem",
         "desde-segunda",
@@ -69,4 +69,7 @@ def test_every_period_has_a_portuguese_label():
         "mes",
         "tudo",
     ]
-    assert all(p.label and p.label == p.label.strip() for p in mr.PERIODS)
+    for period in mr.PERIODS:
+        for lang in mr.LANGUAGES:
+            label = mr.period_label(period.id, lang=lang)
+            assert label and label == label.strip()

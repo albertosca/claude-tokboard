@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import re
-from datetime import datetime
+
+from .i18n import session_date
 
 # A trailing release date on a model id, e.g. claude-haiku-4-5-20251001.
 # Exactly eight digits at the end, so a version that happens to end in a
@@ -56,11 +57,5 @@ def format_duration(seconds: int | float | None) -> str:
     return f"{hours}h{remaining_minutes:02d}min"
 
 
-def format_date(timestamp_start: str | None) -> str:
-    if not timestamp_start:
-        return "-"
-    try:
-        dt = datetime.fromisoformat(timestamp_start.replace("Z", "+00:00")).astimezone()
-    except (ValueError, AttributeError, TypeError):
-        return "-"
-    return dt.strftime("%d/%m %H:%M")
+def format_date(timestamp_start: str | None, *, lang: str) -> str:
+    return session_date(timestamp_start, lang)

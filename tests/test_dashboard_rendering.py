@@ -45,7 +45,7 @@ def _trend_chip(project_path: str | None) -> str:
     # label disagrees with it, in which case it reads "<basename>:<label>".
     parent = mr.color_group_key(project_path)
     raw_name = Path((parent or "").rstrip("/")).name or "sem projeto"
-    label = mr.project_display_label(parent)
+    label = mr.project_display_label(parent, lang="pt")
     return raw_name if raw_name == label else f"{raw_name}:{label}"
 
 
@@ -81,7 +81,7 @@ def _expectations(dashboard_page: DashboardPage) -> dict[str, Any]:
         # headers already had: a magnitude, not just a name.
         panorama_totals: dict[str, int] = {}
         for record in scoped:
-            label = mr.project_display_label(record.get("project_path"))
+            label = mr.project_display_label(record.get("project_path"), lang="pt")
             panorama_totals[label] = panorama_totals.get(label, 0) + mr.record_token_total(record)
         periods[period] = {
             "session_ids": sorted(data["session_ids"]),
@@ -95,7 +95,7 @@ def _expectations(dashboard_page: DashboardPage) -> dict[str, Any]:
             # ids are all it takes. Projects with no tokens at all are
             # dropped by the chart; the fixture has none.
             "panorama_projects": sorted(
-                {mr.project_display_label(r.get("project_path")) for r in scoped}
+                {mr.project_display_label(r.get("project_path"), lang="pt") for r in scoped}
             ),
             "panorama_totals": panorama_totals,
         }

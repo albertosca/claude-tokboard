@@ -721,7 +721,7 @@ def test_write_backfill_state_records_uncorrectable_rows_and_earliest_corrected(
 
 
 def test_describe_backfill_state_when_never_applied():
-    text = mr.describe_backfill_state(None)
+    text = mr.describe_backfill_state(None, lang="pt")
     assert "2026-08-13" in text
     assert "não" in text  # Portuguese: not yet corrected
 
@@ -730,18 +730,18 @@ def test_describe_backfill_state_degrades_on_a_state_that_is_not_a_dict():
     # load_backfill_state() only guards against corrupt JSON; valid JSON
     # that parses to a list or a number is a different, unguarded shape
     # this used to raise TypeError on (state['cutoff'] on a list).
-    text = mr.describe_backfill_state([1, 2, 3])  # type: ignore[arg-type]
+    text = mr.describe_backfill_state([1, 2, 3], lang="pt")  # type: ignore[arg-type]
     assert "não" in text
 
 
 def test_describe_backfill_state_degrades_on_a_dict_missing_required_keys():
-    text = mr.describe_backfill_state({"corrected_rows": 3411})
+    text = mr.describe_backfill_state({"corrected_rows": 3411}, lang="pt")
     assert "não" in text
 
 
 def test_describe_backfill_state_when_applied():
     state = {"cutoff": "2026-08-19", "applied_at": "2026-08-19T12:00:00", "corrected_rows": 3411}
-    text = mr.describe_backfill_state(state)
+    text = mr.describe_backfill_state(state, lang="pt")
     assert "2026-08-19" in text
 
 
@@ -753,13 +753,13 @@ def test_describe_backfill_state_names_the_retention_boundary_when_present():
         "uncorrectable_rows": 42,
         "earliest_corrected": "2026-07-22T09:00:00",
     }
-    text = mr.describe_backfill_state(state)
+    text = mr.describe_backfill_state(state, lang="pt")
     assert "2026-07-22" in text
 
 
 def test_describe_backfill_state_omits_the_retention_boundary_when_absent():
     state = {"cutoff": "2026-08-19", "applied_at": "2026-08-19T12:00:00", "corrected_rows": 3411}
-    text = mr.describe_backfill_state(state)
+    text = mr.describe_backfill_state(state, lang="pt")
     assert "pra corrigir" not in text
 
 

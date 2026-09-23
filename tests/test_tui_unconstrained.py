@@ -164,7 +164,7 @@ def test_composition_legend_bolds_only_the_highlighted_chip():
     chip and leaves the clicked one plain, would pass every test in the
     suite before this one."""
     legend = tui.CompositionLegend(
-        {"series-1": 10, "series-2": 20, "series-3": 30, "series-4": 40}, mr
+        {"series-1": 10, "series-2": 20, "series-3": 30, "series-4": 40}, mr, lang="pt"
     )
     legend.highlighted = {"series-2"}
     text = legend.render()
@@ -178,7 +178,7 @@ def test_composition_legend_bolds_only_the_highlighted_chip():
 def test_project_legend_bolds_only_the_highlighted_chip():
     """dashboard_tui.py:611, the pane-mode twin of the test above."""
     records = [_daily(f"/projects/p{i:02d}", day=1, tokens=100 - i) for i in range(3)]
-    legend = tui.ProjectLegend(mr, records)
+    legend = tui.ProjectLegend(mr, records, lang="pt")
     keys = legend._series_keys()
     assert all(k is not None for k in keys), "this fixture yields no 'outros' bucket"
     legend.highlighted = {keys[1]}
@@ -218,7 +218,7 @@ def test_set_highlight_colors_the_highlighted_series_and_greys_the_rest(
     `color` list handed to plotext and checks it by series
     identity."""
     records = [_daily("/projects/a", 1, 10), _daily("/projects/a", 2, 20)]
-    chart = tui.TrendChart(mr, records)
+    chart = tui.TrendChart(mr, records, lang="pt")
     chart.toggle_mode()  # into "tokens" mode, where set_highlight applies
     captured = _capture_stacked_bar_color(monkeypatch)
     chart.set_highlight({"series-1"})
@@ -237,7 +237,7 @@ def test_set_project_highlight_colors_the_highlighted_project_and_greys_the_rest
     as line 520's boundary just below it: computed with more projects than
     PANE_COLORS so the "outros" bucket is exercised at the same time."""
     records = [_daily(f"/projects/p{i:02d}", day, 100 - i) for i in range(3) for day in (1, 2)]
-    chart = tui.TrendChart(mr, records)
+    chart = tui.TrendChart(mr, records, lang="pt")
     chart.render_chart()
     captured = _capture_stacked_bar_color(monkeypatch)
     highlighted_key = chart.pane_series_keys[1]
@@ -266,7 +266,7 @@ def test_overflow_projects_beyond_pane_colors_get_the_other_color(
     That 8th entry (index 7) is the only one the `i < len(PANE_COLORS)`
     boundary controls."""
     records = [_daily(f"/projects/p{i:02d}", day, (9 - i) * 10) for i in range(9) for day in (1, 2)]
-    chart = tui.TrendChart(mr, records)
+    chart = tui.TrendChart(mr, records, lang="pt")
     captured = _capture_stacked_bar_color(monkeypatch)
     chart.render_chart()
     color = captured["color"]
@@ -307,7 +307,7 @@ def _records_for_n_projects(n: int) -> list[dict[str, Any]]:
 
 def test_project_ranking_list_shows_exactly_ten_projects_when_collapsed():
     records = _records_for_n_projects(12)
-    panel = tui.ProjectRankingList(mr, records, {}, {}, set())
+    panel = tui.ProjectRankingList(mr, records, {}, {}, set(), lang="pt")
     collapsed = panel.render()
     for i in range(10):
         label = f"p{i:02d}"
@@ -345,9 +345,9 @@ def test_session_tree_row_columns_land_at_their_fixed_offsets():
         "cache_read_tokens": 0,
         "cache_creation_tokens": 0,
     }
-    tree = tui.build_session_tree([record], {}, mr)
+    tree = tui.build_session_tree([record], {}, mr, lang="pt")
     row = str(tree.root.children[0].children[0].label)
-    date_str = mr.format_date(str(record["timestamp_start"]))
+    date_str = mr.format_date(str(record["timestamp_start"]), lang="pt")
     tokens = mr.format_tokens(mr.record_token_total(record))
     assert row[14 : 14 + len(date_str)] == date_str, (
         "the date column did not start at its promised fixed offset (14) - "
@@ -366,7 +366,7 @@ def test_session_tree_row_columns_land_at_their_fixed_offsets():
 
 
 def test_subagent_detail_row_columns_land_at_their_fixed_offsets():
-    panel = tui.SessionDetailPanel(mr)
+    panel = tui.SessionDetailPanel(mr, lang="pt")
     subagent = {
         "agent_type": "T" * 30,
         "agent_label": "L" * 30,  # combined, over task[:38]'s pad (:<40)
@@ -395,7 +395,7 @@ def test_project_ranking_row_columns_land_at_their_fixed_offsets():
             "cache_creation_tokens": 0,
         }
     ]
-    panel = tui.ProjectRankingList(mr, records, {}, {}, set())
+    panel = tui.ProjectRankingList(mr, records, {}, {}, set(), lang="pt")
     row = panel.render().split("\n")[2]
     formatted_total = mr.format_tokens(100)
     assert row[26:58].strip("▓ ") == "" or "▓" in row[26:58], (
@@ -422,7 +422,7 @@ def test_composition_legend_chips_show_their_own_series_total():
     would render every chip's number as 0 and pass unnoticed, because
     nothing above reads the number."""
     totals = {"series-1": 111, "series-2": 222, "series-3": 333, "series-4": 444}
-    legend = tui.CompositionLegend(totals, mr)
+    legend = tui.CompositionLegend(totals, mr, lang="pt")
     text = legend.render()
     for series, name in tui.CompositionLegend.SERIES:
         formatted = mr.format_tokens(totals[series])
@@ -439,7 +439,7 @@ def test_quota_summary_sums_input_and_cache_creation_keeps_output_separate():
     summing output into the same figure) produces an assertably different
     number."""
     totals = {"series-1": 100, "series-2": 20, "series-3": 999_999_999, "series-4": 5}
-    summary = tui.QuotaSummary(totals, mr)
+    summary = tui.QuotaSummary(totals, mr, lang="pt")
     text = summary.render()
     assert text == "Quota (aprox.): 105 entrada · 20 saída"
 
@@ -451,7 +451,7 @@ def test_project_ranking_rows_show_their_own_token_total_not_the_max():
     existing "shows exactly ten projects" test above would not notice
     since it only checks which project LABELS are present."""
     records = [_daily("/projects/big", 1, 900), _daily("/projects/small", 1, 100)]
-    panel = tui.ProjectRankingList(mr, records, {}, {}, set())
+    panel = tui.ProjectRankingList(mr, records, {}, {}, set(), lang="pt")
     lines = panel.render().split("\n")
     small_line = next(line for line in lines if "small" in line)
     big_line = next(line for line in lines if "big" in line and "small" not in line)
@@ -471,7 +471,7 @@ def test_project_ranking_bar_length_is_proportional_to_each_rows_own_total():
     bar the same length regardless of the row's own data - unnoticed by
     every test above, none of which counts bar characters."""
     records = [_daily("/projects/big", 1, 900), _daily("/projects/small", 1, 100)]
-    panel = tui.ProjectRankingList(mr, records, {}, {}, set())
+    panel = tui.ProjectRankingList(mr, records, {}, {}, set(), lang="pt")
     lines = panel.render().split("\n")
     big_line = next(line for line in lines if "big" in line and "small" not in line)
     small_line = next(line for line in lines if "small" in line)
@@ -512,7 +512,7 @@ def test_session_tree_group_header_shows_the_real_summed_total():
             "cache_creation_tokens": 0,
         }
     ]
-    tree = tui.build_session_tree(records_a + records_b, {}, mr)
+    tree = tui.build_session_tree(records_a + records_b, {}, mr, lang="pt")
     labels = [str(node.label) for node in tree.root.children]
     alpha_label = next(label for label in labels if "alpha" in label)
     beta_label = next(label for label in labels if "beta" in label)

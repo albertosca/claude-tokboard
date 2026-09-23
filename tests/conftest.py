@@ -5,6 +5,7 @@ files, the label caches, get_open_projects, and the output path itself -
 resolves inside a throwaway directory.
 """
 
+import json
 import os
 import subprocess
 import sys
@@ -34,8 +35,22 @@ def dashboard_page() -> Iterator[DashboardPage]:
     with tempfile.TemporaryDirectory() as home:
         now = datetime.now().astimezone()
         built = build_fixture(home, now)
+        # Pinned the same two ways tests/test_tui_state.py pins the TUI's
+        # HOME - config.json (the real mechanism) and the locale variables
+        # (for symmetry, and so this fixture never depends on the locale of
+        # the machine running the suite).
+        (Path(home) / ".claude" / "metrics" / "config.json").write_text(
+            json.dumps({"language": "pt"})
+        )
 
-        env = dict(os.environ, HOME=home, PYTHONPATH=str(REPO_ROOT / "lib"))
+        env = dict(
+            os.environ,
+            HOME=home,
+            PYTHONPATH=str(REPO_ROOT / "lib"),
+            LC_ALL="pt_BR.UTF-8",
+            LC_MESSAGES="",
+            LANG="",
+        )
         # sys.executable, NOT "python3": python3 on PATH is an asdf shim
         # that resolves through $HOME/.asdf and exits 126 the moment HOME
         # is overridden. This cost real debugging time - do not "simplify"

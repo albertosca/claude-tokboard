@@ -275,13 +275,13 @@ def test_render_trend_chart_early_return_boundary_pinned_from_both_sides():
     # n < 2 -> "" (mutation target #1: n < 1 would let a single bucket
     # through). Pinned from both sides per the brief.
     one_record = [_day_record("2026-08-01", input_tokens=10)]
-    assert dashboard_html.render_trend_chart(one_record, {}, "p1") == ""
+    assert dashboard_html.render_trend_chart(one_record, {}, "p1", lang="pt") == ""
 
     two_records = [
         _day_record("2026-08-01", input_tokens=10),
         _day_record("2026-08-02", input_tokens=10),
     ]
-    out = dashboard_html.render_trend_chart(two_records, {}, "p1")
+    out = dashboard_html.render_trend_chart(two_records, {}, "p1", lang="pt")
     assert out != ""
     assert "<svg" in out
 
@@ -289,7 +289,7 @@ def test_render_trend_chart_early_return_boundary_pinned_from_both_sides():
 def test_render_trend_chart_no_records_also_returns_empty_string():
     # Zero buckets is the other side of "< 2", reached via a different
     # route (no timestamps to aggregate) than the one-record case above.
-    assert dashboard_html.render_trend_chart([], {}, "p1") == ""
+    assert dashboard_html.render_trend_chart([], {}, "p1", lang="pt") == ""
 
 
 def test_render_trend_chart_one_rect_per_bucket_in_each_mode():
@@ -299,7 +299,7 @@ def test_render_trend_chart_one_rect_per_bucket_in_each_mode():
     # bucket" from the (separately tested) multi-segment stacking behavior.
     n = 5
     records = _year_records(n, output_tokens=0, cache_read_tokens=0, cache_creation_tokens=0)
-    out = dashboard_html.render_trend_chart(records, {"/proj/a": "group-color-1"}, "p1")
+    out = dashboard_html.render_trend_chart(records, {"/proj/a": "group-color-1"}, "p1", lang="pt")
     pane_svg = _svg_block(out, "chart-pane-")
     tokens_svg = _svg_block(out, "chart-tokens-")
     pane_rects = [r for r in _parse_elements(pane_svg, "rect") if "chart-bar" in r.get("class", "")]
@@ -328,7 +328,7 @@ def test_render_trend_chart_no_coordinate_escapes_canvas_for_cache_heavy_days():
         ),
         _day_record("2026-01-04", input_tokens=1, output_tokens=1),  # no cache at all this day
     ]
-    out = dashboard_html.render_trend_chart(records, {"/proj/a": "group-color-1"}, "p1")
+    out = dashboard_html.render_trend_chart(records, {"/proj/a": "group-color-1"}, "p1", lang="pt")
     _assert_no_coordinate_escapes(_svg_block(out, "chart-pane-"))
     _assert_no_coordinate_escapes(_svg_block(out, "chart-tokens-"))
 
@@ -359,7 +359,7 @@ def test_render_trend_chart_y_axis_draws_five_gridlines_spanning_the_whole_plot_
     # spaced), and their horizontal EXTENT: a gridline runs from the left
     # padding to width - padding_right, never to the canvas edge.
     out = dashboard_html.render_trend_chart(
-        _DAY_GRANULARITY_RECORDS, {"/proj/a": "group-color-1"}, "p1"
+        _DAY_GRANULARITY_RECORDS, {"/proj/a": "group-color-1"}, "p1", lang="pt"
     )
     for svg in (_svg_block(out, "chart-pane-"), _svg_block(out, "chart-tokens-")):
         width, _height = _viewbox(svg)
@@ -384,7 +384,7 @@ def test_render_trend_chart_y_axis_labels_read_the_scale_from_zero_up_to_the_bus
     # the module's own comment was about ("measuring a different, ~300x
     # smaller quantity than its own axis labels and tooltips claimed").
     out = dashboard_html.render_trend_chart(
-        _DAY_GRANULARITY_RECORDS, {"/proj/a": "group-color-1"}, "p1"
+        _DAY_GRANULARITY_RECORDS, {"/proj/a": "group-color-1"}, "p1", lang="pt"
     )
     expected_labels = [mr.format_tokens(_DAY_GRANULARITY_MAX * frac) for frac in Y_AXIS_FRACS]
     assert expected_labels == ["0", "75", "150", "225", "300"]
@@ -409,30 +409,29 @@ def test_render_trend_chart_y_axis_labels_read_the_scale_from_zero_up_to_the_bus
 
 
 def test_render_trend_chart_x_axis_ticks_are_dates_in_the_granularitys_own_tick_format():
-    # tick_fmt comes from GRANULARITY_CONFIG, so the same chart code renders
-    # "01/08" for a day-bucketed history and "2001" for a year-bucketed one.
-    # Nothing pinned the tick TEXT before: rendering every tick as the same
-    # constant (strftime("%Y") on day data) left the suite green.
+    # The tick TEXT comes from i18n.tick_label (keyed by granularity and
+    # language), so the same chart code renders "01/08" for a day-bucketed
+    # history and "2001" for a year-bucketed one. Nothing pinned the tick
+    # TEXT before: rendering every tick as the same constant
+    # (strftime("%Y") on day data) left the suite green.
     day_out = dashboard_html.render_trend_chart(
-        _DAY_GRANULARITY_RECORDS, {"/proj/a": "group-color-1"}, "p1"
+        _DAY_GRANULARITY_RECORDS, {"/proj/a": "group-color-1"}, "p1", lang="pt"
     )
     day_ticks = [
         text["text"]
         for text in _parse_texts(_svg_block(day_out, "chart-pane-"))
         if text.get("text-anchor") == "middle"
     ]
-    assert mr.GRANULARITY_CONFIG["day"]["tick_fmt"] == "%d/%m"
     assert day_ticks == ["01/08", "05/08", "10/08"]
 
     year_out = dashboard_html.render_trend_chart(
-        _year_records(5, start_year=2001), {"/proj/a": "group-color-1"}, "p1"
+        _year_records(5, start_year=2001), {"/proj/a": "group-color-1"}, "p1", lang="pt"
     )
     year_ticks = [
         text["text"]
         for text in _parse_texts(_svg_block(year_out, "chart-pane-"))
         if text.get("text-anchor") == "middle"
     ]
-    assert mr.GRANULARITY_CONFIG["year"]["tick_fmt"] == "%Y"
     assert year_ticks == ["2001", "2002", "2003", "2004", "2005"]
 
 
@@ -448,12 +447,14 @@ def test_render_trend_chart_bar_tooltips_name_the_slice_the_bucket_and_the_amoun
         _day_record("2026-08-10", i=0, cache_read_tokens=300, project="/proj/a"),
     ]
     out = dashboard_html.render_trend_chart(
-        records, {"/proj/a": "group-color-1", "/proj/b": "group-color-2"}, "p1"
+        records, {"/proj/a": "group-color-1", "/proj/b": "group-color-2"}, "p1", lang="pt"
     )
+    label_a = mr.project_display_label("/proj/a", lang="pt")
+    label_b = mr.project_display_label("/proj/b", lang="pt")
     assert _titles(_svg_block(out, "chart-pane-")) == [
-        f"{mr.project_display_label('/proj/a')} · 2026-08-01 - {mr.format_tokens(100)} tokens",
-        f"{mr.project_display_label('/proj/b')} · 2026-08-01 - {mr.format_tokens(40)} tokens",
-        f"{mr.project_display_label('/proj/a')} · 2026-08-10 - {mr.format_tokens(300)} tokens",
+        f"{label_a} · 2026-08-01 - {mr.format_tokens(100)} tokens",
+        f"{label_b} · 2026-08-01 - {mr.format_tokens(40)} tokens",
+        f"{label_a} · 2026-08-10 - {mr.format_tokens(300)} tokens",
     ]
     assert _titles(_svg_block(out, "chart-tokens-")) == [
         f"{dashboard_html.SERIES_NAMES['series-1']} · 2026-08-01 - {mr.format_tokens(100)} tokens",
@@ -470,7 +471,7 @@ def test_render_trend_chart_marks_the_last_bucket_as_partial_when_still_in_progr
     # 00:00), giving a clean, hand-verifiable 50%.
     now = datetime(2026, 8, 10, 12, 0).astimezone()
     out = dashboard_html.render_trend_chart(
-        _DAY_GRANULARITY_RECORDS, {"/proj/a": "group-color-1"}, "p1", now=now
+        _DAY_GRANULARITY_RECORDS, {"/proj/a": "group-color-1"}, "p1", now=now, lang="pt"
     )
     for prefix in ("chart-pane-", "chart-tokens-"):
         svg = _svg_block(out, prefix)
@@ -505,7 +506,7 @@ def test_render_trend_chart_does_not_mark_a_bucket_thats_already_fully_elapsed()
     # passing `now` at all).
     now = datetime(2026, 8, 12, 0, 0).astimezone()
     out = dashboard_html.render_trend_chart(
-        _DAY_GRANULARITY_RECORDS, {"/proj/a": "group-color-1"}, "p1", now=now
+        _DAY_GRANULARITY_RECORDS, {"/proj/a": "group-color-1"}, "p1", now=now, lang="pt"
     )
     assert "chart-bar-partial" not in out
     assert "parcial" not in out
@@ -531,7 +532,7 @@ def test_render_trend_chart_shared_denominator_pane_and_tokens_modes_agree_on_bu
         _day_record("2026-01-01", input_tokens=100, output_tokens=100, cache_read_tokens=9800),
         _day_record("2026-01-02", input_tokens=50, output_tokens=50, cache_creation_tokens=900),
     ]
-    out = dashboard_html.render_trend_chart(records, {"/proj/a": "group-color-1"}, "p1")
+    out = dashboard_html.render_trend_chart(records, {"/proj/a": "group-color-1"}, "p1", lang="pt")
     pane_svg = _svg_block(out, "chart-pane-")
     tokens_svg = _svg_block(out, "chart-tokens-")
 
@@ -576,7 +577,9 @@ def test_render_trend_chart_bar_width_floor_flag_false_and_widths_pinned_for_rea
     # large n; the mutation check below proves this guard still matters.
     for n in (5, 300):
         records = _year_records(n)
-        out = dashboard_html.render_trend_chart(records, {"/proj/a": "group-color-1"}, "p1")
+        out = dashboard_html.render_trend_chart(
+            records, {"/proj/a": "group-color-1"}, "p1", lang="pt"
+        )
         floor_hit_matches = re.findall(r'data-floor-hit="(true|false)"', out)
         # One per trend-pane: pane, tokens, and (since 2026-09) model.
         assert floor_hit_matches == ["false", "false", "false"]
@@ -599,14 +602,18 @@ def test_render_trend_chart_bar_width_floor_condition_direction_is_load_bearing(
     # direction matters; the mutation-testing step (Step 3) confirms this
     # by actually applying the flip to the source.
     records = _year_records(12)
-    out = dashboard_html.render_trend_chart(records, {"/proj/a": "group-color-1"}, "p1")
+    out = dashboard_html.render_trend_chart(records, {"/proj/a": "group-color-1"}, "p1", lang="pt")
     assert 'data-floor-hit="false"' in out
     assert 'data-floor-hit="true"' not in out
 
 
 def test_render_trend_chart_candidate_width_formula_pinned_at_small_and_large_n():
-    small_out = dashboard_html.render_trend_chart(_year_records(2), {"/proj/a": "x"}, "p1")
-    large_out = dashboard_html.render_trend_chart(_year_records(100), {"/proj/a": "x"}, "p1")
+    small_out = dashboard_html.render_trend_chart(
+        _year_records(2), {"/proj/a": "x"}, "p1", lang="pt"
+    )
+    large_out = dashboard_html.render_trend_chart(
+        _year_records(100), {"/proj/a": "x"}, "p1", lang="pt"
+    )
     small_match = re.search(r'style="width:(\d+)px"', small_out)
     large_match = re.search(r'style="width:(\d+)px"', large_out)
     assert small_match
@@ -618,8 +625,8 @@ def test_render_trend_chart_candidate_width_formula_pinned_at_small_and_large_n(
 
 
 def test_render_trend_chart_tick_count_pinned_at_n_equals_3_and_n_equals_20():
-    out_3 = dashboard_html.render_trend_chart(_year_records(3), {"/proj/a": "x"}, "p1")
-    out_20 = dashboard_html.render_trend_chart(_year_records(20), {"/proj/a": "x"}, "p1")
+    out_3 = dashboard_html.render_trend_chart(_year_records(3), {"/proj/a": "x"}, "p1", lang="pt")
+    out_20 = dashboard_html.render_trend_chart(_year_records(20), {"/proj/a": "x"}, "p1", lang="pt")
     pane_svg_3 = _svg_block(out_3, "chart-pane-")
     pane_svg_20 = _svg_block(out_20, "chart-pane-")
     ticks_3 = re.findall(r'<text\b[^>]*text-anchor="middle"[^>]*>', pane_svg_3)
@@ -629,8 +636,8 @@ def test_render_trend_chart_tick_count_pinned_at_n_equals_3_and_n_equals_20():
 
 
 def test_render_trend_chart_highlight_band_boundary_pinned_at_n_equals_7_and_8():
-    out_7 = dashboard_html.render_trend_chart(_year_records(7), {"/proj/a": "x"}, "p1")
-    out_8 = dashboard_html.render_trend_chart(_year_records(8), {"/proj/a": "x"}, "p1")
+    out_7 = dashboard_html.render_trend_chart(_year_records(7), {"/proj/a": "x"}, "p1", lang="pt")
+    out_8 = dashboard_html.render_trend_chart(_year_records(8), {"/proj/a": "x"}, "p1", lang="pt")
     assert "chart-highlight-band" not in out_7
     assert "chart-highlight-band" in out_8
     # Pin its geometry too: highlight_start_idx = n - 7 = 1, hx = padding_left
@@ -656,7 +663,7 @@ def test_render_trend_chart_max_pane_or_1_guard_survives_all_zero_token_days():
         _day_record("2026-08-01", input_tokens=0, output_tokens=0),
         _day_record("2026-08-02", input_tokens=0, output_tokens=0),
     ]
-    out = dashboard_html.render_trend_chart(records, {"/proj/a": "group-color-1"}, "p1")
+    out = dashboard_html.render_trend_chart(records, {"/proj/a": "group-color-1"}, "p1", lang="pt")
     assert out != ""
     assert "<svg" in out
     # No bars are drawn (every segment value is 0, filtered by `if value <=
@@ -681,7 +688,7 @@ def test_render_trend_chart_legend_dedupes_worktrees_into_parent_and_escapes_lab
         "/home/dev/my<proj>/.claude/worktrees/feature-x": "group-color-2",
         "/home/dev/my<proj>": "group-color-2",
     }
-    out = dashboard_html.render_trend_chart(records, group_colors, "p1")
+    out = dashboard_html.render_trend_chart(records, group_colors, "p1", lang="pt")
     assert "&lt;proj&gt;" in out
     assert "<proj>" not in out
     # Both records share color_group_key "/home/dev/my<proj>", so they
@@ -710,7 +717,7 @@ def test_render_trend_chart_legend_orders_projects_by_spend_descending():
         "/proj/small": "group-color-1",
         "/proj/big": "group-color-2",
     }
-    out = dashboard_html.render_trend_chart(records, group_colors, "p1")
+    out = dashboard_html.render_trend_chart(records, group_colors, "p1", lang="pt")
     legend_html = out[out.index("project-chart-legend") :]
     assert legend_html.index("group-color-2") < legend_html.index("group-color-1")
 
@@ -725,7 +732,7 @@ def test_render_trend_chart_multiple_records_for_same_project_same_day_merge_int
         _day_record("2026-08-01", i=1, input_tokens=20, project="/proj/a"),
         _day_record("2026-08-02", i=0, input_tokens=5, project="/proj/a"),
     ]
-    out = dashboard_html.render_trend_chart(records, {"/proj/a": "x"}, "p1")
+    out = dashboard_html.render_trend_chart(records, {"/proj/a": "x"}, "p1", lang="pt")
     pane_svg = _svg_block(out, "chart-pane-")
     rects = [r for r in _parse_elements(pane_svg, "rect") if "chart-bar" in r.get("class", "")]
     # Still exactly one bar per day (the two same-day records merged into
@@ -746,7 +753,7 @@ def test_render_trend_chart_zero_value_segments_are_never_drawn():
     records = _year_records(
         3, input_tokens=100, output_tokens=0, cache_read_tokens=50, cache_creation_tokens=20
     )
-    out = dashboard_html.render_trend_chart(records, {"/proj/a": "x"}, "p1")
+    out = dashboard_html.render_trend_chart(records, {"/proj/a": "x"}, "p1", lang="pt")
     tokens_svg = _svg_block(out, "chart-tokens-")
     rects = [r for r in _parse_elements(tokens_svg, "rect") if "chart-bar" in r.get("class", "")]
     classes = {r["class"] for r in rects}
@@ -769,7 +776,7 @@ def test_render_trend_chart_pane_mode_zero_value_project_segment_is_never_drawn(
         _day_record("2026-08-02", i=0, input_tokens=50, project="/proj/a"),
     ]
     out = dashboard_html.render_trend_chart(
-        records, {"/proj/a": "group-color-1", "/proj/b": "group-color-2"}, "p1"
+        records, {"/proj/a": "group-color-1", "/proj/b": "group-color-2"}, "p1", lang="pt"
     )
     pane_svg = _svg_block(out, "chart-pane-")
     rects = [r for r in _parse_elements(pane_svg, "rect") if "chart-bar" in r.get("class", "")]
@@ -794,7 +801,7 @@ def test_render_project_totals_chart_orders_projects_by_spend_descending():
         _project_record("/proj/zzz_big", input_tokens=1000),
         _project_record("/proj/mmm_mid", input_tokens=100),
     ]
-    out = dashboard_html.render_project_totals_chart(records, {}, {}, set(), "p1")
+    out = dashboard_html.render_project_totals_chart(records, {}, {}, set(), "p1", lang="pt")
     labels = re.findall(r'class="project-chart-label"[^>]*>([^<]*)</text>', out)
     assert labels == ["zzz_big", "mmm_mid", "aaa_small"]
 
@@ -810,9 +817,12 @@ def test_render_project_totals_chart_empty_and_all_zero_records_return_empty_str
     # ZeroDivisionError for an all-zero record set) via the early return
     # that really provides it. A mutation deleting `or 1` would NOT be
     # caught by any legitimate-input test - see the task report.
-    assert dashboard_html.render_project_totals_chart([], {}, {}, set(), "p1") == ""
+    assert dashboard_html.render_project_totals_chart([], {}, {}, set(), "p1", lang="pt") == ""
     zero_records = [_project_record("/proj/a", input_tokens=0, output_tokens=0)]
-    assert dashboard_html.render_project_totals_chart(zero_records, {}, {}, set(), "p1") == ""
+    assert (
+        dashboard_html.render_project_totals_chart(zero_records, {}, {}, set(), "p1", lang="pt")
+        == ""
+    )
 
 
 def test_render_project_totals_chart_visible_slice_bound_pinned_at_ten_and_eleven():
@@ -821,8 +831,12 @@ def test_render_project_totals_chart_visible_slice_bound_pinned_at_ten_and_eleve
     ten_projects = [_project_record(f"/proj/p{i}", input_tokens=1000 - i) for i in range(10)]
     eleven_projects = [_project_record(f"/proj/p{i}", input_tokens=1000 - i) for i in range(11)]
 
-    out_10 = dashboard_html.render_project_totals_chart(ten_projects, {}, {}, set(), "p1")
-    out_11 = dashboard_html.render_project_totals_chart(eleven_projects, {}, {}, set(), "p1")
+    out_10 = dashboard_html.render_project_totals_chart(
+        ten_projects, {}, {}, set(), "p1", lang="pt"
+    )
+    out_11 = dashboard_html.render_project_totals_chart(
+        eleven_projects, {}, {}, set(), "p1", lang="pt"
+    )
 
     labels_10 = re.findall(r'class="project-chart-label"[^>]*>([^<]*)</text>', out_10)
     assert len(labels_10) == 10
@@ -846,7 +860,7 @@ def test_render_project_totals_chart_row_height_pins_svg_height_and_row_position
         _project_record("/proj/a", input_tokens=100),
         _project_record("/proj/b", input_tokens=50),
     ]
-    out = dashboard_html.render_project_totals_chart(two_projects, {}, {}, set(), "p1")
+    out = dashboard_html.render_project_totals_chart(two_projects, {}, {}, set(), "p1", lang="pt")
     # Located by class, then read by attribute NAME - the earlier version
     # anchored on `<svg viewBox=` and so required viewBox to be the svg's
     # first attribute, which is exactly the brittleness _svg_block was
@@ -876,7 +890,7 @@ def test_render_project_totals_chart_segments_carry_token_type_class_and_stack_l
             cache_creation_tokens=40,
         )
     ]
-    out = dashboard_html.render_project_totals_chart(records, {}, {}, set(), "p1")
+    out = dashboard_html.render_project_totals_chart(records, {}, {}, set(), "p1", lang="pt")
     segments = [
         r
         for r in _parse_elements(out, "rect")
@@ -903,7 +917,7 @@ def test_render_project_totals_chart_legend_totals_include_hidden_projects():
     # just the visible top 10. An 11th (hidden) project's tokens must
     # still be counted in the legend chip totals.
     projects = [_project_record(f"/proj/p{i}", input_tokens=100) for i in range(11)]
-    out = dashboard_html.render_project_totals_chart(projects, {}, {}, set(), "p1")
+    out = dashboard_html.render_project_totals_chart(projects, {}, {}, set(), "p1", lang="pt")
     legend_total = re.search(r'data-series="series-1">([\d.,a-zA-Z]+)</span>', out)
     assert legend_total is not None
     # 11 projects * 100 input tokens = 1100, formatted via format_tokens ->
@@ -916,23 +930,27 @@ def test_render_project_totals_chart_open_marker_present_only_for_open_projects(
         _project_record("/proj/open", input_tokens=10),
         _project_record("/proj/closed", input_tokens=10),
     ]
-    out = dashboard_html.render_project_totals_chart(records, {}, {}, {"/proj/open"}, "p1")
+    out = dashboard_html.render_project_totals_chart(
+        records, {}, {}, {"/proj/open"}, "p1", lang="pt"
+    )
     assert "aberto agora" in out
     assert out.count("aberto agora") == 1
 
 
 def test_render_project_totals_chart_html_escapes_project_title_attribute():
     records = [_project_record("/proj/<script>", input_tokens=10)]
-    out = dashboard_html.render_project_totals_chart(records, {}, {}, set(), "p1")
+    out = dashboard_html.render_project_totals_chart(records, {}, {}, set(), "p1", lang="pt")
     assert "<script>" not in out
     assert "&lt;script&gt;" in out
 
 
 def test_render_project_totals_chart_days_running_note_appended_when_first_seen_known():
     records = [_project_record("/proj/a", input_tokens=10)]
-    out_without = dashboard_html.render_project_totals_chart(records, {}, {}, set(), "p1")
+    out_without = dashboard_html.render_project_totals_chart(
+        records, {}, {}, set(), "p1", lang="pt"
+    )
     out_with = dashboard_html.render_project_totals_chart(
-        records, {"/proj/a": "2020-01-01T00:00:00Z"}, {}, set(), "p1"
+        records, {"/proj/a": "2020-01-01T00:00:00Z"}, {}, set(), "p1", lang="pt"
     )
     assert "1º uso há" not in out_without
     assert "1º uso há" in out_with
@@ -992,7 +1010,7 @@ def test_render_trend_chart_model_mode_is_a_third_tab_beside_the_other_two():
         _model_day_record("2026-01-01", 100),
         _model_day_record("2026-01-02", 100),
     ]
-    out = dashboard_html.render_trend_chart(records, {"/proj/a": "group-color-1"}, "p1")
+    out = dashboard_html.render_trend_chart(records, {"/proj/a": "group-color-1"}, "p1", lang="pt")
     assert 'id="trend-btn-model-p1"' in out
     assert 'id="trend-pane-model-p1"' in out
     assert "Por modelo" in out
@@ -1015,7 +1033,7 @@ def test_render_trend_chart_model_mode_agrees_on_bucket_height_with_the_other_mo
         ),
         _model_day_record("2026-01-02", 250),
     ]
-    out = dashboard_html.render_trend_chart(records, {"/proj/a": "group-color-1"}, "p1")
+    out = dashboard_html.render_trend_chart(records, {"/proj/a": "group-color-1"}, "p1", lang="pt")
     pane = _stack_heights_by_x(_svg_block(out, "chart-pane-"))
     tokens = _stack_heights_by_x(_svg_block(out, "chart-tokens-"))
     model = _stack_heights_by_x(_svg_block(out, "chart-model-"))
@@ -1041,7 +1059,7 @@ def test_render_trend_chart_model_mode_names_the_unattributed_remainder():
         ),
         _model_day_record("2026-01-02", 250),
     ]
-    out = dashboard_html.render_trend_chart(records, {"/proj/a": "group-color-1"}, "p1")
+    out = dashboard_html.render_trend_chart(records, {"/proj/a": "group-color-1"}, "p1", lang="pt")
     titles = _titles(_svg_block(out, "chart-model-"))
     # Two records one day apart put aggregate_by_day in its hourly
     # granularity, so the bucket key is deliberately not spelled out here -
@@ -1063,7 +1081,7 @@ def test_render_trend_chart_model_mode_tooltips_drop_the_vendor_prefix_and_relea
             {"claude-haiku-4-5-20251001": _model_bucket(input_tokens=100)},
         ),
     ]
-    out = dashboard_html.render_trend_chart(records, {"/proj/a": "group-color-1"}, "p1")
+    out = dashboard_html.render_trend_chart(records, {"/proj/a": "group-color-1"}, "p1", lang="pt")
     titles = _titles(_svg_block(out, "chart-model-"))
     assert any(t.startswith("haiku-4-5 · ") and "100 tokens" in t for t in titles), titles
     assert not any("claude-haiku" in t for t in titles), titles
@@ -1090,7 +1108,7 @@ def test_render_trend_chart_model_mode_legend_lists_models_by_spend_descending()
             },
         ),
     ]
-    out = dashboard_html.render_trend_chart(records, {"/proj/a": "group-color-1"}, "p1")
+    out = dashboard_html.render_trend_chart(records, {"/proj/a": "group-color-1"}, "p1", lang="pt")
     pane_fragment = out.split('id="trend-pane-model-p1"')[1]
     labels = re.findall(
         r'<span class="legend-chip"[^>]*><span class="legend-swatch[^"]*"></span>([^<]*)</span>',
@@ -1115,7 +1133,7 @@ def test_render_trend_chart_model_bands_and_chips_are_clickable_and_agree_on_cla
         ),
         _model_day_record("2026-01-02", 100),
     ]
-    out = dashboard_html.render_trend_chart(records, {"/proj/a": "group-color-1"}, "p1")
+    out = dashboard_html.render_trend_chart(records, {"/proj/a": "group-color-1"}, "p1", lang="pt")
     svg = _svg_block(out, "chart-model-")
     # Parsed here rather than through _parse_elements, which deliberately
     # keeps only geometry and class - the onclick IS the thing under test.
@@ -1151,7 +1169,7 @@ def test_render_trend_chart_model_bands_never_share_a_colour_with_each_other():
         ),
         _model_day_record("2026-01-02", 100),
     ]
-    out = dashboard_html.render_trend_chart(records, {"/proj/a": "group-color-1"}, "p1")
+    out = dashboard_html.render_trend_chart(records, {"/proj/a": "group-color-1"}, "p1", lang="pt")
     pane_fragment = out.split('id="trend-pane-model-p1"')[1]
     swatches = re.findall(r'<span class="legend-swatch ([^"]*)"></span>', pane_fragment)
     assert len(swatches) == 5  # four models plus the unattributed remainder

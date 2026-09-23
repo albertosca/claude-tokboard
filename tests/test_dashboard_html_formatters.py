@@ -152,7 +152,7 @@ def test_format_summary_avg_duration_is_zero_when_no_record_has_a_duration():
 
 def test_render_composition_legend_one_chip_per_series_with_real_totals_in_stable_order():
     totals = {"series-1": 100, "series-2": 2500, "series-3": 0, "series-4": 1_000_000_000}
-    out = dashboard_html.render_composition_legend(totals)
+    out = dashboard_html.render_composition_legend(totals, lang="pt")
     found = re.findall(r'data-series="(series-\d)"', out)
     # each series appears exactly twice: once on the chip span, once on the total span
     assert found == [
@@ -170,7 +170,7 @@ def test_render_composition_legend_one_chip_per_series_with_real_totals_in_stabl
 
 
 def test_render_composition_legend_missing_series_defaults_to_zero():
-    out = dashboard_html.render_composition_legend({})
+    out = dashboard_html.render_composition_legend({}, lang="pt")
     assert out.count(">0<") == 4  # all four chips report a total of 0
     # The quota line's own two zeros are plain text, not tag-wrapped like
     # the chips' totals - if they were, this count would silently become 6
@@ -183,7 +183,7 @@ def test_render_composition_legend_quota_line_sums_input_and_cache_creation_only
     # count toward the "entrada" figure; cache_read (series-3) must be
     # invisible to it entirely; output (series-2) is its own number.
     totals = {"series-1": 100, "series-2": 20, "series-3": 999_999_999, "series-4": 5}
-    out = dashboard_html.render_composition_legend(totals)
+    out = dashboard_html.render_composition_legend(totals, lang="pt")
     assert "Quota (aprox.): 105 entrada · 20 saída" in out
 
 
@@ -247,20 +247,20 @@ def test_render_composition_bar_each_segment_carries_its_own_css_class():
 
 
 def test_render_session_header_show_tmux_true_includes_tmux_column():
-    out = dashboard_html.render_session_header(show_tmux=True)
+    out = dashboard_html.render_session_header(show_tmux=True, lang="pt")
     assert '<span class="tmux-window">aba</span>' in out
 
 
 def test_render_session_header_show_tmux_false_omits_tmux_column():
-    out = dashboard_html.render_session_header(show_tmux=False)
+    out = dashboard_html.render_session_header(show_tmux=False, lang="pt")
     assert '<span class="tmux-window">aba</span>' not in out
 
 
 def test_render_session_header_default_matches_show_tmux_true():
     # Pins the default argument itself - a flipped default (named
     # mutation 1) makes the no-arg call diverge from the explicit-True call.
-    assert dashboard_html.render_session_header() == dashboard_html.render_session_header(
-        show_tmux=True
+    assert dashboard_html.render_session_header(lang="pt") == dashboard_html.render_session_header(
+        show_tmux=True, lang="pt"
     )
 
 
@@ -269,7 +269,7 @@ def test_render_session_header_columns_appear_in_a_pinned_order():
     # order passed the full suite - presence/absence checks don't pin
     # relative order. re.findall walks the string left to right, so this
     # pins the column sequence directly.
-    out = dashboard_html.render_session_header(show_tmux=True)
+    out = dashboard_html.render_session_header(show_tmux=True, lang="pt")
     columns = re.findall(r'class="([a-z-]+col|sid)"', out)
     assert columns == [
         "sid",

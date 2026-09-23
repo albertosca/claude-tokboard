@@ -8,6 +8,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from .i18n import t, tn
 from .paths import WORKTREE_MARKERS, split_worktree
 from .records import record_token_total
 
@@ -36,9 +37,9 @@ def compute_project_last_seen(records: list[dict[str, Any]]) -> dict[str, str]:
     return last_seen
 
 
-def project_display_label(project_path: str | None) -> str:
+def project_display_label(project_path: str | None, *, lang: str) -> str:
     if not project_path:
-        return "sem projeto"
+        return t("no_project", lang)
     normalized = project_path.rstrip("/")
     split = split_worktree(normalized)
     if split is not None:
@@ -87,13 +88,16 @@ def compute_project_totals(
     return ordered_projects, totals, max_total
 
 
-def project_days_running(project_first_seen: dict[str, str], project: str | None) -> str:
+def project_days_running(
+    project_first_seen: dict[str, str], project: str | None, *, lang: str
+) -> str:
     first_seen = project_first_seen.get(project) if project is not None else None
     if not first_seen:
         return ""
     try:
         first_dt = datetime.fromisoformat(first_seen.replace("Z", "+00:00")).astimezone()
-        return f" · 1º uso há {(datetime.now().astimezone() - first_dt).days} dias"
+        days = (datetime.now().astimezone() - first_dt).days
+        return tn("first_used", days, lang)
     except (ValueError, AttributeError, TypeError):
         return ""
 

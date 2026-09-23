@@ -11,20 +11,22 @@ from typing import Any
 # multi-year history would read as an unreadable wall of day-bars the
 # other way. key_fmt buckets timestamps into that granularity; parse_fmt
 # reads a bucket key back into a datetime (must round-trip key_fmt
-# exactly); tick_fmt is what's shown on the x-axis.
+# exactly). The x-axis tick text is no longer stored here - it comes from
+# i18n.tick_label, which picks the format by language rather than a
+# single locale-blind strftime string.
 GRANULARITY_CONFIG = {
-    "minute": {"key_fmt": "%Y-%m-%dT%H:%M", "parse_fmt": "%Y-%m-%dT%H:%M", "tick_fmt": "%H:%M"},
-    "hour": {"key_fmt": "%Y-%m-%dT%H", "parse_fmt": "%Y-%m-%dT%H", "tick_fmt": "%d/%m %Hh"},
-    "day": {"key_fmt": "%Y-%m-%d", "parse_fmt": "%Y-%m-%d", "tick_fmt": "%d/%m"},
+    "minute": {"key_fmt": "%Y-%m-%dT%H:%M", "parse_fmt": "%Y-%m-%dT%H:%M"},
+    "hour": {"key_fmt": "%Y-%m-%dT%H", "parse_fmt": "%Y-%m-%dT%H"},
+    "day": {"key_fmt": "%Y-%m-%d", "parse_fmt": "%Y-%m-%d"},
     # ISO-calendar key ("%G-W%V") sorts correctly as a plain string, but
     # can't round-trip through strptime without a weekday directive - the
     # literal "-1" is constant text (not a format code), so every
     # timestamp in the same ISO week produces the identical key, while
     # parse_fmt's "%u" reads that literal "1" back as Monday for tick
     # formatting.
-    "week": {"key_fmt": "%G-W%V-1", "parse_fmt": "%G-W%V-%u", "tick_fmt": "S%V/%y"},
-    "month": {"key_fmt": "%Y-%m", "parse_fmt": "%Y-%m", "tick_fmt": "%m/%Y"},
-    "year": {"key_fmt": "%Y", "parse_fmt": "%Y", "tick_fmt": "%Y"},
+    "week": {"key_fmt": "%G-W%V-1", "parse_fmt": "%G-W%V-%u"},
+    "month": {"key_fmt": "%Y-%m", "parse_fmt": "%Y-%m"},
+    "year": {"key_fmt": "%Y", "parse_fmt": "%Y"},
 }
 
 

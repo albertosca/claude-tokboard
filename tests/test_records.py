@@ -695,7 +695,7 @@ def test_a_declared_root_keeps_the_worktree_it_contains_distinguishable():
     records = [_p("/home/me/code/my-api/.worktrees/feature-x/deep/dir", "a")]
     result = mr.normalize_project_paths(records, project_roots=["/home/me/code"])
     assert result[0]["project_path"] == "/home/me/code/my-api/.worktrees/feature-x"
-    assert mr.project_display_label(result[0]["project_path"]) == "my-api / feature-x"
+    assert mr.project_display_label(result[0]["project_path"], lang="pt") == "my-api / feature-x"
     assert mr.color_group_key(result[0]["project_path"]) == "/home/me/code/my-api"
 
 
@@ -781,7 +781,9 @@ def test_a_recorded_project_root_does_not_erase_which_worktree_it_was():
     assert bare[0]["project_path"] == cwd
 
     for result in (declared, bare):
-        assert mr.project_display_label(result[0]["project_path"]) == "my-api / feature-x"
+        assert (
+            mr.project_display_label(result[0]["project_path"], lang="pt") == "my-api / feature-x"
+        )
         assert mr.color_group_key(result[0]["project_path"]) == "/home/me/code/my-api"
 
 

@@ -277,12 +277,12 @@ def test_second_g_switches_back_to_sessions_and_refocuses_the_tree():
 
 
 def test_project_legend_renders_sem_dados_with_no_chart_records():
-    legend = tui.ProjectLegend(mr, [])
+    legend = tui.ProjectLegend(mr, [], lang="pt")
     assert legend.render() == "[dim]Sem dados.[/dim]"
 
 
 def test_project_legend_click_is_a_no_op_with_no_series_keys():
-    legend = tui.ProjectLegend(mr, [])
+    legend = tui.ProjectLegend(mr, [], lang="pt")
     posted: list[Any] = []
     monkeypatch = pytest.MonkeyPatch()
     try:
@@ -319,7 +319,7 @@ def _records_for_n_projects(n: int) -> list[dict[str, Any]]:
 
 def test_project_ranking_list_hides_projects_past_ten_and_toggle_more_reveals_them():
     records = _records_for_n_projects(12)
-    panel = tui.ProjectRankingList(mr, records, {}, {}, set())
+    panel = tui.ProjectRankingList(mr, records, {}, {}, set(), lang="pt")
 
     collapsed = panel.render()
     assert "▸ + 2 projetos históricos" in collapsed
@@ -340,7 +340,7 @@ def test_project_ranking_list_hides_projects_past_ten_and_toggle_more_reveals_th
 
 
 def test_project_ranking_list_renders_sem_dados_with_no_tokens():
-    panel = tui.ProjectRankingList(mr, [], {}, {}, set())
+    panel = tui.ProjectRankingList(mr, [], {}, {}, set(), lang="pt")
     assert panel.render() == "[dim]Sem dados.[/dim]"
 
 
@@ -370,7 +370,7 @@ def test_build_session_tree_skips_a_project_whose_every_session_is_zero_token():
             "timestamp_start": "2026-01-01T00:00:00",
         },
     ]
-    tree = tui.build_session_tree(records, {}, mr)
+    tree = tui.build_session_tree(records, {}, mr, lang="pt")
     labels = [str(child.label) for child in tree.root.children]
     assert len(labels) == 1, (
         f"expected only the non-zero-token project's group, got {labels!r} - "
@@ -386,7 +386,7 @@ def test_build_session_tree_skips_a_project_whose_every_session_is_zero_token():
 
 
 def test_session_detail_panel_clear_empties_the_body():
-    panel = tui.SessionDetailPanel(mr)
+    panel = tui.SessionDetailPanel(mr, lang="pt")
     panel.show_session("some-session", [])
     assert panel._body.render() != ""
     panel.clear()

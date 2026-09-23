@@ -256,7 +256,7 @@ def test_render_chart_returns_early_with_fewer_than_two_days_of_data():
     confirmed by hand before writing this test, exactly as
     tests/test_tui_chart.py's docstring did for chart.render()."""
     single_day_records = [_session("only-one", day=1)]
-    chart = tui.TrendChart(mr, single_day_records)
+    chart = tui.TrendChart(mr, single_day_records, lang="pt")
     chart.render_chart()
     assert not hasattr(chart, "pane_series_keys"), (
         "render_chart kept going past the len(days) < 2 guard - "
@@ -268,7 +268,7 @@ def test_render_chart_returns_early_with_fewer_than_two_days_of_data():
 def test_render_chart_returns_early_with_zero_days_of_data():
     """The other side of the same boundary - no records at all, not just
     one day's worth."""
-    chart = tui.TrendChart(mr, [])
+    chart = tui.TrendChart(mr, [], lang="pt")
     chart.render_chart()
     assert not hasattr(chart, "pane_series_keys")
 
@@ -280,7 +280,7 @@ def test_render_chart_proceeds_with_two_days_of_data():
     guard is permanently (mis)tripped rather than correctly gated on the
     day count."""
     two_day_records = [_session("a", day=1), _session("b", day=2)]
-    chart = tui.TrendChart(mr, two_day_records)
+    chart = tui.TrendChart(mr, two_day_records, lang="pt")
     chart.render_chart()
     assert hasattr(chart, "pane_series_keys")
 
@@ -322,7 +322,7 @@ def test_render_chart_annotates_the_last_label_when_its_bucket_is_still_running(
     # chart.plt.build() rather than chart.render(): the latter needs a
     # live App (self.app.theme), which this direct-instantiation style
     # deliberately avoids, per this file's own module docstring precedent.
-    chart = tui.TrendChart(mr, _AUGUST_RECORDS)
+    chart = tui.TrendChart(mr, _AUGUST_RECORDS, lang="pt")
     chart.render_chart(now=datetime(2026, 8, 10, 12, 0).astimezone())
     assert "10/08 · 50%" in chart.plt.build()
 
@@ -332,7 +332,7 @@ def test_render_chart_does_not_annotate_a_bucket_thats_already_fully_elapsed():
     # case, and what every other test in this file relies on implicitly
     # by never passing `now` (falling back to the real, always-later
     # clock, since every fixture here uses a fixed January 2026 date).
-    chart = tui.TrendChart(mr, _AUGUST_RECORDS)
+    chart = tui.TrendChart(mr, _AUGUST_RECORDS, lang="pt")
     chart.render_chart(now=datetime(2026, 8, 12, 0, 0).astimezone())
     raw = chart.plt.build()
     assert "10/08" in raw
@@ -365,7 +365,9 @@ def _m(**fields: int) -> dict[str, int]:
 
 
 def test_toggle_mode_cycles_through_three_modes_and_returns():
-    chart = tui.TrendChart(mr, [_august_session("a", day=1), _august_session("b", day=5)])
+    chart = tui.TrendChart(
+        mr, [_august_session("a", day=1), _august_session("b", day=5)], lang="pt"
+    )
     assert chart.mode == "pane"
     chart.toggle_mode()
     assert chart.mode == "tokens"
@@ -380,7 +382,7 @@ def test_model_mode_labels_each_band_with_a_shortened_model_name():
         _model_session("a", 1, {"claude-opus-5": _m(input_tokens=100)}),
         _model_session("b", 5, {"claude-haiku-4-5-20251001": _m(input_tokens=100)}),
     ]
-    chart = tui.TrendChart(mr, records)
+    chart = tui.TrendChart(mr, records, lang="pt")
     chart.mode = "model"
     chart.render_chart(now=datetime(2026, 8, 12, 0, 0).astimezone())
 
@@ -397,7 +399,7 @@ def test_model_mode_shows_the_unattributed_remainder_as_its_own_band():
         _model_session("a", 1, {"claude-opus-5": _m(input_tokens=40)}, total=100),
         _model_session("b", 5, None, total=100),
     ]
-    chart = tui.TrendChart(mr, records)
+    chart = tui.TrendChart(mr, records, lang="pt")
     chart.mode = "model"
     chart.render_chart(now=datetime(2026, 8, 12, 0, 0).astimezone())
 
@@ -431,7 +433,7 @@ def test_every_mode_draws_a_day_against_the_same_scale():
     now = datetime(2026, 8, 12, 0, 0).astimezone()
     scales = {}
     for mode in tui.TrendChart.MODES:
-        chart = tui.TrendChart(mr, records)
+        chart = tui.TrendChart(mr, records, lang="pt")
         chart.mode = mode
         chart.render_chart(now=now)
         scales[mode] = _ytick_labels(chart.plt.build())
@@ -452,7 +454,7 @@ def test_a_day_with_no_attribution_at_all_is_drawn_entirely_as_unattributed():
         _model_session("a", 1, None, total=100),
         _model_session("b", 5, None, total=60),
     ]
-    chart = tui.TrendChart(mr, records)
+    chart = tui.TrendChart(mr, records, lang="pt")
     chart.mode = "model"
     chart.render_chart(now=datetime(2026, 8, 12, 0, 0).astimezone())
 
@@ -493,7 +495,7 @@ def test_a_bar_reaches_zero_in_a_series_it_actually_has():
         _model_session("a", 1, None, total=100),
         _model_session("b", 5, {"claude-opus-5": _m(input_tokens=100)}, total=100),
     ]
-    chart = tui.TrendChart(mr, records)
+    chart = tui.TrendChart(mr, records, lang="pt")
     chart.mode = "model"
     chart.render_chart(now=datetime(2026, 8, 12, 0, 0).astimezone())
     raw = chart.plt.build()
@@ -515,7 +517,7 @@ def test_every_bar_with_data_still_reaches_the_zero_line():
         _august_session("b", day=5, tokens=400) | {"project_path": "/projects/big"},
         _august_session("c", day=5, tokens=50) | {"project_path": "/projects/small"},
     ]
-    chart = tui.TrendChart(mr, records)
+    chart = tui.TrendChart(mr, records, lang="pt")
     chart.render_chart(now=datetime(2026, 8, 12, 0, 0).astimezone())
     assert len(_zero_row_colours(chart.plt.build())) == 2
 
@@ -540,7 +542,7 @@ def test_a_series_that_skips_days_keeps_its_bars_the_width_of_everyone_elses():
         day("s1", 1, 40, "/p/small"),
         day("s4", 4, 40, "/p/small"),
     ]
-    chart = tui.TrendChart(mr, records)
+    chart = tui.TrendChart(mr, records, lang="pt")
     chart.plt.plotsize(80, 16)
     chart.render_chart(now=datetime(2026, 8, 30).astimezone())
     raw = chart.plt.build()
@@ -571,7 +573,7 @@ def test_a_window_with_no_tokens_at_all_still_draws_its_axis():
     # all renders an empty frame with no dates, which reads as broken rather
     # than as "nothing happened". Found in review (2026-09-23).
     records = [_august_session("a", day=1, tokens=0), _august_session("b", day=5, tokens=0)]
-    chart = tui.TrendChart(mr, records)
+    chart = tui.TrendChart(mr, records, lang="pt")
     chart.render_chart(now=datetime(2026, 8, 12, 0, 0).astimezone())
     text = _ANSI.sub("", chart.plt.build())
     assert "01/08" in text
@@ -579,7 +581,7 @@ def test_a_window_with_no_tokens_at_all_still_draws_its_axis():
 
 
 def _axis_labels(records: list[dict[str, Any]], now: datetime) -> list[str]:
-    chart = tui.TrendChart(mr, records)
+    chart = tui.TrendChart(mr, records, lang="pt")
     chart.plt.plotsize(80, 12)
     chart.render_chart(now=now)
     return _ANSI.sub("", chart.plt.build()).splitlines()[-1].split()

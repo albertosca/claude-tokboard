@@ -63,7 +63,7 @@ def seeded(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 def _labels(data: Any) -> set[str]:
     """Every project name the chart's own records would put in a legend."""
     return {
-        mr.project_display_label(mr.color_group_key(r.get("project_path")))
+        mr.project_display_label(mr.color_group_key(r.get("project_path")), lang="pt")
         for r in data["daily_chart_records"]
     }
 
