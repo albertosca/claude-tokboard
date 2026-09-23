@@ -21,6 +21,7 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any, ClassVar
 
+from rich.text import Text
 from textual.app import App, ComposeResult, RenderResult
 from textual.binding import BindingType
 from textual.containers import Horizontal, VerticalScroll
@@ -680,6 +681,7 @@ class TrendChart(PlotextPlot):
         self.project_highlighted: set[str | None] | None = None
         self._now: datetime | None = None
         self._drawn_width = 0
+        self._too_narrow = False
 
     def on_mount(self) -> None:
         self.render_chart()
@@ -715,10 +717,18 @@ class TrendChart(PlotextPlot):
         # resize. Redrawn here, where textual_plotext is about to build.
         if self.size.width != self._drawn_width:
             self._draw_chart(self._now)
+        if self._too_narrow:
+            return Text(
+                self.mr.t("chart_too_narrow", self.lang),
+                style="dim",
+                no_wrap=True,
+                overflow="ellipsis",
+            )
         return super().render()
 
     def _draw_chart(self, now: datetime | None) -> None:
         self._drawn_width = self.size.width
+        self._too_narrow = False
         # aggregate_by_day returns (granularity, days) since
         # dashboard_html.py's adaptive-granularity feature (2026-07-21) -
         # this file wasn't updated when that landed, so it was treating
@@ -842,7 +852,11 @@ class TrendChart(PlotextPlot):
         if canvas_width is not None and canvas_width < 1:
             # No cell to draw a bar in. plotext itself raises on a canvas of
             # 0 cells once there are bars to fill (a ValueError in
-            # get_fill_boundaries, measured 2026-09-23), so nothing is drawn.
+            # get_fill_boundaries, measured 2026-09-23), so nothing is drawn
+            # and render() says why instead of showing a bare frame. One
+            # cell is the least plotext was measured to draw at, at any
+            # height down to one row.
+            self._too_narrow = True
             return
         draw_stacked_bars(
             self.plt, labels, series_lists, series_labels, color, canvas_width=canvas_width

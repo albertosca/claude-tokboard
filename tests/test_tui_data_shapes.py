@@ -72,7 +72,7 @@ sys.path.insert(0, str(REPO_ROOT))
 
 import metrics_core as mr  # noqa: E402
 import metrics_core.paths as paths_module  # noqa: E402
-from test_tui_state import isolate_tui_from_the_real_filesystem  # noqa: E402
+from test_tui_state import isolate_tui_from_the_real_filesystem, seeded_tui_home  # noqa: E402
 from textual.app import App, ComposeResult  # noqa: E402
 from textual_plotext import PlotextPlot  # noqa: E402
 
@@ -825,8 +825,86 @@ def test_no_room_for_a_canvas_draws_bars_of_no_width():
     assert [tui._bar_width_on(canvas, 30) for canvas in (-3, -2, -1, 0)] == [0.0] * 4
 
 
+def _shown_at(records: list[dict[str, Any]], sizes: list[tuple[int, int]]) -> list[str]:
+    """The text the mounted chart renders at each terminal size in turn."""
+
+    class ChartOnly(App[None]):
+        def compose(self) -> ComposeResult:
+            yield tui.TrendChart(mr, records, lang="pt")
+
+    async def drive() -> list[str]:
+        shown = []
+        async with ChartOnly().run_test(size=sizes[0]) as pilot:
+            for size in sizes:
+                await pilot.resize_terminal(*size)
+                await pilot.pause()
+                shown.append(str(pilot.app.query_one(tui.TrendChart).render()))
+        return shown
+
+    return asyncio.run(drive())
+
+
+TOO_NARROW = mr.t("chart_too_narrow", "pt")
+
+
 def test_the_chart_survives_every_narrow_width():
     # A tmux pane can be dragged through any width; a crash in render kills
     # the whole dashboard. Measured before the fix: 4 columns (canvas -1)
     # raised ZeroDivisionError here, 5 (canvas 0) a ValueError in plotext.
-    _built_at(_alternating_days(30), [(width, 20) for width in range(1, 21)])
+    # These days peak at 100 tokens, so the widest y label is "100": the
+    # canvas is the width less 5, and plotext needs at least one cell.
+    shown = _shown_at(_alternating_days(30), [(width, 20) for width in range(1, 21)])
+    for width, text in enumerate(shown, start=1):
+        if width - 5 < 1:
+            assert text == TOO_NARROW, width
+        else:
+            assert TOO_NARROW not in text and "┤" in text, (width, text)
+
+
+def test_the_chart_survives_a_short_terminal():
+    # Height is not what plotext trips on (measured down to one row), but a
+    # pane is dragged in both directions.
+    shown = _shown_at(_alternating_days(30), [(40, height) for height in (1, 2, 3, 4, 5)])
+    assert TOO_NARROW not in shown
+
+
+def test_the_whole_dashboard_survives_every_narrow_width(monkeypatch, tmp_path):
+    # The same sweep through the real app, on the chart's pane, in each of
+    # the three chart modes - the full app at 7 and 8 columns is where the
+    # 2026-09-23 review found the crash.
+    seeded_tui_home(monkeypatch, tmp_path)
+    args = tui.build_arg_parser().parse_args(["--label-budget", "0"])
+    sizes = [(width, 40) for width in range(1, 21)] + [(80, height) for height in (1, 3, 5)]
+
+    async def drive() -> dict[str, list[tuple[tuple[int, int], int, str]]]:
+        shown: dict[str, list[tuple[tuple[int, int], int, str]]] = {}
+        app = tui.MetricsTUIApp(mr, tui.load_data(args, mr=mr), args=args)
+        async with app.run_test(size=(80, 40)) as pilot:
+            await pilot.press("g")
+            for _ in tui.TrendChart.MODES:
+                chart = pilot.app.query_one(tui.TrendChart)
+                for size in sizes:
+                    await pilot.resize_terminal(*size)
+                    await pilot.pause()
+                    shown.setdefault(chart.mode, []).append(
+                        (size, chart.size.width, str(chart.render()))
+                    )
+                await pilot.resize_terminal(80, 40)
+                await pilot.press("t")
+        return shown
+
+    shown = asyncio.run(drive())
+    assert set(shown) == set(tui.TrendChart.MODES)
+    for mode, renders in shown.items():
+        too_narrow = [text == TOO_NARROW for _, _, text in renders]
+        # The message on the narrowest widths, the chart on every one after
+        # them, and nothing in between. Where it switches depends on the
+        # widest y label (measured: after 8 columns for this fixture).
+        assert too_narrow[0] and not too_narrow[-1], mode
+        switch = too_narrow.index(False)
+        assert not any(too_narrow[switch:]), (mode, too_narrow)
+        # Past the switch it is plotext's output. Squeezed under the
+        # legends, which wrap tall at these widths, the chart can be a
+        # single row of dates, so no axis is asserted here - the chart-only
+        # sweep above checks the axis.
+        assert all(text.strip() for _, _, text in renders[switch:]), mode
