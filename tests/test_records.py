@@ -663,6 +663,51 @@ def test_expand_attributes_the_whole_pre_deploy_session_to_the_first_snapshot_wi
 # --- fold_subagent_tokens_into_sessions -------------------------------------
 
 
+def test_fold_sums_all_four_token_fields_not_just_input_tokens():
+    # Every other test in this section only sets/asserts input_tokens, which
+    # left a dropped field in the function's own local token tuple
+    # undetected (found by review, 2026-09-23: a scratch copy with
+    # cache_creation_tokens dropped from that tuple left the suite green).
+    # Distinct, non-zero values in all four fields, on both the session and
+    # each subagent, and a whole-dict equality assert close that gap: a
+    # dropped field either stays at the session's own starting value
+    # (untouched) or is missing from the result entirely, and either way the
+    # dict comparison below catches it.
+    sessions = [
+        {
+            "session_id": "s1",
+            "input_tokens": 10,
+            "output_tokens": 20,
+            "cache_read_tokens": 30,
+            "cache_creation_tokens": 40,
+        }
+    ]
+    subagents = [
+        {
+            "session_id": "s1",
+            "input_tokens": 1,
+            "output_tokens": 2,
+            "cache_read_tokens": 3,
+            "cache_creation_tokens": 4,
+        },
+        {
+            "session_id": "s1",
+            "input_tokens": 5,
+            "output_tokens": 6,
+            "cache_read_tokens": 7,
+            "cache_creation_tokens": 8,
+        },
+    ]
+    result = mr.fold_subagent_tokens_into_sessions(sessions, subagents)
+    assert result[0] == {
+        "session_id": "s1",
+        "input_tokens": 16,
+        "output_tokens": 28,
+        "cache_read_tokens": 40,
+        "cache_creation_tokens": 52,
+    }
+
+
 def test_fold_adds_subagent_tokens_onto_the_parent_session():
     sessions = [{"session_id": "s1", "input_tokens": 10}]
     subagents = [
