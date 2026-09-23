@@ -10,6 +10,7 @@ from typing import Any
 
 import metrics_core as mr
 import metrics_core.records as records_module
+from metrics_core.transcript_ingest import TOKEN_FIELDS
 
 
 def snapshot(duration_seconds: int, timestamp_end: str, **tokens: int) -> dict[str, Any]:
@@ -27,6 +28,26 @@ def _bucket(**tokens: int) -> dict[str, int]:
     )
     b.update(tokens)
     return b
+
+
+# --- TOKEN_FIELDS ---------------------------------------------------------
+
+
+def test_token_fields_is_the_four_field_tuple_records_py_relies_on():
+    # records.py imports TOKEN_FIELDS from transcript_ingest.py rather than
+    # typing the tuple out locally (two functions here used to). The test
+    # fixture helpers above (snapshot/_bucket) and the independent literals
+    # in tests/fixtures/build_fixture.py and tests/test_metrics_log_hook.py
+    # are deliberately NOT built from this constant - see the controller
+    # ruling in the backlog item this test closes - so this is the one place
+    # that pins the canonical tuple itself, keeping every independent copy
+    # honest against it.
+    assert TOKEN_FIELDS == (
+        "input_tokens",
+        "output_tokens",
+        "cache_read_tokens",
+        "cache_creation_tokens",
+    )
 
 
 # --- load_records --------------------------------------------------------

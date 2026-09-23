@@ -420,7 +420,6 @@ def expand_records_to_daily_deltas(raw_records: list[dict[str, Any]]) -> list[di
     # snapshots (no resets), and sorting by duration_seconds gives the
     # exact same order as sorting by timestamp_end - safe to reuse the
     # same sort key dedupe_by_key already relies on.
-    token_fields = ("input_tokens", "output_tokens", "cache_read_tokens", "cache_creation_tokens")
     # agent_id checked FIRST: subagent records carry BOTH their own
     # agent_id AND their parent session's session_id - checking
     # session_id first would group every subagent dispatched by the same
@@ -445,11 +444,11 @@ def expand_records_to_daily_deltas(raw_records: list[dict[str, Any]]) -> list[di
     deltas: list[dict[str, Any]] = []
     for snapshots in by_id.values():
         snapshots.sort(key=lambda r: r.get("duration_seconds") or 0)
-        previous = dict.fromkeys(token_fields, 0)
+        previous = dict.fromkeys(TOKEN_FIELDS, 0)
         previous_by_model: dict[str, dict[str, int]] = {}
         for snapshot in snapshots:
             delta_record = dict(snapshot)
-            for field in token_fields:
+            for field in TOKEN_FIELDS:
                 current = snapshot.get(field, 0) or 0
                 # max(..., 0): a defensive floor, not expected to trigger -
                 # every snapshot checked in real data was monotonically
@@ -475,10 +474,10 @@ def expand_records_to_daily_deltas(raw_records: list[dict[str, Any]]) -> list[di
                 delta_by_model: dict[str, dict[str, int]] = {}
                 for model, bucket in snapshot_by_model.items():
                     previous_bucket = previous_by_model.setdefault(
-                        model, dict.fromkeys(token_fields, 0)
+                        model, dict.fromkeys(TOKEN_FIELDS, 0)
                     )
                     delta_bucket: dict[str, int] = {}
-                    for field in token_fields:
+                    for field in TOKEN_FIELDS:
                         current = bucket.get(field, 0) or 0
                         delta_bucket[field] = max(current - previous_bucket[field], 0)
                         previous_bucket[field] = current
@@ -509,19 +508,18 @@ def fold_subagent_tokens_into_sessions(
     # in-place so every list derived from the same dicts earlier in the
     # pipeline (all_time_records, chart_records, the day/limit-filtered
     # records) picks up the fold automatically.
-    token_fields = ("input_tokens", "output_tokens", "cache_read_tokens", "cache_creation_tokens")
     subagent_totals_by_session: dict[Any, dict[str, int]] = {}
     for subagent in subagent_records:
         session_id = subagent.get("session_id")
         if session_id is None:
             continue
-        totals = subagent_totals_by_session.setdefault(session_id, dict.fromkeys(token_fields, 0))
-        for field in token_fields:
+        totals = subagent_totals_by_session.setdefault(session_id, dict.fromkeys(TOKEN_FIELDS, 0))
+        for field in TOKEN_FIELDS:
             totals[field] += subagent.get(field, 0) or 0
     for record in records:
         session_totals = subagent_totals_by_session.get(record.get("session_id"))
         if not session_totals:
             continue
-        for field in token_fields:
+        for field in TOKEN_FIELDS:
             record[field] = (record.get(field, 0) or 0) + session_totals[field]
     return records
