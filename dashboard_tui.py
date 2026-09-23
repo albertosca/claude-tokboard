@@ -589,6 +589,14 @@ def draw_stacked_bars(
 
 # plotext's own default bar width (plotext/_default.py: bar_width = 4 / 5),
 # and the widest a bar gets - on a canvas with room to spare.
+#
+# Bars of one width can still render a cell apart - 16 and 17 cells on one
+# chart - and that is plotext's rasteriser, not this width: each edge is
+# floor()ed to a cell on its own, so a bar covers one cell more or fewer
+# depending on where its edges fall between cells. Measured on 2026-09-23:
+# floor(0.5 + s * (x - x_min)) predicted every rendered width exactly, at
+# four sizes. Evening them out would mean drawing around plotext's
+# rounding rather than with it, for a one-cell difference.
 BAR_WIDTH = 0.8
 
 
