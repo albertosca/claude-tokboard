@@ -21,9 +21,12 @@ cannot fail is worse than no check:
     cannot flake: during the presses, the data layer must not read the
     JSONL files at all. A return to per-keypress reloading fails it on the
     first press whatever the dataset.
-  * the absolute ceiling is the human-facing claim. It is the only one that
-    speaks in seconds, and the only one that would catch a NEW blocking
-    call (a subprocess, a network read) added to the keypress path.
+  * the CPU ceiling is the one that speaks in seconds: it catches new
+    CPU-bound work on the keypress path, whatever the machine load. It
+    used to be a wall-clock ceiling - see WHY CPU TIME below.
+  * the blocking-call count catches what CPU time cannot see: a sleep, a
+    subprocess, a socket or a file opened on the event loop's thread
+    during a press. Like the reload counter it is exact, not timed.
 
 There used to be a third assertion here: a ratio requiring a re-window to
 cost at most half of a full reload. It was deleted (2026-08-18) after
@@ -37,6 +40,9 @@ noise. The reload counter above already carries this regression, exactly
 and without flaking: it does not matter whether a reload is fast or slow,
 only whether it happened, and it fails deterministically on the first
 press if action_cycle_period ever goes back to load_data.
+
+This paragraph and the next section describe the wall-clock ceiling this
+file had until 2026-09-23; its replacement is explained at the end.
 
 The absolute ceiling is deliberately loose: the fixture is eight records,
 so on it even a full reload costs about a millisecond and no wall-clock
@@ -99,10 +105,49 @@ eight-record fixture, deliberately - test_the_measurement_used_the_fixture
 _and_not_the_real_data below is what proves it, and the numbers above are
 the evidence that the ceiling is not thereby measuring an unrepresentative
 best case.
+
+WHY CPU TIME AND NOT WALL CLOCK (2026-09-23)
+
+The 1.5s wall-clock ceiling failed in full runs while other processes
+loaded the machine (load 10.86 once, 20-50 before), and passed in
+isolation. Reproduced by running only this file beside N busy-loop
+processes on an 8-core machine, five presses per run, the slowest press
+of each kind over 15 presses per level (65 at 8 loops, 50 at 16):
+
+    busy loops          0       8      16      32      64     128
+    wall  (max)       0.216   0.382   0.590   0.899   1.376   2.711 s
+    CPU   (max)       0.106   0.250   0.255   0.180   0.177   0.152 s
+
+At 128 loops the unchanged test failed 2 runs out of 2 (slowest presses
+2.19s and 2.53s). Wall time grows with the load because the press waits
+for a core; the CPU the press itself burns grows about 2x and then stops
+growing (why was not measured - most likely a contended process being
+moved onto the slower efficiency cores). So the ceiling is now on the
+event loop thread's CPU time (time.thread_time) per press: 0.4s, 1.6x
+the worst contended press measured and 6x the uncontended mean (0.067s).
+Canary-measured on an idle machine: adding 0.4s of CPU work to each
+press fails it, adding 0.27s (a press 5x its usual cost) passes - a
+regression has to be about 6x before this ceiling names it. The
+alternatives were measured too: the minimum of three
+repeats of the wall time still went over 1.5s at 128 loops, and a ratio
+against a reference workload timed in the same run cannot tell an added
+2s from contention once contention alone costs 2s per press.
+
+What CPU time cannot see is time spent waiting: a sleep, a subprocess, a
+network or disk read burns almost no CPU in this process. Those are
+caught instead by counting them - an audit hook records every sleep,
+spawn, socket connect and file open on the event loop's thread during
+the presses, and the count must be zero - which is exact and does not
+care about load. Canary-checked: time.sleep(2) in action_cycle_period
+fails the count and not the CPU ceiling; ~2s of pure-Python busy work
+fails the CPU ceiling and not the count. Neither catches a wait that is
+not one of the counted calls (a lock, a C extension blocking without
+an audit event) - nothing here claims to.
 """
 
 import asyncio
 import sys
+import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -122,12 +167,36 @@ from test_tui_state import seeded_tui_home  # noqa: E402
 
 import dashboard_tui as tui  # noqa: E402
 
-# A press must finish well inside this. Roughly half the shipped defect's
-# real-data latency, and (see the module docstring) 3.2x the slowest
-# instrumented press measured over a constructed 4,500-session dataset on
-# 2026-09-01. Loose enough to survive a busy machine and still name the
-# failure.
-MAX_PRESS_SECONDS = 1.5
+# CPU the event loop's thread may spend on one press. 1.6x the worst press
+# measured under contention, 6x the uncontended mean - see WHY CPU TIME in
+# the module docstring. CPU time, not wall time: load stretches the second
+# and barely moves the first.
+MAX_PRESS_CPU_SECONDS = 0.4
+
+# Audit events that mean the event loop's thread waited on something
+# outside the process during a press. Measured 2026-09-23: the five presses
+# raise none of them today (only builtins.id and object.__getattr__).
+BLOCKING_EVENTS = frozenset(
+    {
+        "time.sleep",
+        "open",
+        "subprocess.Popen",
+        "os.system",
+        "os.posix_spawn",
+        "os.fork",
+        "socket.connect",
+        "socket.getaddrinfo",
+    }
+)
+
+# Audit hooks cannot be removed, so there is exactly one, installed on
+# first use and switched on only for the thread and the span being watched.
+_blocking_watch: dict[str, Any] = {"thread": None, "calls": [], "installed": False}
+
+
+def _record_blocking_call(event: str, _args: tuple[Any, ...]) -> None:
+    if event in BLOCKING_EVENTS and _blocking_watch["thread"] == threading.get_ident():
+        _blocking_watch["calls"].append(event)
 
 
 async def _drive_period_cycle() -> dict[str, Any]:
@@ -136,7 +205,11 @@ async def _drive_period_cycle() -> dict[str, Any]:
     is busy:
 
       presses      wall time of the whole key round-trip, recompose
-                   included - what the human waits for.
+                   included - what the human waits for. Reported, not
+                   asserted: it grows with the machine's load.
+      press_cpu    CPU time the event loop's thread spent on each press.
+      blocking     the BLOCKING_EVENTS the event loop's thread raised
+                   during the presses. Empty is the only correct answer.
       load_records the number of times the data layer re-read the JSONL
                    files during the presses. Zero is the only correct
                    answer.
@@ -146,6 +219,7 @@ async def _drive_period_cycle() -> dict[str, Any]:
     app = tui.MetricsTUIApp(mr, data, args=args)
 
     presses: list[float] = []
+    press_cpu: list[float] = []
     periods: list[Any] = []
     records_seen: list[int] = []
     reload_count = {"n": 0}
@@ -161,19 +235,29 @@ async def _drive_period_cycle() -> dict[str, Any]:
             return real_load_records(path)
 
         mr.load_records = counting_load_records
+        if not _blocking_watch["installed"]:
+            sys.addaudithook(_record_blocking_call)
+            _blocking_watch["installed"] = True
+        _blocking_watch["calls"] = []
+        _blocking_watch["thread"] = threading.get_ident()
         try:
             for _ in range(len(mr.PERIODS)):
                 started = time.perf_counter()
+                cpu_started = time.thread_time()
                 await pilot.press("p")
                 await pilot.pause()
+                press_cpu.append(time.thread_time() - cpu_started)
                 presses.append(time.perf_counter() - started)
                 periods.append(app.data["period_id"])
                 records_seen.append(len(app.data["records"]))
         finally:
+            _blocking_watch["thread"] = None
             mr.load_records = real_load_records
 
     return {
         "presses": presses,
+        "press_cpu": press_cpu,
+        "blocking_calls_during_presses": list(_blocking_watch["calls"]),
         "periods": periods,
         "load_records_calls_during_presses": reload_count["n"],
         "records_per_period": dict(zip(periods, records_seen, strict=True)),
@@ -223,10 +307,22 @@ def test_cycling_the_period_never_re_reads_the_data(cycle_timings):
 
 
 def test_every_press_stays_responsive(cycle_timings):
-    slowest = max(cycle_timings["presses"])
-    assert slowest < MAX_PRESS_SECONDS, (
-        f"the slowest 'p' press took {slowest:.2f}s (ceiling {MAX_PRESS_SECONDS}s). "
-        f"All presses: {[round(p, 3) for p in cycle_timings['presses']]}"
+    heaviest = max(cycle_timings["press_cpu"])
+    assert heaviest < MAX_PRESS_CPU_SECONDS, (
+        f"the heaviest 'p' press burned {heaviest:.2f}s of CPU on the event loop "
+        f"(ceiling {MAX_PRESS_CPU_SECONDS}s). CPU per press: "
+        f"{[round(p, 3) for p in cycle_timings['press_cpu']]}; wall per press, "
+        f"for context only: {[round(p, 3) for p in cycle_timings['presses']]}"
+    )
+
+
+def test_no_press_blocks_the_event_loop(cycle_timings):
+    """What the CPU ceiling cannot see: a press that waits rather than
+    works freezes the UI just the same while burning no CPU."""
+    assert cycle_timings["blocking_calls_during_presses"] == [], (
+        f"pressing 'p' made blocking calls on the event loop's thread: "
+        f"{cycle_timings['blocking_calls_during_presses']}. A sleep, a subprocess, "
+        "a socket or a file read there freezes the dashboard for as long as it takes"
     )
 
 
