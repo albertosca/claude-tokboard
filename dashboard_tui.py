@@ -522,11 +522,17 @@ def draw_stacked_bars(
     for series in series_lists:
         running = [a + b for a, b in zip(running, series, strict=True)]
         cumulative.append(running)
-    drew_any = False
+    # An invisible, unlabelled layer of zero-height bars at EVERY position,
+    # drawn first. plotext takes the x range from the bars actually drawn,
+    # and every real layer skips its zero days - so without this, a bucket
+    # with no tokens at either edge fell off the axis (taking today's
+    # in-progress label with it), and a window with no tokens at all drew
+    # a bare frame. A zero bar only paints its base cell with the
+    # background, and every real layer drawn after it paints over that.
+    plt.bar(xs, [0] * len(xs), label=None, color=None, width=_bar_width_for(xs))
     for i in reversed(range(len(series_lists))):
         shown = [j for j, value in enumerate(series_lists[i]) if value > 0]
         if shown:
-            drew_any = True
             positions = [xs[j] for j in shown]
             plt.bar(
                 positions,
@@ -535,13 +541,6 @@ def draw_stacked_bars(
                 color=colors[i],
                 width=_bar_width_for(positions),
             )
-    if not drew_any:
-        # Not one token in the whole window. plotext with no data renders a
-        # bare frame with no dates, which reads as broken. A zero-height
-        # layer is invisible - a zero bar only paints its base cell with the
-        # background, and here there is nothing under it to erase - and it
-        # is enough data for plotext to draw the axis.
-        plt.bar(xs, [0] * len(xs), label=None, color=None, width=_bar_width_for(xs))
     plt.xticks(xs, xlabels)
 
 

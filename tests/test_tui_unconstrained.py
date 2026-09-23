@@ -106,13 +106,22 @@ class _RecordingPlt:
     def xticks(self, xs: list[int], labels: list[str]) -> None:
         self.ticks = (xs, labels)
 
+    @property
+    def layers(self) -> list[tuple[list[int], list[int], str | None, str | None]]:
+        """The bars that belong to a series - everything except the
+        invisible, unlabelled zero layer that pins the x axis."""
+        return [bar for bar in self.bars if bar[2] is not None]
+
 
 def test_stacked_bars_are_cumulative_layers_drawn_from_the_top_down():
     plt = _RecordingPlt()
     tui.draw_stacked_bars(plt, ["d1", "d2"], [[10, 20], [5, 5]], ["low", "high"], ["g", "b"])
-    # The top layer reaches the full stack height and is drawn FIRST, so the
-    # lower layer, drawn after it, paints over its bottom part.
-    assert plt.bars == [([1, 2], [15, 25], "high", "b"), ([1, 2], [10, 20], "low", "g")]
+    # First, an unlabelled zero-height layer at every position: it is what
+    # keeps a zero-token bucket at either edge on the axis.
+    assert plt.bars[0] == ([1, 2], [0, 0], None, None)
+    # Then the top layer, at the full stack height, so the lower layer drawn
+    # after it paints over its bottom part.
+    assert plt.layers == [([1, 2], [15, 25], "high", "b"), ([1, 2], [10, 20], "low", "g")]
     assert plt.ticks == ([1, 2], ["d1", "d2"])
 
 
@@ -122,15 +131,15 @@ def test_a_series_is_not_drawn_on_a_day_it_has_no_tokens():
     # "low" is 0 on d1: no bar there at all - neither a phantom strip in its
     # colour nor a zero-height bar, which plotext would draw as a blank cell
     # over whatever is under it.
-    assert ([1], [5]) not in [(xs, ys) for xs, ys, *_ in plt.bars]
-    assert plt.bars[1] == ([2], [20], "low", "g")
+    assert ([1], [5]) not in [(xs, ys) for xs, ys, *_ in plt.layers]
+    assert plt.layers[1] == ([2], [20], "low", "g")
 
 
 def test_a_day_with_no_data_at_all_draws_nothing():
     """Kept from the replaced tests: an empty day must not get a bar."""
     plt = _RecordingPlt()
     tui.draw_stacked_bars(plt, ["d1", "d2"], [[0, 7], [0, 3]], ["low", "high"], ["g", "b"])
-    assert all(1 not in xs for xs, *_ in plt.bars)
+    assert all(1 not in xs for xs, *_ in plt.layers)
 
 
 def test_a_series_with_no_tokens_anywhere_gets_no_legend_entry():
@@ -138,7 +147,7 @@ def test_a_series_with_no_tokens_anywhere_gets_no_legend_entry():
     # absent from the whole chart would name a colour that appears nowhere.
     plt = _RecordingPlt()
     tui.draw_stacked_bars(plt, ["d1", "d2"], [[3, 4], [0, 0]], ["low", "high"], ["g", "b"])
-    assert [label for *_, label, _ in plt.bars] == ["low"]
+    assert [label for *_, label, _ in plt.layers] == ["low"]
 
 
 # ---------------------------------------------------------------------------

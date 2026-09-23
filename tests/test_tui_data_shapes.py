@@ -576,3 +576,29 @@ def test_a_window_with_no_tokens_at_all_still_draws_its_axis():
     text = _ANSI.sub("", chart.plt.build())
     assert "01/08" in text
     assert "05/08" in text
+
+
+def _axis_labels(records: list[dict[str, Any]], now: datetime) -> list[str]:
+    chart = tui.TrendChart(mr, records)
+    chart.plt.plotsize(80, 12)
+    chart.render_chart(now=now)
+    return _ANSI.sub("", chart.plt.build()).splitlines()[-1].split()
+
+
+def test_a_zero_token_bucket_at_the_end_keeps_its_date_and_its_in_progress_label():
+    # plotext takes the x range from the bars actually drawn, and every
+    # layer skips its zero days - so a bucket with records but no tokens,
+    # at the window's edge, fell outside the plot. When that bucket was
+    # today's, the " · 25%" in-progress label went with it. Found by the
+    # 2026-09-23 re-review.
+    records = [_august_session(f"s{d}", day=d, tokens=100) for d in (1, 5, 10)]
+    records.append(_august_session("s12", day=12, tokens=0))
+    labels = _axis_labels(records, datetime(2026, 8, 12, 6, 0).astimezone())
+    assert labels[-3:] == ["12/08", "·", "25%"], labels
+
+
+def test_a_zero_token_bucket_at_the_start_keeps_its_date():
+    records = [_august_session("s1", day=1, tokens=0)]
+    records += [_august_session(f"s{d}", day=d, tokens=100) for d in (5, 10, 12)]
+    labels = _axis_labels(records, datetime(2026, 8, 30).astimezone())
+    assert labels[0] == "01/08", labels
