@@ -294,6 +294,58 @@ def _launches_real_claude_cli(executable: object, popen_args: object) -> bool:
     return bool(is_shell_dash_c and _CLAUDE_WORD.search(argv[2]))
 
 
+def _is_python_interpreter(token: str) -> bool:
+    """Fix round 1, Important 2: sys.executable itself, or anything whose
+    basename starts with "python" (python3, python3.14, a version-manager
+    shim named plainly "python", ...). Deliberately loose - the guard
+    would rather flag a non-Python binary that happens to be named
+    "python-something" than miss a real interpreter under a name it
+    didn't expect."""
+    return token == sys.executable or Path(token).name.lower().startswith("python")
+
+
+def _child_env_leaves_home_unguarded(env: object) -> bool:
+    """Fix round 1, Important 2: True unless `env` is a mapping that
+    overrides HOME to somewhere other than the real one. subprocess.Popen's
+    `env` REPLACES the child's entire environment when given (it does not
+    merge with the parent's) - so `env=None` (inherits the parent's real
+    HOME) and an `env` dict with no "HOME" key at all are both unguarded,
+    same as one that explicitly sets HOME back to the real value.
+    """
+    if not isinstance(env, dict):
+        return True  # None (inherits the parent's real env), or an unrecognized shape
+    home = env.get("HOME")
+    if not isinstance(home, str | bytes | os.PathLike):
+        return True
+    for candidate in (_resolved_path_or_none(home), _lexical_abspath_or_none(home)):
+        if candidate is not None and _same_or_within(candidate, _REAL_HOME):
+            return True
+    return False
+
+
+def _launches_an_unguarded_python_child(
+    executable: object, popen_args: object, env: object
+) -> bool:
+    """Fix round 1, Important 2: sys.addaudithook installs are per-process
+    - this guard cannot see a single thing a subprocess.Popen'd Python
+    child does with the real ~/.claude, no matter what it writes. The only
+    thing checkable from the PARENT side is whether the child's env
+    redirects HOME away from the real one before it ever starts; if it
+    doesn't (or `env` is not given at all, so the child simply inherits
+    the parent's real HOME), the child is unguarded and this refuses to
+    launch it. A non-Python child is still only covered by
+    _launches_real_claude_cli's own argv check above - see this module's
+    docstring for that honestly-stated limit.
+    """
+    argv = _argv_tokens(popen_args)
+    exec_name = _decoded_item_or_none(executable) if executable is not None else None
+    if exec_name is None and argv:
+        exec_name = argv[0]
+    if exec_name is None or not _is_python_interpreter(exec_name):
+        return False
+    return _child_env_leaves_home_unguarded(env)
+
+
 def _audit_real_claude_dir_guard(event: str, args: tuple[object, ...]) -> None:
     if event == "open":
         path, mode, flags = args
@@ -326,9 +378,17 @@ def _audit_real_claude_dir_guard(event: str, args: tuple[object, ...]) -> None:
         if _inside_real_claude_dir(args[1]):
             _raise(f"{event} creating real {args[1]!r}")
     elif event == "subprocess.Popen":
-        executable, popen_args = args[0], args[1]
+        executable, popen_args, _cwd, env = args
         if _launches_real_claude_cli(executable, popen_args):
             _raise("subprocess launch of the real `claude` CLI from a test")
+        elif _launches_an_unguarded_python_child(executable, popen_args, env):
+            _raise(
+                "subprocess launch of a Python child whose HOME was not redirected away "
+                "from the real one - sys.addaudithook installs are per-process, so this "
+                "guard cannot see what such a child does; pass env=dict(os.environ, "
+                "HOME=<tmp dir>, ...) the way tests/conftest.py's own dashboard_page "
+                "fixture and tests/test_language_leak.py's fixture_page_html do"
+            )
 
 
 def _install_real_claude_dir_guard() -> None:
@@ -340,14 +400,38 @@ def _install_real_claude_dir_guard() -> None:
     This is the class fix for the 2026-09-23 incident (see
     tests/test_real_metrics_isolation.py): patching metrics_core path
     constants one by one will always miss the next one; this hook fires on
-    the underlying filesystem/process primitives directly; no test can
-    reach the real ~/.claude by writing to it or by shelling out to the
-    real `claude` CLI, regardless of what any test does or forgets to do.
+    the underlying filesystem/process primitives directly, in THIS
+    process, covering every test that runs inside it regardless of what
+    that test does or forgets to do.
 
-    Every audit event named in _audit_real_claude_dir_guard was confirmed
-    to actually fire, with the exact argument shapes assumed above, by a
-    throwaway scratch experiment against this interpreter (Python 3.14.7 /
-    macOS) - not from documentation alone.
+    Stated honestly (fix round 1, Important 2 review comment: the
+    original wording here claimed this guard blocks "regardless of what
+    any test does," which is not true) - two limits this guard cannot
+    close:
+
+    - sys.addaudithook installs are PER-PROCESS. A subprocess.Popen'd
+      Python child runs in its own process, entirely outside this hook -
+      _launches_an_unguarded_python_child only checks, from the parent
+      side, whether such a child's env redirects HOME away from the real
+      one before it starts; it cannot see anything the child does once it
+      has. A non-Python child is covered only by
+      _launches_real_claude_cli's own argv check above, nothing more.
+    - Several ways to touch a file were deliberately left unguarded,
+      because covering them was judged not worth the complexity for this
+      suite (none of them is something any test here actually does):
+      dir_fd-relative opens (os.open(..., dir_fd=...) - the audit event's
+      path argument alone does not say which directory it is relative
+      to), os.chmod/os.utime (metadata-only, no data written), sqlite3
+      (opens its own file handle in C, below the audit-event layer for
+      opens), os.posix_spawn/os.posix_spawnp (a different audit event
+      than subprocess.Popen, unused anywhere in this repo), and
+      os.system (shells out via /bin/sh -c but is its own audit event,
+      distinct from subprocess.Popen).
+
+    Every audit event this hook DOES act on was confirmed to actually
+    fire, with the exact argument shapes assumed above, by a throwaway
+    scratch experiment against this interpreter (Python 3.14.7 / macOS) -
+    not from documentation alone.
     """
     sys.addaudithook(_audit_real_claude_dir_guard)
 

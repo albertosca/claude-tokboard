@@ -34,6 +34,7 @@ not exist, or a `claude` lookup with PATH pointed at an empty directory),
 never an actual write or an actual launch of the real CLI.
 """
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -266,6 +267,53 @@ class TestClaudeLaunchMatchingIsPrecise:
             pytest.fail(f"{argv} was wrongly blocked as a claude CLI launch")
         except OSError:
             pass
+
+
+class TestUnguardedPythonChildIsBlocked:
+    """Fix round 1, Important 2: sys.addaudithook installs are per-process
+    - a subprocess.Popen'd Python child runs in its OWN process, and this
+    guard cannot see a single thing it does there, no matter what it
+    writes. The only thing checkable from the parent side is whether the
+    child's env redirects HOME away from the real one before it starts.
+
+    Every "blocked" case here is safe even if the guard regressed: it
+    fires (aborting the whole Popen) BEFORE the child process is ever
+    created, so the child's own code (a harmless `pass`) never actually
+    runs either way.
+    """
+
+    def test_a_python_child_with_no_env_override_is_blocked(self) -> None:
+        # No env= at all: the child would inherit this process's own REAL
+        # HOME - exactly the 2026-09-23-shaped incident this closes.
+        with pytest.raises(RealClaudeDirWrite):
+            subprocess.Popen([sys.executable, "-c", "pass"])
+        _assert_guard_hit_and_clear_it()
+
+    def test_a_python_child_with_env_missing_home_is_blocked(self) -> None:
+        # env IS given, but has no "HOME" key at all - Popen's env
+        # REPLACES the child's whole environment rather than merging with
+        # the parent's, so this is just as unguarded as no env at all.
+        with pytest.raises(RealClaudeDirWrite):
+            subprocess.Popen([sys.executable, "-c", "pass"], env={"PATH": "/usr/bin"})
+        _assert_guard_hit_and_clear_it()
+
+    def test_a_python_child_with_home_redirected_to_a_tmp_dir_is_allowed(
+        self, tmp_path: Path
+    ) -> None:
+        # The exact shape tests/conftest.py's own dashboard_page fixture
+        # and tests/test_language_leak.py's fixture_page_html already use
+        # - must keep working, or every existing sys.executable child in
+        # this suite would start failing.
+        env = dict(os.environ, HOME=str(tmp_path))
+        proc = subprocess.Popen([sys.executable, "-c", "pass"], env=env)
+        assert proc.wait(timeout=10) == 0
+
+    def test_a_non_python_child_is_unaffected_by_this_check(self) -> None:
+        # "echo" is not a Python interpreter, so _is_python_interpreter
+        # never matches it, regardless of env - a real system binary
+        # actually runs here to prove that.
+        proc = subprocess.Popen(["/bin/echo", "hi"], stdout=subprocess.DEVNULL)
+        assert proc.wait(timeout=10) == 0
 
 
 class TestCaseAndSymlinkEscapes:
