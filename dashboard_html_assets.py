@@ -1013,8 +1013,8 @@ SCRIPT = """
       // their document order ever changed. A document-wide clear here used
       // to strip 'active' from every OTHER period's pane/button too,
       // leaving them with no active pane at all the next time the reader
-      // switched to one (2026-08-18 fix - "o gráfico sumiu pra todas exceto
-      // o filtro que eu tava").
+      // switched to one (2026-08-18 fix - "the chart disappeared for
+      // every one except the filter I was on").
       var container = (pane || btn) && (pane || btn).closest('.trend-container');
       if (!container) { return; }
       // A highlight belongs to the slicing it was made in. The three modes
@@ -1053,14 +1053,14 @@ SCRIPT = """
       if (icon) { icon.textContent = collapsed ? '▾' : '▸'; }
     }
     // Shared by highlightTokenType (token-type legend/bars) and
-    // highlightProject (por-projeto legend/bars, 2026-07-21) - the two
+    // highlightProject (per-project legend/bars, 2026-07-21) - the two
     // never show on screen at once (only one trend-mode-tab is visible),
     // so they can safely share the one data-highlight attribute/CSS
     // instead of needing two independent highlight systems.
     // Hover only changes the cursor (CSS cursor:pointer) - it does NOT
     // touch the highlight (2026-07-21: a hover-preview version of this
-    // was tried and reverted - "eu quero que reaja só a clique normal,
-    // com ctrl e shift"). Only a real click changes data-highlight.
+    // was tried and reverted - "I want it to react only to a plain click,
+    // with ctrl and shift"). Only a real click changes data-highlight.
     function toggleHighlight(cls, event) {
       var body = document.body;
       var current = body.getAttribute('data-highlight');
@@ -1139,9 +1139,10 @@ SCRIPT = """
     if (initialChip) { scrollTrendToNewest(initialChip.dataset.period); }
     // Clicking outside any legend chip / chart bar clears the selection
     // back to the page's original default (everything highlighted,
-    // 2026-07-22 - "clicar fora dele deve tirar a seleção e voltar pro
-    // padrão"). Captured once, before any user interaction, since the
-    // set of group colors in play is only known at page-render time.
+    // 2026-07-22 - "clicking outside it should clear the selection and go
+    // back to the default"). Captured once, before any user interaction,
+    // since the set of group colors in play is only known at page-render
+    // time.
     var DEFAULT_HIGHLIGHT = document.body.getAttribute('data-highlight');
     document.addEventListener('click', function(event) {
       if (event.target.closest('.legend-chip, .chart-bar')) { return; }

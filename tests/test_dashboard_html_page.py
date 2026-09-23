@@ -196,6 +196,22 @@ def test_render_html_wires_style_and_script_from_assets() -> None:
     assert dashboard_html_assets.SCRIPT in out
 
 
+def test_dashboard_html_assets_script_comments_have_no_portuguese() -> None:
+    # This repo is public (backlog #12): a reader running view-source
+    # should not hit Portuguese sitting untranslated inside otherwise-
+    # English JS comments - four of them did (three quoted bug reports, one
+    # descriptive phrase).
+    script = dashboard_html_assets.SCRIPT
+    leftover_portuguese_fragments = [
+        "o gráfico sumiu",
+        "eu quero que reaja",
+        "clicar fora dele",
+        "por-projeto",
+    ]
+    for fragment in leftover_portuguese_fragments:
+        assert fragment not in script, f"{fragment!r} still in dashboard_html_assets.SCRIPT"
+
+
 def test_render_html_empty_record_set_produces_a_valid_page_without_raising() -> None:
     out = dashboard_html.render_html(**_empty_render_html_kwargs(), lang="pt")
     assert out.startswith("<!DOCTYPE html>")

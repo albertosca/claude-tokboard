@@ -552,6 +552,21 @@ def test_render_detail_panel_subagent_with_label_uses_em_dash_form():
     assert "sem transcript salvo" not in out
 
 
+def test_render_detail_panel_close_button_escapes_its_aria_label(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The close button's aria-label was the one string in this panel not
+    # run through html.escape, unlike its neighbour tooltip
+    # (quota_tooltip). The catalog value itself is never attacker-
+    # controlled, so the only way to prove the call site actually escapes
+    # is to put a character that NEEDS it into the catalog for this one
+    # assertion.
+    monkeypatch.setitem(mr.MESSAGES, "detail.close", {"en": 'Close "x"', "pt": 'Fechar "x"'})
+    out = dashboard_html.render_detail_panel("sess-1", [], is_active=False, lang="pt")
+    assert 'aria-label="Fechar &quot;x&quot;"' in out
+    assert 'aria-label="Fechar "x""' not in out
+
+
 def test_render_detail_panel_period_ids_default_to_tudo():
     out = dashboard_html.render_detail_panel("sess-1", [], is_active=False, lang="pt")
     assert 'data-periods="tudo"' in out
