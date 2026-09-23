@@ -8,6 +8,7 @@ import json
 import os as os  # re-exported: tests monkeypatch labels.os.replace directly
 import shutil
 import subprocess
+import tempfile
 import threading
 from pathlib import Path
 from typing import Any, cast
@@ -373,19 +374,29 @@ def _atomic_save(path: str, cache: LabelCache) -> None:
     overwritten - keeps one copy of it as `<path>.pre-i18n`, made once and
     never overwritten again.
 
-    The temp file lives next to the target (same directory) so os.replace
-    is an atomic rename, not a cross-filesystem copy, and is removed if the
-    write fails partway so a crash never leaves a stray `.tmp` file behind.
+    The temp file is created with tempfile.mkstemp, not a fixed `<path>.tmp`
+    name: dashboard_html.py and dashboard_tui.py are separate PROCESSES,
+    and a fixed name is a race between them - two processes saving the same
+    cache around the same time would share one temp file, and whichever
+    finished its os.replace first would leave the other's `open("w")` (or
+    the second os.replace) either truncating a file that's already gone or
+    silently clobbering the target with a half-written one. mkstemp opens
+    its file with O_EXCL in the SAME directory as the target (so os.replace
+    stays an atomic same-filesystem rename), guaranteeing a unique name per
+    call regardless of what any other process is doing at the same moment.
+    The temp file is removed if the write fails partway, so a crash never
+    leaves a stray temp file behind.
     """
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
     backup = target.with_name(target.name + ".pre-i18n")
-    tmp = target.with_name(target.name + ".tmp")
     with _CACHE_LOCK:
         if target.exists() and not backup.exists() and _holds_old_shape(target):
             shutil.copy2(target, backup)
+        fd, tmp_name = tempfile.mkstemp(dir=target.parent, prefix=target.name + ".", suffix=".tmp")
+        tmp = Path(tmp_name)
         try:
-            with tmp.open("w") as f:
+            with os.fdopen(fd, "w") as f:
                 json.dump(cache, f, indent=2)
             # os.replace, not Path.replace (PTH105): a failure test simulates
             # a disk-full replace by monkeypatching this exact name.
@@ -422,6 +433,18 @@ class LabelBudget:
             return False
 
 
+def _other_language_label(cache: LabelCache, entry_id: str) -> str | None:
+    """A real, model-written (or reused) label already cached for `entry_id`
+    under any language OTHER than the one being asked for right now - the
+    caller has already checked the requested language isn't cached, so
+    every value here belongs to some other language. Returns None if the
+    id has no entry, or every entry it has is the `_NO_LABEL` marker."""
+    return next(
+        (value for value in cache.get(entry_id, {}).values() if value != _NO_LABEL),
+        None,
+    )
+
+
 def get_task_label(
     record: dict[str, Any], cache: LabelCache, budget: LabelBudget, *, lang: str
 ) -> str | None:
@@ -443,6 +466,19 @@ def get_task_label(
     if not source:
         source = cold_summary_source(record.get("transcript_path"))
     if not source:
+        other_label = _other_language_label(cache, session_id)
+        if other_label is not None:
+            # No source text left to regenerate from (Claude Code already
+            # pruned the transcript) - but this session already has a real,
+            # model-written label in another language. Caching _NO_LABEL
+            # for the requested language here would be permanent: the
+            # session's only source is gone, so a future run could never
+            # recover it either. Returning the other language's label
+            # (untranslated, exactly as a session name would be) beats
+            # blanking a label that already exists. Deliberately not
+            # written to the cache for `lang` - this is a display fallback,
+            # not a cached fact about `lang`, so nothing here can go stale.
+            return other_label
         with _CACHE_LOCK:
             cache.setdefault(session_id, {})[lang] = _NO_LABEL
         return None
@@ -492,6 +528,14 @@ def get_agent_label(
     # docstring for the real-data evidence behind this ordering.
     source = warm_summary_source(transcript_path) or cold_summary_source(transcript_path)
     if not source:
+        other_label = _other_language_label(cache, agent_id)
+        if other_label is not None:
+            # Same reasoning as get_task_label's identical fallback: no
+            # source left to regenerate from, but a real label already
+            # exists in another language - return it rather than caching a
+            # permanent, unrecoverable _NO_LABEL. Not written to the cache
+            # for `lang`.
+            return other_label
         with _CACHE_LOCK:
             cache.setdefault(agent_id, {})[lang] = _NO_LABEL
         return None

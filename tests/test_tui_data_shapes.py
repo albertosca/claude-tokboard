@@ -57,6 +57,7 @@ controller to rule on, per the phase's Global Constraints, not a unilateral
 call to exclude them.
 """
 
+import json
 import re
 import sys
 from datetime import datetime
@@ -239,6 +240,52 @@ def test_session_with_no_session_id_is_skipped_without_crashing(monkeypatch, tmp
     assert len(base["records"]) == 2
     malformed_out = next(r for r in base["records"] if r.get("session_id") is None)
     assert malformed_out["task_label"] is None
+
+
+# ---------------------------------------------------------------------------
+# the resolved language reaches the label call (Task 5, Fix round 2)
+# ---------------------------------------------------------------------------
+
+
+def test_the_resolved_language_reaches_get_task_label(monkeypatch, tmp_path):
+    """load_base_data resolves `lang` once (from config.json) and must
+    thread that SAME value into every get_task_label call - not a
+    hardcoded default that happens to read the same in the one language
+    the rest of the suite pins. Proven with a spy that records the `lang`
+    kwarg each call actually received, on an English-configured HOME with
+    a real transcript (so the call reaches past the cache-hit/internal-name
+    shortcuts) and a budget > 0 (so it also reaches compress_to_label, the
+    one exercised in the reviewer-named repro)."""
+    isolate_tui_from_the_real_filesystem(monkeypatch, tmp_path)
+    (tmp_path / ".claude" / "metrics" / "config.json").write_text(json.dumps({"language": "en"}))
+    transcript = tmp_path / "t.jsonl"
+    transcript.write_text(
+        json.dumps({"type": "user", "message": {"content": "fix the login bug"}}) + "\n"
+    )
+    session = _session("s1", day=1)
+    session["transcript_path"] = str(transcript)
+    _write_sessions(tmp_path, [session])
+
+    captured_langs: list[str] = []
+    original = mr.get_task_label
+
+    def spy(record: dict[str, Any], cache: Any, budget: Any, *, lang: str) -> Any:
+        captured_langs.append(lang)
+        # subprocess.run is already patched to hard-fail by
+        # isolate_tui_from_the_real_filesystem - _run_label_prompt's own
+        # try/except swallows that as "no result", so delegating to the
+        # real function is safe here and still negative-caches instead of
+        # raising. The spy has already captured `lang` by the time that
+        # happens, which is the only thing this test needs.
+        return original(record, cache, budget, lang=lang)
+
+    monkeypatch.setattr(mr, "get_task_label", spy)
+    args = tui.build_arg_parser().parse_args(["--label-budget", "5"])
+    tui.load_base_data(args, mr=mr)
+    assert captured_langs == ["en"], (
+        "get_task_label must be called with the resolved language ('en' "
+        f"here), not a hardcoded default - got {captured_langs}"
+    )
 
 
 # ---------------------------------------------------------------------------

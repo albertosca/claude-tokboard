@@ -121,8 +121,20 @@ def test_a_failed_write_does_not_leave_a_stray_tmp_file(
     monkeypatch.setattr(labels.os, "replace", raise_disk_full)
     with pytest.raises(OSError):
         labels.save_label_cache({"s": {"pt": "y"}})
-    tmp_file = files.task.with_name(files.task.name + ".tmp")
-    assert not tmp_file.exists()
+    # Not a fixed "<name>.tmp" check: _atomic_save names its temp file with
+    # tempfile.mkstemp (a random suffix, e.g. "task_labels.json.ab12cd34.tmp")
+    # specifically so two PROCESSES saving at once never share one temp
+    # file - a fixed-name assertion here would pass vacuously (that exact
+    # name is never created any more) even if a differently-named temp file
+    # leaked, which is exactly the "verification that can't distinguish
+    # pass from fail" trap. Glob by the same prefix/suffix mkstemp was
+    # given instead.
+    leftover = [
+        p
+        for p in files.task.parent.iterdir()
+        if p.name.startswith(files.task.name + ".") and p.name.endswith(".tmp")
+    ]
+    assert leftover == []
 
 
 def test_a_corrupt_cache_reads_as_empty(files: LabelFiles) -> None:
@@ -280,3 +292,123 @@ def test_label_prompts_has_exactly_the_two_documented_languages() -> None:
         assert isinstance(retry_prefix, str)
         assert prefix
         assert retry_prefix
+
+
+def test_the_pt_prompts_are_byte_identical_to_the_pre_i18n_literals() -> None:
+    # Copied by hand from `git show 9076cda:lib/metrics_core/labels.py` -
+    # the last commit before this feature existed - rather than derived
+    # from the current LABEL_PROMPTS table, so a future edit to the table
+    # can't accidentally "fix" both the code and this pin together and
+    # still pass. Task 5's own report additionally proved this by AST-
+    # diffing the same commit; this test pins the same fact as a literal a
+    # reader can check by eye, with no script required.
+    old_prompt = (
+        "Resuma o texto abaixo em um rotulo curto de 3 a 5 palavras, "
+        "em portugues, sem pontuacao final, responda so com o rotulo:\n\n"
+    )
+    old_retry_prompt = (
+        "O texto abaixo pode ser um trecho de codigo, log, ou erro - "
+        "mesmo assim, gere um rotulo curto de 3 a 5 palavras em "
+        "portugues descrevendo do que se trata. NUNCA recuse, NUNCA "
+        "peca mais contexto, NUNCA explique - responda apenas com o "
+        "rotulo, mesmo que o texto pareca incompleto:\n\n"
+    )
+    assert labels.LABEL_PROMPTS["pt"] == (old_prompt, old_retry_prompt)
+
+
+def test_the_english_retry_prompt_also_asks_for_english(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # test_an_english_label_is_asked_for_in_english already pins the FIRST
+    # prompt. The retry is a separate literal in LABEL_PROMPTS["en"][1] -
+    # nothing proves it says "in English" too unless the first attempt is
+    # made to fail, forcing compress_to_label to actually build and send
+    # the retry prompt.
+    prompts: list[str] = []
+    responses = iter([None, "a label"])
+
+    def flaky(prompt: str) -> str | None:
+        prompts.append(prompt)
+        return next(responses)
+
+    monkeypatch.setattr(labels, "_run_label_prompt", flaky)
+    transcript = tmp_path / "t.jsonl"
+    transcript.write_text(
+        json.dumps({"type": "user", "message": {"content": "please fix the login redirect"}}) + "\n"
+    )
+    record = {"session_id": "s", "transcript_path": str(transcript)}
+    result = labels.get_task_label(record, {}, labels.LabelBudget(1), lang="en")
+    assert result == "a label"
+    assert len(prompts) == 2, "the first attempt must have failed to force a retry"
+    assert "in English" in prompts[1]
+
+
+# --- falling back to another language when the source is gone -------------
+
+
+def test_a_label_in_another_language_is_reused_when_there_is_no_source_left(spy: Spy) -> None:
+    # The reviewer's repro: a session whose transcript Claude Code already
+    # pruned has no source text left to regenerate from, but it already
+    # has a real, model-written Portuguese label. Caching "en":
+    # "__no_label__" here would be PERMANENT (there is no source to try
+    # again from later) and would blank a label that already exists just
+    # because the reader's machine resolves "en".
+    record = {"session_id": "s", "transcript_path": "/nonexistent/pruned.jsonl"}
+    cache: labels.LabelCache = {"s": {"pt": "corrigindo o login"}}
+    budget = labels.LabelBudget(5)
+    result = labels.get_task_label(record, cache, budget, lang="en")
+    assert result == "corrigindo o login"
+    assert cache == {"s": {"pt": "corrigindo o login"}}, "nothing must be cached for 'en'"
+    assert budget.remaining == 5
+    assert spy.prompts == []
+
+
+def test_with_no_other_language_label_the_no_label_marker_is_still_cached(spy: Spy) -> None:
+    # The control case: no source AND no other-language label at all -
+    # today's behaviour (cache the negative marker) is unchanged.
+    record = {"session_id": "s", "transcript_path": "/nonexistent/pruned.jsonl"}
+    cache: labels.LabelCache = {}
+    budget = labels.LabelBudget(5)
+    result = labels.get_task_label(record, cache, budget, lang="en")
+    assert result is None
+    assert cache == {"s": {"en": "__no_label__"}}
+    assert spy.prompts == []
+
+
+def test_a_no_label_marker_in_another_language_is_not_reused_as_a_real_label(spy: Spy) -> None:
+    # The marker itself must never be mistaken for "a real label in another
+    # language" - if the ONLY other entry is __no_label__, the fallback
+    # must not fire, and today's negative-caching behaviour still applies.
+    record = {"session_id": "s", "transcript_path": "/nonexistent/pruned.jsonl"}
+    cache: labels.LabelCache = {"s": {"pt": "__no_label__"}}
+    budget = labels.LabelBudget(5)
+    result = labels.get_task_label(record, cache, budget, lang="en")
+    assert result is None
+    assert cache == {"s": {"pt": "__no_label__", "en": "__no_label__"}}
+    assert spy.prompts == []
+
+
+def test_an_agent_label_in_another_language_is_reused_when_there_is_no_source_left(
+    spy: Spy,
+) -> None:
+    # Mirror of the task-label fallback above, for get_agent_label.
+    record = {"agent_id": "a", "agent_transcript_path": "/nonexistent/pruned.jsonl"}
+    cache: labels.LabelCache = {"a": {"pt": "revisao de pr"}}
+    budget = labels.LabelBudget(5)
+    result = labels.get_agent_label(record, cache, budget, lang="en")
+    assert result == "revisao de pr"
+    assert cache == {"a": {"pt": "revisao de pr"}}, "nothing must be cached for 'en'"
+    assert budget.remaining == 5
+    assert spy.prompts == []
+
+
+def test_with_no_other_language_agent_label_the_no_label_marker_is_still_cached(
+    spy: Spy,
+) -> None:
+    record = {"agent_id": "a", "agent_transcript_path": "/nonexistent/pruned.jsonl"}
+    cache: labels.LabelCache = {}
+    budget = labels.LabelBudget(5)
+    result = labels.get_agent_label(record, cache, budget, lang="en")
+    assert result is None
+    assert cache == {"a": {"en": "__no_label__"}}
+    assert spy.prompts == []
