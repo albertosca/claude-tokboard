@@ -323,7 +323,7 @@ def build_session_tree(
 ) -> Tree[Any]:
     group_colors = mr.assign_group_colors(records)
     groups = mr.build_project_groups(records, group_colors)
-    tree: Tree[Any] = Tree("Sessões")
+    tree: Tree[Any] = Tree(mr.t("tab.sessions", lang))
     tree.show_root = False
     for group in groups:
         project_path = group["project"]
@@ -338,7 +338,8 @@ def build_session_tree(
         label = mr.project_display_label(project_path, lang=lang)
         total_tokens = sum(mr.record_token_total(r) for r in visible_records)
         group_node = tree.root.add(
-            f"{label} ({len(visible_records)} sessões · {mr.format_tokens(total_tokens)} tokens)",
+            f"{label} ({mr.tn('sessions', len(visible_records), lang)} · "
+            f"{mr.format_tokens(total_tokens)} tokens)",
             expand=False,
         )
         for record in visible_records:
@@ -383,10 +384,15 @@ class SessionDetailPanel(VerticalScroll):
     def show_session(self, session_id: str, subagents: list[dict[str, Any]]) -> None:
         lines = [f"[bold]{session_id}[/bold]", ""]
         if not subagents:
-            lines.append("[dim]Nenhum subagente nesta sessão.[/dim]")
+            lines.append(f"[dim]{self.mr.t('detail.no_subagents', self.lang)}[/dim]")
         else:
-            lines.append(f"[bold]Subagentes despachados ({len(subagents)})[/bold]")
-            lines.append(f"{'tarefa':<40}{'tokens':>12}{'tools':>8}{'duração':>10}")
+            lines.append(
+                f"[bold]{self.mr.t('detail.subagents_title', self.lang, n=len(subagents))}[/bold]"
+            )
+            lines.append(
+                f"{self.mr.t('col.task', self.lang):<40}{'tokens':>12}"
+                f"{'tools':>8}{self.mr.t('col.duration', self.lang):>10}"
+            )
             for i, subagent in enumerate(subagents):
                 agent_type = subagent.get("agent_type") or "-"
                 agent_label = subagent.get("agent_label") or "-"
@@ -420,10 +426,13 @@ class QuotaSummary(Static):
 
     def render(self) -> str:
         quota_input, quota_output = self.mr.compute_quota_totals(self.totals)
-        return (
-            f"Quota (aprox.): {self.mr.format_tokens(quota_input)} entrada · "
-            f"{self.mr.format_tokens(quota_output)} saída"
+        line: str = self.mr.t(
+            "quota_line",
+            self.lang,
+            input=self.mr.format_tokens(quota_input),
+            output=self.mr.format_tokens(quota_output),
         )
+        return line
 
 
 class CompositionLegend(Static):
@@ -501,7 +510,11 @@ def compute_pane_projects(
 
 
 def pane_series_label(mr: ModuleType, key: str | None, *, lang: str) -> str:
-    return "outros" if key == PANE_OTHER_KEY else mr.project_display_label(key, lang=lang)
+    if key == PANE_OTHER_KEY:
+        others: str = mr.t("others", lang)
+        return others
+    label: str = mr.project_display_label(key, lang=lang)
+    return label
 
 
 def draw_stacked_bars(
@@ -685,7 +698,7 @@ class TrendChart(PlotextPlot):
             else:
                 color = palette
             draw_stacked_bars(self.plt, labels, series_lists, series_labels, color)
-            self.plt.title("Tokens por dia (por projeto)")
+            self.plt.title(self.mr.t("chart_title.pane", self.lang))
             max_total = max(
                 (sum(series_data[k][i] for k in series_keys) for i in range(len(days))), default=0
             )
@@ -710,7 +723,7 @@ class TrendChart(PlotextPlot):
             series_lists = [[day.get(m, 0) for day in per_day] for m in model_keys]
             series_lists.append(unattributed)
             series_labels = [self.mr.model_display_label(m) for m in model_keys]
-            series_labels.append("sem modelo")
+            series_labels.append(self.mr.t("no_model", self.lang))
             color = [
                 PANE_COLORS[i] if i < len(PANE_COLORS) else PANE_OTHER_COLOR
                 for i in range(len(model_keys))
@@ -718,7 +731,7 @@ class TrendChart(PlotextPlot):
             color.append(PANE_OTHER_COLOR)
             day_totals_list = [sum(series[i] for series in series_lists) for i in range(len(days))]
             draw_stacked_bars(self.plt, labels, series_lists, series_labels, color)
-            self.plt.title("Tokens por dia (por modelo)")
+            self.plt.title(self.mr.t("chart_title.model", self.lang))
             max_total = max(day_totals_list, default=0)
         else:
             input_totals = [sum(r.get("input_tokens", 0) or 0 for r in d["records"]) for d in days]
@@ -745,7 +758,7 @@ class TrendChart(PlotextPlot):
                 ["input", "output", "cache read", "cache creation"],
                 color,
             )
-            self.plt.title("Tokens por dia (por tipo de token)")
+            self.plt.title(self.mr.t("chart_title.tokens", self.lang))
             max_total = max(
                 (
                     input_totals[i]
@@ -790,7 +803,7 @@ class ProjectLegend(Static):
     def render(self) -> str:
         series_keys = self._series_keys()
         if not series_keys:
-            return "[dim]Sem dados.[/dim]"
+            return f"[dim]{self.mr.t('no_data', self.lang)}[/dim]"
         chips = []
         for key in series_keys:
             label = pane_series_label(self.mr, key, lang=self.lang)
@@ -852,14 +865,14 @@ class ProjectRankingList(Static):
         # nothing to show is just dead weight in this ranking.
         ordered = [p for p in ordered if totals.get(p, 0) > 0]
         if not ordered:
-            return "[dim]Sem dados.[/dim]"
+            return f"[dim]{self.mr.t('no_data', self.lang)}[/dim]"
 
         max_total = max_total or 1
         visible = ordered[:10]
         hidden = ordered[10:]
         shown = visible + (hidden if self.expanded else [])
 
-        lines = ["[bold]Total de tokens por projeto[/bold]", ""]
+        lines = [f"[bold]{self.mr.t('project_totals_title', self.lang)}[/bold]", ""]
         for project in shown:
             total = totals[project]
             label = self.mr.project_display_label(project, lang=self.lang)
@@ -873,12 +886,16 @@ class ProjectRankingList(Static):
             lines.append(f"{label[:24]:<26}{bar_char * bar_len:<32}{formatted_total}{days_running}")
 
         if hidden:
-            toggle_label = "▾ menos" if self.expanded else f"▸ + {len(hidden)} projetos históricos"
+            toggle_label = (
+                self.mr.t("fewer", self.lang)
+                if self.expanded
+                else f"▸ {self.mr.tn('past_projects', len(hidden), self.lang)}"
+            )
             lines.append("")
             lines.append(f"[dim]{toggle_label}[/dim]")
 
         lines.append("")
-        lines.append("[dim]█ sessão aberta agora   ▓ histórico[/dim]")
+        lines.append(f"[dim]{self.mr.t('legend.open_session_tui', self.lang)}[/dim]")
         return "\n".join(lines)
 
 
@@ -945,13 +962,17 @@ class MetricsTUIApp(App[None]):
     SessionDetailPanel { width: 1fr; border-left: solid $panel; padding: 1; }
     .backfill-note { color: $text-muted; height: auto; padding: 0 1; }
     """
-    BINDINGS: ClassVar[list[BindingType]] = [
-        ("q", "quit", "Sair"),
-        ("t", "toggle_chart_mode", "Alterna modo do gráfico"),
-        ("m", "toggle_more_projects", "Mais/menos projetos"),
-        ("g", "toggle_tab", "Gráficos/Sessões"),
-        ("p", "cycle_period", "período"),
-    ]
+    # Bound per instance in __init__, because their descriptions are in
+    # the run's language and a class attribute is fixed before any app
+    # exists.
+    BINDINGS: ClassVar[list[BindingType]] = []
+    _KEYS: ClassVar[tuple[tuple[str, str, str], ...]] = (
+        ("q", "quit", "key.quit"),
+        ("t", "toggle_chart_mode", "key.chart_mode"),
+        ("m", "toggle_more_projects", "key.more_projects"),
+        ("g", "toggle_tab", "key.toggle_tab"),
+        ("p", "cycle_period", "key.cycle_period"),
+    )
 
     # `args` is required, not an args=None default (2026-08-13): the app
     # hands it straight to load_data on every period cycle, so a None here
@@ -980,6 +1001,8 @@ class MetricsTUIApp(App[None]):
         # own default (first pane) and on_mount's unconditional Tree focus.
         self.active_tab_id = "tab-sessions"
         self.chart_mode = "pane"
+        for key, action, message in self._KEYS:
+            self.bind(key, action, description=self.mr.t(message, self.data["lang"]))
 
     def compose(self) -> ComposeResult:
         lang = self.data["lang"]
@@ -988,12 +1011,12 @@ class MetricsTUIApp(App[None]):
             classes="backfill-note",
         )
         with TabbedContent(initial=self.active_tab_id):
-            with TabPane("Sessões", id="tab-sessions"), Horizontal():
+            with TabPane(self.mr.t("tab.sessions", lang), id="tab-sessions"), Horizontal():
                 yield build_session_tree(
                     self.data["records"], self.data["subagents_by_session"], self.mr, lang=lang
                 )
                 yield SessionDetailPanel(self.mr, lang=lang)
-            with TabPane("Panorama", id="tab-panorama"):
+            with TabPane(self.mr.t("tab.panorama", lang), id="tab-panorama"):
                 totals = self.mr.compute_token_type_totals(self.data["records"])
                 # Visibility is set here, as each legend is built, rather than
                 # fixed up afterwards: "p" recomposes every widget, and a fix-up
@@ -1113,7 +1136,8 @@ class MetricsTUIApp(App[None]):
         # the time this runs, query_one(Tree) already returns the NEW tree,
         # not the one about to be torn down.
         self.call_next(self._restore_focus_after_period_cycle)
-        self.notify(f"período: {self.mr.period_label(next_id, lang=self.data['lang'])}")
+        lang = self.data["lang"]
+        self.notify(self.mr.t("notify.period", lang, name=self.mr.period_label(next_id, lang=lang)))
 
     def _restore_focus_after_period_cycle(self) -> None:
         """Focus a widget that actually belongs to the pane recompose
