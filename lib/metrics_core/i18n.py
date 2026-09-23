@@ -148,11 +148,19 @@ def resolve_language(config: Mapping[str, Any], environ: Mapping[str, str]) -> s
 
     A config value that is not a known language is ignored, not an error -
     the same tolerance project_roots has: a typo in the config never stops
-    a dashboard from opening.
+    a dashboard from opening. A language TAG counts too, not just a bare
+    "en"/"pt": normalised (stripped, lower-cased, "_" -> "-") and split on
+    "-", its PRIMARY subtag must equal a known language exactly - "pt-BR"
+    (the tag the page's own <html lang> uses) and "PT_BR" both resolve to
+    "pt", but "portuguese" does not, because a substring match would also
+    accept nonsense no real tag produces.
     """
     configured = config.get("language")
-    if isinstance(configured, str) and configured.strip().lower() in LANGUAGES:
-        return configured.strip().lower()
+    if isinstance(configured, str):
+        normalized = configured.strip().lower().replace("_", "-")
+        primary = normalized.split("-", 1)[0]
+        if primary in LANGUAGES:
+            return primary
     for name in _LOCALE_VARIABLES:
         value = environ.get(name, "")
         if value:

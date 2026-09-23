@@ -61,6 +61,19 @@ def test_tn_uses_the_singular_for_exactly_one(count: int, en: str, pt: str) -> N
         ({}, {"LC_ALL": "", "LC_MESSAGES": "", "LANG": "pt"}, "pt"),
         ({}, {"LANG": "C.UTF-8"}, "en"),
         ({}, {}, "en"),  # nothing at all
+        # A language TAG whose primary subtag (before the first "-") is a
+        # known language, normalised first (strip, lower, "_" -> "-") -
+        # the exact tag the page's own <html lang> uses (backlog #7).
+        ({"language": "pt-BR"}, {}, "pt"),
+        ({"language": "pt-br"}, {}, "pt"),
+        ({"language": "pt-pt"}, {}, "pt"),
+        ({"language": " PT_BR "}, {}, "pt"),  # underscore, whitespace, and case together
+        ({"language": "en-us"}, {"LC_ALL": "pt_BR.UTF-8"}, "en"),
+        ({"language": "en-GB"}, {}, "en"),
+        # Only a proper primary subtag counts - a substring match ("pt" is
+        # a substring of "portuguese") must not count as one.
+        ({"language": "portuguese"}, {"LANG": "en_US.UTF-8"}, "en"),  # falls through
+        ({"language": "es-ES"}, {"LANG": "pt_BR.UTF-8"}, "pt"),  # still falls through
     ],
 )
 def test_resolve_language(
