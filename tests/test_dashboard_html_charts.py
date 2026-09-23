@@ -958,6 +958,18 @@ def test_render_project_totals_chart_days_running_note_appended_when_first_seen_
     assert "1º uso há" in out_with
 
 
+def test_render_project_totals_chart_first_used_today_for_a_project_first_seen_today():
+    # render_project_totals_chart threads project_first_seen through to
+    # mr.project_days_running (backlog #8) - a project first seen a few
+    # seconds ago must render the ".today" text, not "0 dias".
+    records = [_project_record("/proj/a", input_tokens=10)]
+    first_seen = {"/proj/a": datetime.now().astimezone().isoformat()}
+    out = dashboard_html.render_project_totals_chart(
+        records, first_seen, {}, set(), "p1", lang="pt"
+    )
+    assert "1º uso hoje" in out
+
+
 # --- three of the five sweep mutations land on render_project_totals_chart;
 # these two properties are exercised by the tests already above (visible
 # slice bound test, row height test) plus the highlight-band/legend-order/

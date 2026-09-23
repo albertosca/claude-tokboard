@@ -53,6 +53,7 @@ width; `* 40` is already caught by the column-alignment test above).
 """
 
 import sys
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -317,6 +318,16 @@ def test_project_ranking_list_shows_exactly_ten_projects_when_collapsed():
         )
     for i in (10, 11):
         assert f"p{i:02d}" not in collapsed
+
+
+def test_project_ranking_list_renders_first_used_today_for_a_project_first_seen_today():
+    # ProjectRankingList threads project_first_seen through to
+    # mr.project_days_running (backlog #8) - a project first seen a few
+    # seconds ago must render the ".today" text, not "0 dias".
+    records = _records_for_n_projects(1)
+    first_seen = {"/projects/p00": datetime.now().astimezone().isoformat()}
+    panel = tui.ProjectRankingList(mr, records, first_seen, {}, set(), lang="pt")
+    assert "1º uso hoje" in panel.render()
 
 
 # ---------------------------------------------------------------------------

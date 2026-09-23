@@ -28,6 +28,10 @@ MESSAGES: dict[str, dict[str, str]] = {
     "past_projects.other": {"en": "+ {n} past projects", "pt": "+ {n} projetos históricos"},
     "first_used.one": {"en": " · first used {n} day ago", "pt": " · 1º uso há {n} dia"},
     "first_used.other": {"en": " · first used {n} days ago", "pt": " · 1º uso há {n} dias"},
+    # Not a plural form (no .one/.other counterpart on purpose) - zero
+    # days since first use, and also the clock-skew case (first_seen in
+    # the future) rather than printing "-1 days" (backlog #8).
+    "first_used.today": {"en": " · first used today", "pt": " · 1º uso hoje"},
     # The quota line. "in"/"out" rather than "input"/"output": those two
     # words already name token types in the same panel, and the quota's
     # input side also counts cache writes.

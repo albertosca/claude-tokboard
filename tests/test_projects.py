@@ -3,6 +3,7 @@ from datetime import datetime, timedelta
 from typing import Any
 
 import metrics_core as mr
+import pytest
 
 WORKTREE = "/home/me/proj/.claude/worktrees/feature-x"
 
@@ -123,6 +124,32 @@ def test_project_days_running_is_empty_on_an_unparseable_timestamp():
 def test_project_days_running_counts_days_since_first_use():
     ten_days_ago = (datetime.now().astimezone() - timedelta(days=10)).isoformat()
     assert mr.project_days_running({"/a": ten_days_ago}, "/a", lang="pt") == " · 1º uso há 10 dias"
+
+
+@pytest.mark.parametrize(
+    ("days_ago", "en", "pt"),
+    [
+        (0, " · first used today", " · 1º uso hoje"),
+        (1, " · first used 1 day ago", " · 1º uso há 1 dia"),
+        (2, " · first used 2 days ago", " · 1º uso há 2 dias"),
+    ],
+)
+def test_project_days_running_zero_and_small_counts_in_both_languages(
+    days_ago: int, en: str, pt: str
+) -> None:
+    # A few seconds' slack keeps `.days` from landing on the boundary below
+    # the intended count (e.g. 1 day minus a few ms truncating to 0).
+    first_seen = (datetime.now().astimezone() - timedelta(days=days_ago, seconds=5)).isoformat()
+    assert mr.project_days_running({"/a": first_seen}, "/a", lang="en") == en
+    assert mr.project_days_running({"/a": first_seen}, "/a", lang="pt") == pt
+
+
+def test_project_days_running_treats_a_future_first_seen_as_today() -> None:
+    # Clock skew: first_seen recorded in the future must never print
+    # "-1 days" - it renders exactly like a first use today.
+    tomorrow = (datetime.now().astimezone() + timedelta(days=1)).isoformat()
+    assert mr.project_days_running({"/a": tomorrow}, "/a", lang="en") == " · first used today"
+    assert mr.project_days_running({"/a": tomorrow}, "/a", lang="pt") == " · 1º uso hoje"
 
 
 # --- get_open_projects -----------------------------------------------

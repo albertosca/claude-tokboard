@@ -97,6 +97,12 @@ def project_days_running(
     try:
         first_dt = datetime.fromisoformat(first_seen.replace("Z", "+00:00")).astimezone()
         days = (datetime.now().astimezone() - first_dt).days
+        # 0 renders as "today", not the plural machinery's "0 days ago".
+        # A negative count (clock skew: first_seen recorded in the future)
+        # is not a day count at all - it renders the same as today rather
+        # than printing "-1 days ago".
+        if days <= 0:
+            return t("first_used.today", lang)
         return tn("first_used", days, lang)
     except (ValueError, AttributeError, TypeError):
         return ""
