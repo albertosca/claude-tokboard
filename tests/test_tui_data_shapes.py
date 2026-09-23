@@ -825,6 +825,10 @@ def _day_spans(plot_width: int, days: int) -> list[set[int]]:
 def test_bars_keep_a_blank_cell_between_them_when_there_is_room():
     spans = _day_spans(40, 10)
     assert all(max(a) + 1 < min(b) for a, b in pairwise(spans)), spans
+    # And the gap is made by narrowing a bar only as far as it needs: a
+    # one-cell bar also leaves gaps, and is what a width of 0 draws
+    # (2026-09-23 mutation sweep: _bar_width_on returning 0 passed here).
+    assert all(len(span) >= 2 for span in spans), spans
 
 
 def test_a_roomy_canvas_keeps_plotexts_own_bar_width():
@@ -834,7 +838,13 @@ def test_a_roomy_canvas_keeps_plotexts_own_bar_width():
     # plotext fills both edge cells, so 0.8 of a 20-cell step is 17 cells;
     # the widest bar that still leaves a gap here would be 19.
     step = min(spans[1]) - min(spans[0])
-    assert all(len(span) <= round(0.8 * step) + 1 for span in spans), (step, spans)
+    # Both bounds: with only the upper one, bars of a single cell - what a
+    # width of 0 draws - passed (2026-09-23 mutation sweep, _bar_width_on
+    # and _bar_width_for each returning 0).
+    assert all(round(0.8 * step) - 1 <= len(span) <= round(0.8 * step) + 1 for span in spans), (
+        step,
+        spans,
+    )
 
 
 def test_bars_are_one_cell_wide_and_apart_when_there_is_no_room_for_a_gap():

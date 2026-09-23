@@ -87,6 +87,33 @@ def test_sha256_bytes_really_is_sha256_and_not_merely_some_digest():
     assert mr.sha256_bytes(payload) == hashlib.sha256(payload).hexdigest()
 
 
+def test_sha256_of_hashes_the_whole_file_with_sha256(tmp_path):
+    # Found by the 2026-09-23 whole-body mutation sweep: sha256_of
+    # returning "" left the suite green. Both backfill scripts verify a
+    # backup by comparing sha256_of(source) with sha256_of(backup), and
+    # every test of that comparison stubs sha256_of - so a constant digest
+    # made every backup "verified", including a truncated one. Pinned the
+    # same two ways as sha256_bytes above, plus a file larger than the
+    # 1 MiB read chunk so a digest of only the first chunk fails too.
+    empty = tmp_path / "empty"
+    empty.write_bytes(b"")
+    abc = tmp_path / "abc"
+    abc.write_bytes(b"abc")
+    assert mr.sha256_of(str(empty)) == (
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    )
+    assert mr.sha256_of(str(abc)) == (
+        "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+    )
+    big = tmp_path / "big"
+    payload = bytes(range(256)) * (5 * 4096 + 7)  # ~5 MiB, not a chunk multiple
+    big.write_bytes(payload)
+    truncated = tmp_path / "truncated"
+    truncated.write_bytes(payload[: 1 << 20])
+    assert mr.sha256_of(str(big)) == hashlib.sha256(payload).hexdigest()
+    assert mr.sha256_of(str(truncated)) != mr.sha256_of(str(big))
+
+
 # --- index_transcripts ---------------------------------------------------
 
 

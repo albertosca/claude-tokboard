@@ -499,6 +499,30 @@ def test_render_trend_chart_marks_the_last_bucket_as_partial_when_still_in_progr
     _assert_no_coordinate_escapes(_svg_block(out, "chart-tokens-"))
 
 
+def test_render_trend_chart_partial_overlay_fills_with_a_pattern_its_own_svg_defines():
+    # Found by the 2026-09-23 whole-body mutation sweep: hatch_defs
+    # returning "" left the suite green. The overlays above kept their
+    # fill="url(#chart-hatch-...)", but no <pattern> carried that id, so
+    # the "still in progress" hatch drew nothing at all. Each svg must
+    # define the pattern its own overlay points at - an id defined only in
+    # a sibling svg would resolve to whichever period's chart came first.
+    now = datetime(2026, 8, 10, 12, 0).astimezone()
+    out = dashboard_html.render_trend_chart(
+        _DAY_GRANULARITY_RECORDS, {"/proj/a": "group-color-1"}, "p1", now=now, lang="pt"
+    )
+    for prefix in ("chart-pane-", "chart-tokens-", "chart-model-"):
+        svg = _svg_block(out, prefix)
+        overlay_fills = [
+            fill.group(1)
+            for tag in re.findall(r"<rect\b[^>]*>", svg)
+            if "chart-bar-partial" in tag
+            and (fill := re.search(r'\bfill="url\(#([^)"]+)\)"', tag)) is not None
+        ]
+        pattern_ids = re.findall(r'<pattern\b[^>]*\bid="([^"]+)"', svg)
+        assert len(overlay_fills) == 1, (prefix, overlay_fills)
+        assert pattern_ids == overlay_fills, (prefix, pattern_ids, overlay_fills)
+
+
 def test_render_trend_chart_does_not_mark_a_bucket_thats_already_fully_elapsed():
     # Same fixture, `now` moved past the last bucket's end - the common
     # case (any period whose last bucket isn't still running today, which
