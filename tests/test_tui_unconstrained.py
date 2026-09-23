@@ -116,7 +116,9 @@ class _RecordingPlt:
 
 def test_stacked_bars_are_cumulative_layers_drawn_from_the_top_down():
     plt = _RecordingPlt()
-    tui.draw_stacked_bars(plt, ["d1", "d2"], [[10, 20], [5, 5]], ["low", "high"], ["g", "b"])
+    tui.draw_stacked_bars(
+        plt, ["d1", "d2"], [[10, 20], [5, 5]], ["low", "high"], ["g", "b"], canvas_width=None
+    )
     # First, an unlabelled zero-height layer at every position: it is what
     # keeps a zero-token bucket at either edge on the axis.
     assert plt.bars[0] == ([1, 2], [0, 0], None, None)
@@ -128,7 +130,9 @@ def test_stacked_bars_are_cumulative_layers_drawn_from_the_top_down():
 
 def test_a_series_is_not_drawn_on_a_day_it_has_no_tokens():
     plt = _RecordingPlt()
-    tui.draw_stacked_bars(plt, ["d1", "d2"], [[0, 20], [5, 5]], ["low", "high"], ["g", "b"])
+    tui.draw_stacked_bars(
+        plt, ["d1", "d2"], [[0, 20], [5, 5]], ["low", "high"], ["g", "b"], canvas_width=None
+    )
     # "low" is 0 on d1: no bar there at all - neither a phantom strip in its
     # colour nor a zero-height bar, which plotext would draw as a blank cell
     # over whatever is under it.
@@ -139,7 +143,9 @@ def test_a_series_is_not_drawn_on_a_day_it_has_no_tokens():
 def test_a_day_with_no_data_at_all_draws_nothing():
     """Kept from the replaced tests: an empty day must not get a bar."""
     plt = _RecordingPlt()
-    tui.draw_stacked_bars(plt, ["d1", "d2"], [[0, 7], [0, 3]], ["low", "high"], ["g", "b"])
+    tui.draw_stacked_bars(
+        plt, ["d1", "d2"], [[0, 7], [0, 3]], ["low", "high"], ["g", "b"], canvas_width=None
+    )
     assert all(1 not in xs for xs, *_ in plt.layers)
 
 
@@ -147,7 +153,9 @@ def test_a_series_with_no_tokens_anywhere_gets_no_legend_entry():
     # Nothing to draw means nothing to label: a legend entry for a series
     # absent from the whole chart would name a colour that appears nowhere.
     plt = _RecordingPlt()
-    tui.draw_stacked_bars(plt, ["d1", "d2"], [[3, 4], [0, 0]], ["low", "high"], ["g", "b"])
+    tui.draw_stacked_bars(
+        plt, ["d1", "d2"], [[3, 4], [0, 0]], ["low", "high"], ["g", "b"], canvas_width=None
+    )
     assert [label for *_, label, _ in plt.layers] == ["low"]
 
 
@@ -200,9 +208,11 @@ def _capture_stacked_bar_color(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any
     captured: dict[str, Any] = {}
     original = tui.draw_stacked_bars
 
-    def spy(plt: Any, xlabels: Any, series: Any, labels: Any, colors: list[str]) -> None:
+    def spy(
+        plt: Any, xlabels: Any, series: Any, labels: Any, colors: list[str], **kwargs: Any
+    ) -> None:
         captured["color"] = colors
-        original(plt, xlabels, series, labels, colors)
+        original(plt, xlabels, series, labels, colors, **kwargs)
 
     monkeypatch.setattr(tui, "draw_stacked_bars", spy)
     return captured

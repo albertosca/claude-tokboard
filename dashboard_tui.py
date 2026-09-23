@@ -21,7 +21,7 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any, ClassVar
 
-from textual.app import App, ComposeResult
+from textual.app import App, ComposeResult, RenderResult
 from textual.binding import BindingType
 from textual.containers import Horizontal, VerticalScroll
 from textual.message import Message
@@ -531,6 +531,8 @@ def draw_stacked_bars(
     series_lists: list[list[int]],
     series_labels: list[str],
     colors: list[str],
+    *,
+    canvas_width: int | None,
 ) -> None:
     """A stacked bar chart, drawn as layers instead of with plotext's own
     stacked_bar.
@@ -550,8 +552,14 @@ def draw_stacked_bars(
     because plotext paints a zero-valued bar's base cell with the background
     and would erase what is under it. Bars are placed by number, not by
     label, so a layer that skips a day still lines up with the others.
+
+    `canvas_width` is the plot area in character cells, which decides how
+    wide a bar can be before it shares a cell with its neighbour (see
+    _bar_width_on). None, before the widget is laid out, draws plotext's
+    default width.
     """
     xs = list(range(1, len(xlabels) + 1))
+    bar_width = BAR_WIDTH if canvas_width is None else _bar_width_on(canvas_width, len(xs))
     cumulative: list[list[int]] = []
     running = [0] * len(xs)
     for series in series_lists:
@@ -564,7 +572,7 @@ def draw_stacked_bars(
     # in-progress label with it), and a window with no tokens at all drew
     # a bare frame. A zero bar only paints its base cell with the
     # background, and every real layer drawn after it paints over that.
-    plt.bar(xs, [0] * len(xs), label=None, color=None, width=_bar_width_for(xs))
+    plt.bar(xs, [0] * len(xs), label=None, color=None, width=_bar_width_for(xs, bar_width))
     for i in reversed(range(len(series_lists))):
         shown = [j for j, value in enumerate(series_lists[i]) if value > 0]
         if shown:
@@ -574,17 +582,46 @@ def draw_stacked_bars(
                 [cumulative[i][j] for j in shown],
                 label=series_labels[i],
                 color=colors[i],
-                width=_bar_width_for(positions),
+                width=_bar_width_for(positions, bar_width),
             )
     plt.xticks(xs, xlabels)
 
 
-# plotext's own default bar width (plotext/_default.py: bar_width = 4 / 5).
+# plotext's own default bar width (plotext/_default.py: bar_width = 4 / 5),
+# and the widest a bar gets - on a canvas with room to spare.
 BAR_WIDTH = 0.8
 
 
-def _bar_width_for(positions: list[int]) -> float:
-    """The `width` to pass so these bars come out BAR_WIDTH wide.
+def _bar_width_on(canvas_width: int, days: int) -> float:
+    """The widest a bar can be, in days, and still leave a blank cell
+    between it and the next day's bar on a canvas this many cells wide.
+
+    plotext puts x in cell floor(0.5 + s * (x - x_min)), with s =
+    (canvas_width - 1) / (x_max - x_min) cells per day (plotext/_utility.py,
+    get_matrix_data), and x_min/x_max are the outer edges of the first and
+    last bar: 1 - w/2 and days + w/2. Two edges at least 2 / s apart land at
+    least two cells apart, leaving one blank between them, so the gap from
+    day k's right edge to day k+1's left edge, (1 - w) * s, must be at least
+    2. At plotext's 0.8 that gap is a fifth of a day - under one cell as
+    soon as a day is narrower than five cells, and there two neighbouring
+    days painted the same cell, in the colour of whichever layer plotext
+    drew last (2026-09-23 review: two series on alternating days, 30 days
+    at 120 columns).
+
+    Solving (1 - w) * (canvas_width - 1) >= 2 * (days - 1 + w) for w, and
+    never wider than plotext's own 0.8. With no room for a gap at all the
+    result is negative, and plotext draws a negative width as zero
+    (plotext/_monitor.py, draw_bar): each bar is then the one cell its day
+    lands in, and days a cell or more apart never land in the same one -
+    only a canvas with fewer cells than days makes two days share, which no
+    width can prevent.
+    """
+    cells = canvas_width - 1
+    return min(BAR_WIDTH, (cells - 2 * (days - 1)) / (cells + 2))
+
+
+def _bar_width_for(positions: list[int], bar_width: float) -> float:
+    """The `width` to pass so these bars come out bar_width wide.
 
     plotext does not draw `width` as given: it multiplies it by the average
     spacing of the x values in that one call (plotext/_utility.py, bars():
@@ -597,8 +634,8 @@ def _bar_width_for(positions: list[int]) -> float:
     irregular, because plotext uses the average and so does this.
     """
     if len(positions) < 2:
-        return BAR_WIDTH
-    return BAR_WIDTH / ((positions[-1] - positions[0]) / (len(positions) - 1))
+        return bar_width
+    return bar_width / ((positions[-1] - positions[0]) / (len(positions) - 1))
 
 
 class TrendChart(PlotextPlot):
@@ -627,6 +664,8 @@ class TrendChart(PlotextPlot):
         self.lang = lang
         self.highlighted: set[str] | None = None
         self.project_highlighted: set[str | None] | None = None
+        self._now: datetime | None = None
+        self._drawn_width = 0
 
     def on_mount(self) -> None:
         self.render_chart()
@@ -651,6 +690,21 @@ class TrendChart(PlotextPlot):
             self.render_chart()
 
     def render_chart(self, now: datetime | None = None) -> None:
+        self._now = now
+        self._draw_chart(now)
+        self.refresh()
+
+    def render(self) -> RenderResult:
+        # The bars are sized for the canvas they are drawn on (see
+        # draw_stacked_bars), and the widget's width is only known once it
+        # is laid out - after on_mount's first draw - and changes with every
+        # resize. Redrawn here, where textual_plotext is about to build.
+        if self.size.width != self._drawn_width:
+            self._draw_chart(self._now)
+        return super().render()
+
+    def _draw_chart(self, now: datetime | None) -> None:
+        self._drawn_width = self.size.width
         # aggregate_by_day returns (granularity, days) since
         # dashboard_html.py's adaptive-granularity feature (2026-07-21) -
         # this file wasn't updated when that landed, so it was treating
@@ -662,7 +716,6 @@ class TrendChart(PlotextPlot):
         granularity, days = self.mr.aggregate_by_day(self.chart_records)
         self.plt.clear_data()
         if len(days) < 2:
-            self.refresh()
             return
         parse_fmt = self.mr.GRANULARITY_CONFIG[granularity]["parse_fmt"]
         labels = [
@@ -705,11 +758,7 @@ class TrendChart(PlotextPlot):
                 ]
             else:
                 color = palette
-            draw_stacked_bars(self.plt, labels, series_lists, series_labels, color)
-            self.plt.title(self.mr.t("chart_title.pane", self.lang))
-            max_total = max(
-                (sum(series_data[k][i] for k in series_keys) for i in range(len(days))), default=0
-            )
+            title = "chart_title.pane"
         elif self.mode == "model":
             # Every model seen anywhere in the window gets a band in every
             # day, so a model's colour means the same thing across the whole
@@ -737,10 +786,7 @@ class TrendChart(PlotextPlot):
                 for i in range(len(model_keys))
             ]
             color.append(PANE_OTHER_COLOR)
-            day_totals_list = [sum(series[i] for series in series_lists) for i in range(len(days))]
-            draw_stacked_bars(self.plt, labels, series_lists, series_labels, color)
-            self.plt.title(self.mr.t("chart_title.model", self.lang))
-            max_total = max(day_totals_list, default=0)
+            title = "chart_title.model"
         else:
             input_totals = [sum(r.get("input_tokens", 0) or 0 for r in d["records"]) for d in days]
             output_totals = [
@@ -759,24 +805,10 @@ class TrendChart(PlotextPlot):
                 ]
             else:
                 color = self.SERIES_COLORS
-            draw_stacked_bars(
-                self.plt,
-                labels,
-                [input_totals, output_totals, cache_read_totals, cache_creation_totals],
-                ["input", "output", "cache read", "cache creation"],
-                color,
-            )
-            self.plt.title(self.mr.t("chart_title.tokens", self.lang))
-            max_total = max(
-                (
-                    input_totals[i]
-                    + output_totals[i]
-                    + cache_read_totals[i]
-                    + cache_creation_totals[i]
-                    for i in range(len(days))
-                ),
-                default=0,
-            )
+            series_lists = [input_totals, output_totals, cache_read_totals, cache_creation_totals]
+            series_labels = ["input", "output", "cache read", "cache creation"]
+            title = "chart_title.tokens"
+        max_total = max(sum(day) for day in zip(*series_lists, strict=True))
         # plotext's default y-axis ticks are raw, unformatted floats (e.g.
         # "1591684.7") - unreadable next to token counts everywhere else in
         # this dashboard already using k/M/B/T suffixes. Overriding with
@@ -784,8 +816,20 @@ class TrendChart(PlotextPlot):
         # scale meaningful while reusing format_tokens for the labels.
         tick_values = [max_total * frac for frac in (0, 0.25, 0.5, 0.75, 1.0)]
         tick_labels = [self.mr.format_tokens(v) for v in tick_values]
+        # The canvas is what is left of the widget once plotext has drawn
+        # the widest y tick label and the two vertical frame lines beside
+        # the plot (plotext/_build.py: width_canvas = width - yaxes -
+        # width_ylabels). Unknown until the widget has been laid out.
+        canvas_width = (
+            self.size.width - 2 - max(len(label) for label in tick_labels)
+            if self.size.width
+            else None
+        )
+        draw_stacked_bars(
+            self.plt, labels, series_lists, series_labels, color, canvas_width=canvas_width
+        )
+        self.plt.title(self.mr.t(title, self.lang))
         self.plt.yticks(tick_values, tick_labels)
-        self.refresh()
 
 
 class ProjectLegend(Static):

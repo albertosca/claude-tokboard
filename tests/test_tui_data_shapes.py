@@ -57,10 +57,12 @@ controller to rule on, per the phase's Global Constraints, not a unilateral
 call to exclude them.
 """
 
+import asyncio
 import json
 import re
 import sys
 from datetime import datetime
+from itertools import pairwise
 from pathlib import Path
 from typing import Any
 
@@ -71,6 +73,8 @@ sys.path.insert(0, str(REPO_ROOT))
 import metrics_core as mr  # noqa: E402
 import metrics_core.paths as paths_module  # noqa: E402
 from test_tui_state import isolate_tui_from_the_real_filesystem  # noqa: E402
+from textual.app import App, ComposeResult  # noqa: E402
+from textual_plotext import PlotextPlot  # noqa: E402
 
 import dashboard_tui as tui  # noqa: E402
 
@@ -681,3 +685,134 @@ def test_a_zero_token_bucket_at_the_start_keeps_its_date():
     records += [_august_session(f"s{d}", day=d, tokens=100) for d in (5, 10, 12)]
     labels = _axis_labels(records, datetime(2026, 8, 30).astimezone())
     assert labels[0] == "01/08", labels
+
+
+# ---------------------------------------------------------------------------
+# Neighbouring days never share a screen cell
+# ---------------------------------------------------------------------------
+#
+# plotext rounds each bar edge to a character cell, and at 0.8 of a day wide
+# the gap between two days is 0.2 of a day: under one cell as soon as a day
+# is narrower than five cells. Day k's right edge and day k+1's left edge
+# then land in the SAME cell, which shows whichever layer plotext drew last -
+# a colour the other day may not have at all. Measured in review
+# (2026-09-23): two series on alternating days, 30 days, 120 columns.
+
+
+def _alternating_days(days: int) -> list[dict[str, Any]]:
+    return [
+        _august_session(f"s{d}", day=d, tokens=100)
+        | {"project_path": "/p/odd" if d % 2 else "/p/even"}
+        for d in range(1, days + 1)
+    ]
+
+
+def _assert_each_day_is_its_own_bar(raw: str, days: int) -> None:
+    odd, even = _legend_colour(raw, "odd"), _legend_colour(raw, "even")
+    zero = next(line for line in raw.splitlines() if re.match(r"^\s*0┤", _ANSI.sub("", line)))
+    # Each unbroken run of bar cells, as the list of colours inside it. A
+    # colour change alone does not separate two days - a shared cell moves
+    # the boundary without adding one - so a day is only its own bar when
+    # a blank cell separates it from the next, and only then is every one
+    # of its cells in its own colour.
+    runs: list[set[str]] = []
+    colour, previous = "", ""
+    for escape, char in re.findall(r"\x1b\[([0-9;]*)m|(.)", zero):
+        if escape:
+            colour = escape
+        elif char == "█":
+            if previous != "█":
+                runs.append(set())
+            runs[-1].add(colour)
+        previous = char or previous
+    assert runs == [{odd} if d % 2 else {even} for d in range(1, days + 1)], runs
+
+
+def _built_at(records: list[dict[str, Any]], sizes: list[tuple[int, int]]) -> list[str]:
+    """What the chart builds, mounted in an app at each terminal size in
+    turn - through the widget's own render, which is where plotext learns
+    the size it draws at."""
+
+    class ChartOnly(App[None]):
+        def compose(self) -> ComposeResult:
+            yield tui.TrendChart(mr, records, lang="pt")
+
+    async def drive() -> list[str]:
+        built = []
+        async with ChartOnly().run_test(size=sizes[0]) as pilot:
+            for size in sizes:
+                await pilot.resize_terminal(*size)
+                await pilot.pause()
+                built.append(pilot.app.query_one(tui.TrendChart).plt.build())
+        return built
+
+    return asyncio.run(drive())
+
+
+def test_neighbouring_days_never_share_a_cell():
+    # 120 columns is the reviewer's case; at 121 a canvas width estimated
+    # two cells too wide (forgetting the frame lines) is already enough to
+    # make neighbours touch.
+    for raw in _built_at(_alternating_days(30), [(120, 20), (121, 20)]):
+        _assert_each_day_is_its_own_bar(raw, 30)
+
+
+def test_the_bars_are_resized_with_the_terminal():
+    # Drawn for 200 columns, then shown in 120: bars sized for the wider
+    # canvas would share cells in the narrower one.
+    _, raw = _built_at(_alternating_days(30), [(200, 20), (120, 20)])
+    _assert_each_day_is_its_own_bar(raw, 30)
+
+
+def _day_spans(plot_width: int, days: int) -> list[set[int]]:
+    """The columns each day's bar covers, found by drawing that day ALONE.
+    A cell two days share cannot be seen in a render of both - it simply
+    shows one of them - so each day is drawn by itself, with the same
+    invisible layer holding the axis still, and the spans are compared."""
+    spans = []
+    for k in range(days):
+        plt = PlotextPlot().plt
+        plt.plotsize(plot_width, 8)
+        heights = [[1 if day == k else 0 for day in range(days)]]
+        # One-character y labels, so the canvas is the plot less the label
+        # and the two frame lines: plot_width - 3.
+        tui.draw_stacked_bars(
+            plt, ["d"] * days, heights, ["x"], ["green"], canvas_width=plot_width - 3
+        )
+        plt.yticks([0, 1], ["0", "1"])
+        lines = _ANSI.sub("", plt.build()).splitlines()
+        # plotext caps a plot at the terminal's width, and the canvas width
+        # passed above assumes it drew at plot_width.
+        assert {len(line) for line in lines} == {plot_width}, "plot drawn narrower than asked"
+        zero = next(line for line in lines if line.lstrip().startswith("0┤"))
+        spans.append({col for col, char in enumerate(zero) if char == "█"})
+    return spans
+
+
+def test_bars_keep_a_blank_cell_between_them_when_there_is_room():
+    spans = _day_spans(40, 10)
+    assert all(max(a) + 1 < min(b) for a, b in pairwise(spans)), spans
+
+
+def test_a_roomy_canvas_keeps_plotexts_own_bar_width():
+    # Room to spare is not a reason to change how the chart looks: a bar
+    # stays 0.8 of the distance from one day to the next.
+    spans = _day_spans(80, 4)
+    # plotext fills both edge cells, so 0.8 of a 20-cell step is 17 cells;
+    # the widest bar that still leaves a gap here would be 19.
+    step = min(spans[1]) - min(spans[0])
+    assert all(len(span) <= round(0.8 * step) + 1 for span in spans), (step, spans)
+
+
+def test_bars_are_one_cell_wide_and_apart_when_there_is_no_room_for_a_gap():
+    # 15 cells for 10 days: too few for a blank cell between every two,
+    # enough for each day to have a cell of its own.
+    spans = _day_spans(18, 10)
+    assert all(len(span) == 1 for span in spans), spans
+    assert all(max(a) < min(b) for a, b in pairwise(spans)), spans
+
+
+def test_bars_are_one_cell_wide_when_days_outnumber_cells():
+    # 9 cells for 10 days: sharing is unavoidable, so no bar spreads over
+    # more than the one cell it cannot help landing in.
+    assert all(len(span) == 1 for span in _day_spans(12, 10))
