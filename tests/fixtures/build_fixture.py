@@ -32,6 +32,15 @@ Two properties this dataset has to keep, both learned the hard way:
        week-1             9 days back         desde-segunda | 15-dias
        days21-1           21 days back        15-dias | mes
        old-1              ~50 days back       mes | tudo
+
+Every user-data string invented here - project names today, whatever this
+file grows tomorrow (an agent type, a task label, a branch name, a tag) -
+must be LANGUAGE-NEUTRAL: no word that doubles as one of metrics_core's own
+catalog markers in either language, no diacritic. tests/test_language_leak.py
+enforces this by rendering the leak detector against every such string
+directly - a name chosen for this file's own purposes (like "week-1" above)
+must never accidentally read as a missed translation once it reaches a
+page or screen.
 """
 
 import json

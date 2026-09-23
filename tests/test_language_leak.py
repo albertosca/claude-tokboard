@@ -16,6 +16,7 @@ import re
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any
 
 import metrics_core as mr
 import pytest
@@ -89,7 +90,13 @@ def fixture_page_html(home: Path, lang: str) -> str:
     """The real dashboard page, generated end to end by `dashboard_html.py
     --html` from the committed fixture, in `lang`, with the machine locale
     pinned to pt_BR - so an English page proves the config wins."""
-    sys.path[:0] = [str(REPO / "tests"), str(REPO / "lib")]
+    # Idempotent on purpose: this is called once per language, per test, and
+    # an unconditional sys.path[:0] = [...] grew sys.path by two entries on
+    # every single call - harmless in effect (both directories were already
+    # importable), but unbounded across the many calls this file makes.
+    for entry in (str(REPO / "tests"), str(REPO / "lib")):
+        if entry not in sys.path:
+            sys.path.insert(0, entry)
     from datetime import datetime
 
     from fixtures.build_fixture import build_fixture
@@ -108,6 +115,14 @@ def fixture_page_html(home: Path, lang: str) -> str:
 
 def _render_html(home: Path, lang: str) -> str:
     return _visible_html_text(fixture_page_html(home, lang))
+
+
+def test_fixture_page_html_does_not_grow_sys_path_on_repeated_calls(tmp_path: Path) -> None:
+    fixture_page_html(tmp_path, "en")  # a first call, to seed both entries
+    before = list(sys.path)
+    fixture_page_html(tmp_path, "en")
+    fixture_page_html(tmp_path, "pt")
+    assert sys.path == before, "sys.path grew across repeated fixture_page_html calls"
 
 
 @pytest.mark.parametrize("lang", ["en", "pt"])
@@ -135,6 +150,186 @@ def test_the_detector_fires_on_an_injected_leak() -> None:
     # "{" - so a Portuguese leak riding inside one of them passed silently.
     assert language_leaks("Subagentes despachados (3)", "en")
     assert language_leaks("beta (parcial, 58%)", "en")
+
+
+def _string_leaves(value: object) -> list[str]:
+    """Every string anywhere inside a JSON-shaped value - a dict's values,
+    a list's items, recursively - so this keeps working unchanged the day
+    tests/fixtures/build_fixture.py grows a new field (an agent type, a
+    task label, a branch name, a tag), not just today's project_path."""
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, dict):
+        return [s for v in value.values() for s in _string_leaves(v)]
+    if isinstance(value, list):
+        return [s for v in value for s in _string_leaves(v)]
+    return []
+
+
+def test_fixture_user_data_is_language_neutral(tmp_path: Path) -> None:
+    """#9: the leak detector cannot tell user data from UI text - it only
+    knows a word is foreign because it belongs to the OTHER language's
+    catalog. A fixture identifier that happens to share a word with that
+    catalog (tests/test_tui_clicks.py's "zero-duration-agent" collides with
+    col.duration's English value "duration") would register as a false
+    leak the moment it reached a rendered page or screen. See
+    tests/fixtures/build_fixture.py's own docstring for the rule this
+    enforces; this is the enforcement.
+    """
+    from datetime import datetime
+
+    from fixtures.build_fixture import build_fixture
+
+    built = build_fixture(str(tmp_path), datetime.now().astimezone())
+    strings = sorted({s for record in built["records"] for s in _string_leaves(record)})
+    assert strings, "collected no strings at all - the fixture's own shape changed"
+
+    offenders = {
+        s: {"en": language_leaks(s, "en"), "pt": language_leaks(s, "pt")}
+        for s in strings
+        if language_leaks(s, "en") or language_leaks(s, "pt")
+    }
+    assert not offenders, (
+        f"fixture user data collides with metrics_core's own catalog: {offenders} - "
+        "see tests/fixtures/build_fixture.py's docstring"
+    )
+
+
+# --- #10: branches the committed fixture can never reach ------------------
+#
+# no_transcript, detail.subagents_title, past_projects (both plural forms),
+# col.tmux, no_project and fewer never render against tests/fixtures/
+# build_fixture.py's own data (no subagent has ever run against it, no
+# record is ever missing a project_path, and it never invents more than
+# seven projects) - so test_the_html_dashboard_speaks_only_its_own_language
+# and test_the_tui_speaks_only_its_own_language, however thorough, cannot
+# see these strings at all. Driving each render function directly, with
+# hand-built data that reaches exactly the branch in question, is the only
+# way any of them are ever checked.
+
+
+def test_col_tmux_header_speaks_only_its_own_language() -> None:
+    import dashboard_html as dh
+
+    for lang in ("en", "pt"):
+        # Visible text only (addition A) - the raw HTML's own class names
+        # ("session-row", "tmux-window", ...) are English chrome that is
+        # never rendered as text, and language_leaks over the raw markup
+        # would flag them as leaks that no reader could ever see.
+        header = _visible_html_text(dh.render_session_header(True, lang=lang))
+        assert mr.t("col.tmux", lang) in header
+        assert language_leaks(header, lang) == []
+
+
+def test_detail_panel_subagents_title_and_no_transcript_speak_only_their_own_language() -> None:
+    # One subagent, with tokens (survives render_detail_panel's own
+    # zero-token filter) and no agent_label - exactly the shape that
+    # reaches both detail.subagents_title (the panel has something to
+    # title) and no_transcript (this specific row has nothing else to show
+    # in its task column).
+    subagents = [
+        {
+            "session_id": "s-1",
+            "agent_id": "a-1",
+            "agent_type": "general-purpose",
+            "input_tokens": 5,
+            "output_tokens": 5,
+            "cache_read_tokens": 0,
+            "cache_creation_tokens": 0,
+            "duration_seconds": 3.0,
+            "timestamp_start": "2026-01-01T09:00:00",
+        }
+    ]
+    import dashboard_html as dh
+
+    for lang in ("en", "pt"):
+        panel = _visible_html_text(dh.render_detail_panel("s-1", subagents, True, lang=lang))
+        assert mr.t("detail.subagents_title", lang, n=1) in panel
+        assert mr.t("no_transcript", lang) in panel
+        assert language_leaks(panel, lang) == []
+
+
+def _no_project_records() -> list[dict[str, Any]]:
+    """Two records, on different days (render_trend_chart returns "" below
+    two distinct buckets), neither with a project_path at all - the branch
+    that falls back to no_project."""
+    return [
+        {
+            "project_path": None,
+            "timestamp_start": "2026-01-01T09:00:00",
+            "timestamp_end": "2026-01-01T09:30:00",
+            "input_tokens": 1,
+            "output_tokens": 1,
+            "cache_read_tokens": 0,
+            "cache_creation_tokens": 0,
+        },
+        {
+            "project_path": None,
+            "timestamp_start": "2026-01-02T09:00:00",
+            "timestamp_end": "2026-01-02T09:30:00",
+            "input_tokens": 1,
+            "output_tokens": 1,
+            "cache_read_tokens": 0,
+            "cache_creation_tokens": 0,
+        },
+    ]
+
+
+def test_no_project_label_speaks_only_its_own_language() -> None:
+    import dashboard_html as dh
+
+    records = _no_project_records()
+    for lang in ("en", "pt"):
+        chart = _visible_html_text(dh.render_trend_chart(records, {}, "tudo", lang=lang))
+        assert mr.t("no_project", lang) in chart
+        assert language_leaks(chart, lang) == []
+
+
+def _records_for_hidden_projects(count: int) -> list[dict[str, Any]]:
+    """`count` distinct, nonzero-token projects - enough that the ten-project
+    cutoff both render_project_totals_chart and ProjectRankingList apply
+    pushes `count - 10` of them into the "more/past projects" overflow,
+    which is the only way either widget ever renders past_projects at all.
+    """
+    return [
+        {
+            "project_path": f"/synthetic/project-{i:02d}",
+            "input_tokens": i + 1,
+            "output_tokens": 0,
+            "cache_read_tokens": 0,
+            "cache_creation_tokens": 0,
+        }
+        for i in range(count)
+    ]
+
+
+@pytest.mark.parametrize("hidden_count", [1, 2])
+def test_past_projects_both_plural_forms_speak_only_their_own_language(hidden_count: int) -> None:
+    import dashboard_html as dh
+
+    records = _records_for_hidden_projects(10 + hidden_count)
+    for lang in ("en", "pt"):
+        chart = _visible_html_text(
+            dh.render_project_totals_chart(records, {}, {}, set(), "tudo", lang=lang)
+        )
+        assert mr.tn("past_projects", hidden_count, lang) in chart
+        assert language_leaks(chart, lang) == []
+
+
+def test_project_ranking_list_fewer_and_past_projects_speak_only_their_own_language() -> None:
+    import dashboard_tui as tui
+
+    records = _records_for_hidden_projects(12)  # 2 hidden - forces the plural
+    for lang in ("en", "pt"):
+        widget = tui.ProjectRankingList(mr, records, {}, {}, set(), lang=lang)
+        collapsed = widget.render()
+        assert mr.tn("past_projects", 2, lang) in collapsed
+        assert language_leaks(collapsed, lang) == []
+
+        widget.expanded = True
+        expanded = widget.render()
+        assert mr.t("fewer", lang) in expanded
+        assert language_leaks(expanded, lang) == []
 
 
 # --- the TUI half --------------------------------------------------------
@@ -250,6 +445,15 @@ def test_the_tui_speaks_only_its_own_language(tmp_path: Path, lang: str) -> None
     # above): must actually say something in its own language before "says
     # nothing foreign" means anything.
     assert ("Sessions" if lang == "en" else "Sessões") in combined
+    # A second positive assertion, narrower than the first: _tui_screens's
+    # own click into week-1's detail panel is what is supposed to reach
+    # SessionDetailPanel's populated branch (detail.subagents_title, n=1 -
+    # _seed_one_subagent_under_week_1 seeds exactly one). Without this, a
+    # click that silently missed its row - landing on the group header
+    # instead, say - would leave that branch unscanned by every assertion
+    # here, and the leak check above would report a clean pass for a
+    # screen that never rendered the thing this test exists to cover.
+    assert mr.t("detail.subagents_title", lang, n=1) in combined
     assert language_leaks(combined, lang) == []
 
 
