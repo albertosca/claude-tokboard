@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 # Where a worktree can live, most specific first. Claude Code's own
 # worktree command uses the first; `git worktree add` has no opinion, and a
@@ -45,6 +46,21 @@ def split_worktree(normalized_path: str) -> tuple[str, str] | None:
 CONFIG_FILE = str(Path("~/.claude/metrics/config.json").expanduser())
 
 
+def load_config(path: str | None = None) -> dict[str, Any]:
+    """The reader's ~/.claude/metrics/config.json, as a dict.
+
+    Missing, unreadable, malformed, or valid JSON that is not an object:
+    all mean {} - a typo in this file must never stop a dashboard from
+    opening. Every setting (project_roots, language) reads through here.
+    """
+    try:
+        with Path(path or CONFIG_FILE).open() as f:
+            config = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return config if isinstance(config, dict) else {}
+
+
 def load_project_roots(path: str | None = None) -> list[str]:
     """The directories the reader has declared their projects live in.
 
@@ -63,14 +79,7 @@ def load_project_roots(path: str | None = None) -> list[str]:
     naming, and a dashboard that refuses to render over a typo'd config
     would be worse than one that names a few directories awkwardly.
     """
-    try:
-        with Path(path or CONFIG_FILE).open() as f:
-            config = json.load(f)
-    except (OSError, json.JSONDecodeError):
-        return []
-    if not isinstance(config, dict):
-        return []
-    roots = config.get("project_roots")
+    roots = load_config(path).get("project_roots")
     if not isinstance(roots, list):
         return []
     return [str(Path(root).expanduser()) for root in roots if isinstance(root, str) and root]
