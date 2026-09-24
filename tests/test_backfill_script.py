@@ -209,6 +209,58 @@ def test_write_atomically_preserves_a_concurrent_append_verbatim(tmp_path, scrip
     assert content == b'{"a": "corrected"}\n{"a": "live-append"}\n'
 
 
+def _append_just_before_the_rename(
+    monkeypatch: pytest.MonkeyPatch, target: Path, data: bytes
+) -> None:
+    """Make a 'live hook' append to the file at the worst moment: after the
+    final read, right before the new file is renamed over it (the window the
+    2026-09-23 review reproduced losing a line in)."""
+    real_replace = Path.replace
+
+    def replace(self: Path, destination: Path) -> Path:
+        if Path(destination) == target:
+            with target.open("ab") as f:
+                f.write(data)
+        return real_replace(self, destination)
+
+    monkeypatch.setattr(Path, "replace", replace)
+
+
+def test_write_atomically_carries_an_append_that_lands_just_before_the_rename(
+    tmp_path, script, monkeypatch
+):
+    path = tmp_path / "subagents.jsonl"
+    path.write_bytes(b'{"a": "old"}\n')
+    snapshot = path.read_bytes()
+    _append_just_before_the_rename(monkeypatch, path, b'{"a": "live-append"}\n')
+
+    appended = script.write_atomically(str(path), snapshot, [b'{"a": "corrected"}'], 0o600)
+
+    assert path.read_bytes() == b'{"a": "corrected"}\n{"a": "live-append"}\n'
+    assert appended == 1
+
+
+def test_write_atomically_saves_a_partial_late_append_and_fails_loudly(
+    tmp_path, script, monkeypatch
+):
+    # Half a line cannot be appended after the new file's last line without
+    # risking a hook's next line gluing onto it; it is saved beside the
+    # file, byte for byte, and the run stops with its location.
+    path = tmp_path / "subagents.jsonl"
+    path.write_bytes(b'{"a": "old"}\n')
+    snapshot = path.read_bytes()
+    _append_just_before_the_rename(monkeypatch, path, b'{"a": "half')
+
+    with pytest.raises(RuntimeError, match="late-append") as excinfo:
+        script.write_atomically(str(path), snapshot, [b'{"a": "corrected"}'], 0o600)
+
+    rescued = list(tmp_path.glob("subagents.jsonl.late-append-*.partial"))
+    assert len(rescued) == 1
+    assert rescued[0].read_bytes() == b'{"a": "half'
+    assert str(rescued[0]) in str(excinfo.value)
+    assert path.read_bytes() == b'{"a": "corrected"}\n'
+
+
 def test_write_atomically_refuses_a_non_append_change(tmp_path, script):
     path = tmp_path / "sessions.jsonl"
     path.write_bytes(b'{"a": 1}\n')

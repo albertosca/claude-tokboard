@@ -11,8 +11,9 @@ import bisect
 import collections
 import hashlib
 import json
+import os
 from pathlib import Path
-from typing import Any, NamedTuple, cast
+from typing import Any, BinaryIO, NamedTuple, cast
 
 from .i18n import t
 from .records import expand_records_to_daily_deltas
@@ -57,6 +58,39 @@ def sha256_of(path: str) -> str:
 
 def sha256_bytes(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
+
+
+def carry_late_appends(old: BinaryIO, target: Path, stamp: str) -> int:
+    """After a rewritten file was renamed over `target`, move into it
+    whatever a live hook appended to the REPLACED file since it was read.
+
+    `old` must be a handle opened on the target BEFORE its final read and
+    read to the end: it stays on the old inode across the rename, so reading
+    it again returns exactly the bytes that landed there too late to be
+    copied - which the 2026-09-23 review reproduced being lost. Complete
+    lines are appended to the new file; a partial line cannot be (a hook's
+    next line would glue onto it), so it is saved beside the target and the
+    run fails loudly with its location. Returns the number of lines carried.
+
+    This narrows the loss window to a hook that opened the old file before
+    the rename and writes after this read - microseconds, not the whole
+    final sequence - but cannot close it: no lock is shared with the hooks.
+    """
+    late = old.read()
+    if not late:
+        return 0
+    if not late.endswith(b"\n"):
+        rescue = target.with_name(f"{target.name}.late-append-{stamp}.partial")
+        rescue.write_bytes(late)
+        raise RuntimeError(
+            f"a live append landed during the rename and ends mid-line; its "
+            f"{len(late)} byte(s) were saved to {rescue} and NOT added to {target}"
+        )
+    with target.open("ab") as f:
+        f.write(late)
+        f.flush()
+        os.fsync(f.fileno())
+    return late.count(b"\n")
 
 
 def index_transcripts(projects_dir: str) -> dict[str, str]:

@@ -124,6 +124,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
 from metrics_core.backfill import (
     TimelineEntry,
+    carry_late_appends,
     index_subagent_transcripts,
     index_transcripts,
     model_totals_as_of,
@@ -647,7 +648,7 @@ def record_of(line: bytes) -> dict[str, Any] | None:
     return record
 
 
-def tail_after_prefix(target: Path, records: list[dict[str, Any]]) -> bytes:
+def tail_after_prefix(current: bytes, records: list[dict[str, Any]]) -> bytes:
     """Everything the live file holds beyond the rows the plan was built
     from - after refusing if those rows are no longer its prefix.
 
@@ -663,7 +664,6 @@ def tail_after_prefix(target: Path, records: list[dict[str, Any]]) -> bytes:
     this reads it back. What must hold is that row index i of the plan still
     names the same record it named when the plan was computed.
     """
-    current = target.read_bytes()
     usable = current.rfind(b"\n") + 1
     lines = current[:usable].split(b"\n")[:-1]
     prefix = lines[: len(records)]
@@ -740,14 +740,19 @@ def apply_backfill(
     )
     temporary = Path(temporary_name)
     try:
-        with os.fdopen(handle, "wb") as f:
-            f.write(body)
-            tail = tail_after_prefix(target, records)
-            f.write(tail)
-            f.flush()
-            os.fsync(f.fileno())
-        temporary.chmod(mode)
-        temporary.replace(target)
+        # The final read goes through a handle kept open across the rename,
+        # so a line that lands on the old file after it can still be carried
+        # over (carry_late_appends) instead of vanishing with the old inode.
+        with target.open("rb") as old:
+            with os.fdopen(handle, "wb") as f:
+                f.write(body)
+                tail = tail_after_prefix(old.read(), records)
+                f.write(tail)
+                f.flush()
+                os.fsync(f.fileno())
+            temporary.chmod(mode)
+            temporary.replace(target)
+            late = carry_late_appends(old, target, stamp)
     except BaseException:
         temporary.unlink(missing_ok=True)
         raise
@@ -765,7 +770,7 @@ def apply_backfill(
             f"written. The backup taken at the start of this run is {backup}, "
             "verified by sha256 before anything was touched"
         )
-    appended = tail.count(b"\n")
+    appended = tail.count(b"\n") + late
     total_lines = written.count(b"\n")
     print(
         f"wrote {target}: {total_lines} line(s) "

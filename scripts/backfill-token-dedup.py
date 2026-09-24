@@ -98,6 +98,7 @@ from metrics_core.backfill import (
     FIRST,
     UNIT_ID_KEYS,
     apply_plan,
+    carry_late_appends,
     daily_totals,
     file_kind_problem,
     find_nonmonotonic_sessions,
@@ -255,26 +256,31 @@ def write_atomically(path: str, snapshot_prefix: bytes, new_lines: list[bytes], 
             f.flush()
             os.fsync(f.fileno())
 
-        current = target.read_bytes()
-        if current[: len(snapshot_prefix)] != snapshot_prefix:
-            raise RuntimeError(
-                "refusing to write: the file changed under us in a way that is not "
-                "a plain append (its first bytes no longer match the snapshot)"
-            )
-        tail = current[len(snapshot_prefix) :]
-        if tail:
-            with temporary.open("ab") as f:
-                f.write(tail)
-                f.flush()
-                os.fsync(f.fileno())
+        # Read through a handle that is kept open across the rename, so what
+        # arrives on the old inode after this read can still be reached.
+        with target.open("rb") as old:
+            current = old.read()
+            if current[: len(snapshot_prefix)] != snapshot_prefix:
+                raise RuntimeError(
+                    "refusing to write: the file changed under us in a way that is not "
+                    "a plain append (its first bytes no longer match the snapshot)"
+                )
+            tail = current[len(snapshot_prefix) :]
+            if tail:
+                with temporary.open("ab") as f:
+                    f.write(tail)
+                    f.flush()
+                    os.fsync(f.fileno())
 
-        temporary.chmod(mode)
-        temporary.replace(target)
+            temporary.chmod(mode)
+            temporary.replace(target)
+            stamp = datetime.now().strftime("%Y-%m-%d-%H%M%S")
+            late = carry_late_appends(old, target, stamp)
     except BaseException:
         if temporary.exists():
             temporary.unlink()
         raise
-    return len(tail.split(b"\n")) - 1 if tail else 0
+    return (len(tail.split(b"\n")) - 1 if tail else 0) + late
 
 
 def main() -> int:

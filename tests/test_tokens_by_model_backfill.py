@@ -1507,6 +1507,31 @@ def test_apply_accepts_a_line_appended_in_the_instant_after_the_rename(
     assert out[1] == {"session_id": "s-late"}
 
 
+def test_apply_carries_a_line_appended_between_the_final_read_and_the_rename(
+    script, tmp_path, monkeypatch
+):
+    # The window the 2026-09-23 review reproduced losing a line in for the
+    # dedup backfill, which this script's write copied: the append lands on
+    # the OLD file after the tail was read, just before the rename.
+    metrics = tmp_path / "sessions.jsonl"
+    rows = [{"session_id": "s1", "input_tokens": 10}]
+    _write_jsonl(metrics, rows)
+    real_replace = Path.replace
+
+    def append_right_before(self: Path, destination: Any) -> None:
+        with Path(destination).open("ab") as f:
+            f.write(b'{"session_id": "s-between"}\n')
+        real_replace(self, destination)
+
+    monkeypatch.setattr(Path, "replace", append_right_before)
+
+    script.apply_backfill(str(metrics), {0: {"model-alpha": _bucket(input_tokens=10)}}, rows)
+
+    out = [json.loads(line) for line in metrics.read_text().splitlines()]
+    assert out[0]["tokens_by_model"] == {"model-alpha": _bucket(input_tokens=10)}
+    assert out[1:] == [{"session_id": "s-between"}]
+
+
 def _subagent_metrics(tmp_path: Path) -> None:
     """One subagent row that already carries a map the oracle confirms - so
     the subagents dry run has an evidence count, and a different one from
