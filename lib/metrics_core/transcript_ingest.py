@@ -90,11 +90,20 @@ def usage_increment(
     same subagent transcripts summed to 5,196,123 output tokens that way
     against 31,540,502 at the peak. The last entry is not safe either: 5 ids
     were replayed interleaved (2, 270, 2, 270, 2), so file order does not
-    end on the peak. The per-field maximum is right in every case measured,
-    and it does not depend on the order entries are visited in: summing the
-    increments this returns over any subset of an id's entries gives the
-    maximum over that subset, which is what makes as-of reconstruction over
-    timestamp-sorted entries agree with a hook that read the file in order.
+    end on the peak. The per-field maximum recovers the LARGEST usage the
+    transcript recorded for a message, whatever order its entries came in:
+    summing the increments this returns over any subset of an id's entries
+    gives the maximum over that subset, which is what makes as-of
+    reconstruction over timestamp-sorted entries agree with a hook that read
+    the file in order.
+
+    What it cannot recover is usage the transcript never recorded. Since
+    Claude Code 2.1.278, many subagent messages never get a final entry with
+    a stop_reason, so their full usage is never written and the largest
+    recorded output is a streaming placeholder of 1-4 tokens (the 2026-09-23
+    review counted 12,214 such ids, an estimated ~7.8M output tokens missing
+    since 2026-09-21). No counting rule can restore those; these totals are
+    a floor for them, not the true figure.
 
     Entries with no id cannot be matched to anything, so they always count
     in full. `peaks` is the caller's per-transcript state, updated in place.
