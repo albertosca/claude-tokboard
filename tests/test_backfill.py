@@ -648,9 +648,14 @@ def test_plan_corrects_each_snapshot_of_a_unit_from_its_own_formula(tmp_path):
     assert result.formulas == {0: "raw", 1: "first"}
 
 
-def test_plan_refuses_a_first_sum_whose_correction_would_lower_a_field(tmp_path):
-    # Total within tolerance of the first-occurrence sum, but one field sits
-    # above the peak: a first sum can only undercount, so this is not one.
+def test_plan_never_takes_a_near_miss_for_a_first_occurrence_sum(tmp_path):
+    # The tolerance exists for the RAW formula, where it was measured (see
+    # NEITHER_TOLERANCE). Extended to the first-occurrence formula it
+    # recognised 9 real session rows (2026-09-23 dry run) whose transcripts
+    # have NO streamed ids - first == peak - and which sat one late message
+    # below the as-of reconstruction: rows the hook got right, which a
+    # "correction" would have rewritten from reconstruction noise. Every one
+    # of the 820 real subagent rows it must catch matches exactly.
     path = tmp_path / "a1.jsonl"
     write_transcript(
         path,
@@ -660,32 +665,13 @@ def test_plan_refuses_a_first_sum_whose_correction_would_lower_a_field(tmp_path)
             ("2026-08-01T10:00:02", "m2", usage(0, 900, 0, 0)),
         ],
     )
-    # first = [0, 1000, 0, 0], raw = [0, 1101, 0, 0], peak = [0, 1001, 0, 0]
-    records = [record("s1", "2026-08-01T10:00:02", 5, 995, 0, 0)]
-
-    result = mr.plan_corrections_by_formula(records, {"s1": str(path)}, cutoff="2026-08-13")
-
-    assert result.values == {}
-    assert result.stats["untouched: session where a correction would decrease a first sum"] == 1
-
-
-def test_plan_takes_a_near_miss_for_the_formula_it_is_closer_to(tmp_path):
-    # 0.5% off the first-occurrence sum and ~9% off the raw one: a first sum.
-    path = tmp_path / "a1.jsonl"
-    write_transcript(
-        path,
-        [
-            ("2026-08-01T10:00:00", "m1", usage(0, 100, 0, 0)),
-            ("2026-08-01T10:00:01", "m1", usage(0, 101, 0, 0)),
-            ("2026-08-01T10:00:02", "m2", usage(0, 900, 0, 0)),
-        ],
-    )
+    # first = [0, 1000, 0, 0] (0.5% away), raw = [0, 1101, 0, 0] (~9% away)
     records = [record("s1", "2026-08-01T10:00:02", 0, 1000 - 5, 0, 0)]
 
     result = mr.plan_corrections_by_formula(records, {"s1": str(path)}, cutoff="2026-08-13")
 
-    assert result.formulas == {0: "first"}
-    assert result.values == {0: [0, 1001, 0, 0]}
+    assert result.values == {}
+    assert result.stats["untouched: session has a row matching neither formula"] == 1
 
 
 def test_model_totals_as_of_counts_a_streamed_message_at_its_peak(tmp_path):

@@ -402,26 +402,23 @@ class CorrectionPlan(NamedTuple):
 def _recognise(stored: list[int], now: AsOf) -> str | None:
     """Which prior formula produced `stored`, or None if neither did.
 
-    Exact matches first. Then the tolerance: entries timestamped before a
-    snapshot can land in the transcript after it, so the file no longer
-    reproduces that moment exactly (see NEITHER_TOLERANCE). It applies to
-    both formulas for that same reason; which one a near-miss is taken for
-    is the one it is closer to.
+    Exact matches, then NEITHER_TOLERANCE - for the RAW formula only, where
+    it was measured. It is deliberately NOT extended to the first-occurrence
+    formula: on 2026-09-23 that recognised 9 real session rows whose
+    transcripts hold no streamed ids at all (first == peak) and which sat one
+    late message below the as-of reconstruction - rows the hook got right,
+    that a "correction" would have rewritten from reconstruction noise. All
+    820 real subagent rows written by the first-occurrence hook match it
+    exactly, so exactness costs nothing there.
     """
     if stored == now.raw:
         return RAW
     if stored == now.first:
         return FIRST
-    total = sum(stored)
-    drifts = {
-        formula: abs(total / sum(reference) - 1.0)
-        for formula, reference in ((RAW, now.raw), (FIRST, now.first))
-        if sum(reference)
-    }
-    near = [formula for formula, drift in drifts.items() if drift <= NEITHER_TOLERANCE]
-    if not near:
-        return None
-    return min(near, key=lambda formula: drifts[formula])
+    total_raw = sum(now.raw)
+    if total_raw and abs(sum(stored) / total_raw - 1.0) <= NEITHER_TOLERANCE:
+        return RAW
+    return None
 
 
 def plan_corrections_by_formula(
@@ -439,9 +436,11 @@ def plan_corrections_by_formula(
     correct. A row recognised as raw or first is corrected to the peak, and
     the formula fixes the direction: a raw sum can only shrink (it counts
     every entry the peak counts, and more), a first-occurrence sum can only
-    grow (the peak of an id is at least its first entry). A correction
-    moving the other way means the recognition was wrong, and the unit is
-    refused. A row recognised as neither refuses its unit too.
+    grow (the peak of an id is at least its first entry). A raw sum
+    recognised within tolerance whose correction would raise a field is not
+    one, and its unit is refused; a first sum is recognised only exactly, so
+    it cannot move the wrong way. A row recognised as neither refuses its
+    unit too.
 
     Decisions are taken per UNIT - the rows sharing `id_key` - and applied to
     all of its rows or none of them; every skip reason is counted so the dry
@@ -492,9 +491,10 @@ def plan_corrections_by_formula(
             if formula == RAW and any(now.peak[i] > stored[i] for i in range(4)):
                 refused = "untouched: session where a correction would increase a raw sum"
                 break
-            if formula == FIRST and any(now.peak[i] < stored[i] for i in range(4)):
-                refused = "untouched: session where a correction would decrease a first sum"
-                break
+            # No FIRST counterpart: a first sum is only ever recognised
+            # exactly, and a message's peak is at least its first entry in
+            # every field, so correcting one can only raise it.
+            # verify_fields' may_increase still enforces that at write time.
             proposals[index] = (now.peak, formula)
 
         if refused:
