@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
@@ -494,7 +495,24 @@ class CompositionLegend(Static):
 
 
 PANE_MAX_PROJECTS = 7
-PANE_COLORS = ["green", "blue", "magenta", "orange", "cyan", "red", "yellow"]
+# A plotext colour: a name, or an (r, g, b) tuple drawn as-is.
+PlotColor = str | tuple[int, int, int]
+# Five names and two RGB tuples, not seven names (2026-09-23). plotext
+# emits a name as an ANSI colour and Textual repaints ANSI colours through
+# its theme, which draws "red" exactly like "magenta" and "yellow" exactly
+# like one of the other five - seven names, five colours on screen, so two
+# pairs of projects shared a colour. An RGB tuple is not remapped. Mint and cream were picked to sit
+# at least 57 delta E from every themed colour here and from the "other"
+# gray; tests/test_tui_palette.py measures the rendered result.
+PANE_COLORS: list[PlotColor] = [
+    "green",
+    "blue",
+    "magenta",
+    "orange",
+    "cyan",
+    (0, 255, 180),
+    (255, 240, 180),
+]
 PANE_OTHER_COLOR = "gray"
 PANE_OTHER_KEY = "__outros__"
 
@@ -532,7 +550,7 @@ def draw_stacked_bars(
     xlabels: list[str],
     series_lists: list[list[int]],
     series_labels: list[str],
-    colors: list[str],
+    colors: Sequence[PlotColor],
     *,
     canvas_width: int | None,
 ) -> None:
@@ -757,6 +775,7 @@ class TrendChart(PlotextPlot):
         )
         if partial_frac is not None:
             labels[-1] += f" · {round(partial_frac * 100)}%"
+        color: Sequence[PlotColor]
         if self.mode == "pane":
             top_keys, has_other = compute_pane_projects(self.mr, self.chart_records)
             series_keys = list(top_keys) + ([PANE_OTHER_KEY] if has_other else [])
