@@ -44,6 +44,7 @@ For a subset: `pytest tests/test_x.py --no-cov` (see below for why `--no-cov`).
 - **`scripts/verify-detectors.py` rewrites real repo source files** and shells out to a full pytest run. Never call its `main()` from a test without replacing the module-level `DEFECTS` list.
 - **`requirements-tui.txt` and `requirements-dev.txt` overlap on purpose.** The first is what `scripts/setup-tui-venv.sh` provisions into `.venv` for END USERS; the second is what the tests need. Collapsing them is what once hid `dashboard_tui.py` from coverage entirely.
 - **The two dashboards duplicate logic.** A fix in one does not reach the other - every chart mode, for instance, is implemented twice. Change both, and test both.
+- **`hooks/` and `lib/metrics_core/` must stay Python 3.9-compatible.** hooks.json runs each hook as `python3 ... 2>/dev/null || true`, and a stock macOS still ships 3.9.6 - an import failure there loses every session's metrics with no visible error. ruff's `py310` target and its `B905` rule will suggest `zip(..., strict=True)`; don't take that suggestion on this path (see `transcript_ingest.py`'s `usage_increment` for the one place this was already a live concern). `.github/workflows/ci.yml`'s `hooks-py39` job and `scripts/check-hooks-py39-compat.py` guard this in CI - the ordinary suite can't, because `tests/conftest.py` itself uses real 3.10+ runtime syntax and can't even be collected under 3.9.
 
 ## Where things are written down
 

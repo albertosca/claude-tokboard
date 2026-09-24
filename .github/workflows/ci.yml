@@ -37,6 +37,29 @@ jobs:
           include-hidden-files: true
           retention-days: 1
 
+  # hooks.json invokes each hook as `python3 ... 2>/dev/null || true`, so an
+  # import failure on a user's system Python (macOS still ships 3.9.6, and
+  # dashboard_tui.py's own 3.10+ syntax means only the hook path needs to
+  # stay 3.9-safe) loses every session's metrics with no error anyone would
+  # ever see. `test` above runs on 3.14 and can't catch that. It also can't
+  # be caught by running tests/test_metrics_log_hook.py and
+  # tests/test_subagent_metrics_log_hook.py under 3.9 directly: pytest loads
+  # tests/conftest.py for every test under tests/, and conftest.py itself
+  # uses real 3.10+ runtime syntax (`isinstance(x, str | bytes)`, evaluated
+  # when the function runs, not just an annotation), so it cannot even be
+  # collected under 3.9. scripts/check-hooks-py39-compat.py is the separate,
+  # minimal path that needs only the hooks and lib/metrics_core (pure
+  # standard library - no pip install needed here) to be 3.9-safe, which is
+  # the actual thing in play.
+  hooks-py39:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.9"
+      - run: python scripts/check-hooks-py39-compat.py
+
   # Generates and commits .github/badges/coverage.svg. Split into its own
   # job, rather than a step tacked onto `test`, specifically for
   # permissions: this is the only job in the workflow with contents: write,
