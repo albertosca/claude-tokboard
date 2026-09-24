@@ -8,7 +8,7 @@
 
 **See where your Claude Code tokens go** - by day, by project, by token type and by model.
 
-A Claude Code plugin that logs every session and subagent in the background and shows it back to you two ways: an HTML dashboard in your browser, and a full terminal app.
+A raw token count mixes cheap cache reads with the tokens that count against rate limits. tokboard logs every Claude Code session and subagent in the background and shows you both numbers - in your browser or in your terminal, without anything leaving your machine.
 
 ![The HTML dashboard: a stacked trend chart by project, with tabs for token type and model, above a session table grouped by project](assets/dashboard-en.png)
 
@@ -16,10 +16,10 @@ A Claude Code plugin that logs every session and subagent in the background and 
 
 ## What you get
 
+- **A quota view, not just a volume view.** A separate line estimates how much of your rate limit a period used: input and cache writes on one side, output on the other, cache reads left out - the weighting Anthropic documents for its API. Claude Code doesn't publish its own formula, so the line is labelled approximate.
 - **One day, three slicings.** The trend chart splits each day's total by project, by token type or by model. A day stays the same height in every tab, so switching re-slices it instead of rescaling it.
-- **A quota view, not just a volume view.** Most tokens are cheap cache reads. A separate line estimates how much of your rate-limit quota a period used, following Anthropic's documented rule for what counts.
-- **An honest last bar.** The bucket still in progress is labelled with how much of it has elapsed (and hatched, in the browser), so a half-finished week never reads as a drop.
-- **Session history.** Every session grouped by project, with its subagents, duration and token breakdown - filterable by period.
+- **An honest last bar.** The bucket still in progress shows how much of it has elapsed (and is hatched, in the browser), so a half-finished week never reads as a drop.
+- **Every session, with its subagents.** Sessions are grouped by project, each with its subagents, duration and token breakdown, and filterable by period.
 - **Click to highlight.** Click a legend entry or a bar to spotlight one project, token type or model across the chart.
 
 ![The terminal app: a session table with a detail panel, then the trend chart cycling through its three slicings of a day](assets/tui-en.gif)
@@ -32,7 +32,7 @@ A Claude Code plugin that logs every session and subagent in the background and 
 
 ## Install
 
-Install it through Claude Code's plugin system (see the [Claude Code plugin docs](https://docs.claude.com/en/docs/claude-code)). Then:
+Install it through Claude Code's plugin system (see the [Claude Code plugin docs](https://docs.claude.com/en/docs/claude-code)). Logging starts on its own; then, whenever you want to look:
 
 | Command | What it does |
 |---|---|
@@ -46,6 +46,22 @@ The browser opens by itself on macOS; elsewhere, open `~/.claude/metrics/dashboa
 
 The auto-install needs the `python3-venv` package, which isn't always preinstalled. Run `sudo apt install python3-venv` (or the version-specific `python3.X-venv` the error names) and try again. `/tokboard` is unaffected either way.
 </details>
+
+## How it works
+
+```mermaid
+flowchart LR
+    CC["Claude Code"] -- "Stop hook,<br/>end of each turn" --> S[("~/.claude/metrics/<br/>sessions.jsonl")]
+    CC -- "SubagentStop hook" --> A[("~/.claude/metrics/<br/>subagents.jsonl")]
+    S --> M["metrics_core<br/>one shared data layer"]
+    A --> M
+    M --> H["/tokboard<br/>HTML dashboard"]
+    M --> T["/tokboard-tui<br/>terminal app"]
+    H --> Q["quota line, trend chart,<br/>session history"]
+    T --> Q
+```
+
+Two hooks append a line to a local log after every turn and every subagent. Both dashboards read those logs through the same library, so a number means the same thing in either one.
 
 ## Optional settings
 
@@ -63,21 +79,21 @@ Turn it on with `--label-budget N` (N new labels per run; cached ones are free),
 
 Any folder directly inside a listed root is one project, however deep the session went. Newer sessions record their project root automatically; this setting is what names older ones.
 
-**tmux.** If you run Claude Code inside tmux, each session shows the window it ran in. Nothing to configure.
-
-## How it's built
-
-- **One data layer, two interfaces.** Both dashboards read from `lib/metrics_core/`, pure standard-library Python - every number is computed once and tested once.
-- **100% statement and branch coverage, enforced.** A single uncovered line fails CI.
-- **The page is tested by using it.** The rendering tests drive the real generated dashboard in jsdom - clicking, filtering, highlighting - and assert on computed styles, not on markup.
-- **Strict static checks.** `ruff` with ten rule families and `mypy --strict` on every push.
-- **Careful with your data.** Migrations over your irreplaceable logs run as dry runs first, are checked against an independent oracle, and write only after a verified backup.
+**tmux.** If you run Claude Code inside tmux, the HTML dashboard shows the window each session ran in. Nothing to configure.
 
 ## Your data
 
 - Everything lives in `~/.claude/metrics/`: the session and subagent logs, label caches and the rendered dashboard.
 - Nothing leaves your machine - unless you turn on AI labels, which send each labelled session to Claude to be summarized.
 - Uninstalling stops new logging and keeps what's already there.
+
+## How it's built
+
+- **One data layer, two interfaces.** Both dashboards read from `lib/metrics_core/`, pure standard-library Python - every number is computed once and tested once.
+- **100% statement and branch coverage, enforced.** A single uncovered line fails CI.
+- **The page is tested by using it.** The rendering tests drive the real generated dashboard in jsdom - clicking, filtering, highlighting - and assert on computed styles, not on markup.
+- **Strict static checks.** `ruff` with ten rule families and `mypy --strict` on every push to main and every pull request.
+- **Careful with your data.** The scripts that repair old logs are dry runs unless given `--apply`, back up the file and verify the copy by sha256 before writing, and the per-model one first checks its reconstruction against records the hook had logged natively, refusing to run on a disagreement.
 
 ## Contributing
 

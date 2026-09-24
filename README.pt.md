@@ -8,7 +8,7 @@
 
 **Veja para onde vão os seus tokens do Claude Code** - por dia, por projeto, por tipo de token e por modelo.
 
-Um plugin do Claude Code que registra cada sessão e cada subagente em segundo plano e mostra tudo de volta de dois jeitos: um dashboard HTML no navegador e um app completo de terminal.
+Uma contagem crua de tokens mistura leitura de cache, que é barata, com os tokens que contam para o rate limit. O tokboard registra cada sessão e cada subagente do Claude Code em segundo plano e mostra os dois números - no navegador ou no terminal, sem nada sair da sua máquina.
 
 ![O dashboard HTML: gráfico de barras empilhadas por projeto, com abas por tipo de token e por modelo, acima de uma tabela de sessões agrupada por projeto](assets/dashboard-pt.png)
 
@@ -16,10 +16,10 @@ Um plugin do Claude Code que registra cada sessão e cada subagente em segundo p
 
 ## O que você ganha
 
+- **Uma visão de cota, não só de volume.** Uma linha à parte estima quanto do seu rate limit o período consumiu: entrada e escrita de cache de um lado, saída do outro, leitura de cache fora da conta - o peso que a Anthropic documenta para a API dela. O Claude Code não publica a própria fórmula, então a linha vem marcada como aproximada.
 - **Um dia, três recortes.** O gráfico de tendência divide o total de cada dia por projeto, por tipo de token ou por modelo. Um dia tem a mesma altura em todas as abas, então trocar de aba refatia o dia em vez de mudar a escala.
-- **Uma visão de cota, não só de volume.** A maior parte dos tokens é leitura de cache, que é barata. Uma linha à parte estima quanto da sua cota de rate limit o período consumiu, pela regra documentada da Anthropic.
 - **Uma última barra honesta.** O período que ainda está em andamento mostra quanto dele já passou (e aparece hachurado, no navegador), para que uma semana pela metade nunca pareça uma queda.
-- **Histórico de sessões.** Cada sessão agrupada por projeto, com seus subagentes, duração e tokens detalhados - filtrável por período.
+- **Cada sessão, com os seus subagentes.** As sessões ficam agrupadas por projeto, cada uma com seus subagentes, duração e tokens detalhados, e dá para filtrar por período.
 - **Clique para destacar.** Clique numa entrada da legenda ou numa barra para destacar um projeto, tipo de token ou modelo no gráfico inteiro.
 
 ![O app de terminal: tabela de sessões com painel de detalhe, e depois o gráfico de tendência passando pelos três recortes de um dia](assets/tui-pt.gif)
@@ -32,7 +32,7 @@ Um plugin do Claude Code que registra cada sessão e cada subagente em segundo p
 
 ## Instalação
 
-Instale pelo sistema de plugins do Claude Code (veja a [documentação de plugins do Claude Code](https://docs.claude.com/en/docs/claude-code)). Depois:
+Instale pelo sistema de plugins do Claude Code (veja a [documentação de plugins do Claude Code](https://docs.claude.com/en/docs/claude-code)). O registro começa sozinho; depois, sempre que quiser olhar:
 
 | Comando | O que faz |
 |---|---|
@@ -46,6 +46,22 @@ O navegador abre sozinho no macOS; nos outros sistemas, abra `~/.claude/metrics/
 
 A instalação automática precisa do pacote `python3-venv`, que nem sempre vem instalado. Rode `sudo apt install python3-venv` (ou o `python3.X-venv` específico que o erro indicar) e tente de novo. O `/tokboard` não é afetado.
 </details>
+
+## Como funciona
+
+```mermaid
+flowchart LR
+    CC["Claude Code"] -- "hook Stop,<br/>fim de cada turno" --> S[("~/.claude/metrics/<br/>sessions.jsonl")]
+    CC -- "hook SubagentStop" --> A[("~/.claude/metrics/<br/>subagents.jsonl")]
+    S --> M["metrics_core<br/>uma camada de dados só"]
+    A --> M
+    M --> H["/tokboard<br/>dashboard HTML"]
+    M --> T["/tokboard-tui<br/>app de terminal"]
+    H --> Q["linha de cota, gráfico de tendência,<br/>histórico de sessões"]
+    T --> Q
+```
+
+Dois hooks acrescentam uma linha a um log local ao fim de cada turno e de cada subagente. Os dois dashboards leem esses logs pela mesma biblioteca, então um número quer dizer a mesma coisa em qualquer um deles.
 
 ## Configurações opcionais
 
@@ -63,21 +79,21 @@ Para ligar, use `--label-budget N` (N rótulos novos por execução; os que já 
 
 Toda pasta diretamente dentro de uma raiz listada é um projeto, por mais fundo que a sessão tenha ido. Sessões novas já gravam a raiz do projeto sozinhas; essa configuração é o que dá nome às antigas.
 
-**tmux.** Se você roda o Claude Code dentro do tmux, cada sessão mostra a janela onde rodou. Nada para configurar.
-
-## Como é feito
-
-- **Uma camada de dados, duas interfaces.** Os dois dashboards leem de `lib/metrics_core/`, em Python só com a biblioteca padrão - cada número é calculado uma vez e testado uma vez.
-- **100% de cobertura de linhas e de ramos, obrigatória.** Uma única linha sem teste reprova o CI.
-- **A página é testada sendo usada.** Os testes de renderização dirigem o dashboard real gerado dentro do jsdom - clicando, filtrando, destacando - e verificam os estilos computados, não o markup.
-- **Checagem estática rigorosa.** `ruff` com dez famílias de regras e `mypy --strict` a cada push.
-- **Cuidado com os seus dados.** Migrações sobre os seus logs, que não têm substituto, rodam primeiro a seco, são conferidas contra um oráculo independente e só escrevem depois de um backup verificado.
+**tmux.** Se você roda o Claude Code dentro do tmux, o dashboard HTML mostra a janela onde cada sessão rodou. Nada para configurar.
 
 ## Seus dados
 
 - Tudo fica em `~/.claude/metrics/`: os logs de sessões e subagentes, o cache de rótulos e o dashboard gerado.
 - Nada sai da sua máquina - a não ser que você ligue os rótulos por IA, que mandam cada sessão rotulada para o Claude resumir.
 - Desinstalar para o registro de sessões novas e mantém o que já está lá.
+
+## Como é feito
+
+- **Uma camada de dados, duas interfaces.** Os dois dashboards leem de `lib/metrics_core/`, em Python só com a biblioteca padrão - cada número é calculado uma vez e testado uma vez.
+- **100% de cobertura de linhas e de ramos, obrigatória.** Uma única linha sem teste reprova o CI.
+- **A página é testada sendo usada.** Os testes de renderização dirigem o dashboard real gerado dentro do jsdom - clicando, filtrando, destacando - e verificam os estilos computados, não o markup.
+- **Checagem estática rigorosa.** `ruff` com dez famílias de regras e `mypy --strict` a cada push na main e em todo pull request.
+- **Cuidado com os seus dados.** Os scripts que corrigem logs antigos só simulam, a menos que recebam `--apply`; antes de escrever, fazem backup do arquivo e conferem a cópia por sha256. O de tokens por modelo ainda confronta a reconstrução com os registros que o hook gravou nativamente, e se recusa a rodar se houver divergência.
 
 ## Contribuindo
 
