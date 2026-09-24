@@ -28,12 +28,13 @@ import html
 import json
 import math
 import os
+import random
 import re
 import shutil
 import subprocess
 import sys
 import tempfile
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
@@ -67,7 +68,10 @@ TERMINAL_SIZE = (132, 32)
 GIF_WIDTH = 1100
 # The last 12 bytes of every complete PNG: the zero-length IEND chunk.
 PNG_END = b"\x00\x00\x00\x00IEND\xaeB`\x82"
-PAGE_SIZE = (1400, 620)  # the HTML page's content ends well above 1000px
+# 1700 wide, not 1400 (2026-09-23): the session table sits in a pane 62%
+# of the page wide, and at 1400 it clipped its last columns mid-word
+# ("compos."). At 1700 the pane fits every column through "duration".
+PAGE_SIZE = (1700, 620)
 
 
 def seed_home(home: Path) -> None:
@@ -75,6 +79,80 @@ def seed_home(home: Path) -> None:
     from fixtures.build_fixture import build_fixture
 
     build_fixture(str(home), datetime.now().astimezone())
+
+
+# Generic model ids for the by-model view. The shared fixture carries a
+# per-model map on only two rows on purpose (the tests need the "no model"
+# band reachable), which left the README's by-model frames one grey band.
+DEMO_MODELS = ("claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5")
+
+
+def split_by_model(record: dict[str, object]) -> dict[str, dict[str, int]]:
+    """A full per-model map for one record, deterministic per session.
+
+    Each of the four token totals is split across two or three models by
+    weights drawn from a generator seeded with the session id, so a re-run
+    draws the same picture. Every field sums EXACTLY to the record's own
+    total - compute_model_totals takes whatever a map does not cover as
+    "no model", and the backfill's verifier assumes a map never claims more
+    than its row.
+    """
+    rng = random.Random(str(record.get("session_id")))
+    models = rng.sample(DEMO_MODELS, rng.choice((2, 3)))
+    weights = [rng.randint(1, 6) for _ in models]
+    split: dict[str, dict[str, int]] = {m: {} for m in models}
+    for field in ("input_tokens", "output_tokens", "cache_read_tokens", "cache_creation_tokens"):
+        raw = record.get(field)
+        total = raw if isinstance(raw, int) else 0
+        shares = [total * w // sum(weights) for w in weights]
+        shares[0] += total - sum(shares)
+        for model, share in zip(models, shares, strict=True):
+            split[model][field] = share
+    return split
+
+
+def stage_showcase(home: Path, now: datetime) -> None:
+    """Make the throwaway HOME look like a settled install, not a new one.
+
+    Two things the shared fixture leaves out on purpose, because tests rely
+    on their absence, and that the README should not show a visitor:
+
+    - backfill_state.json. Without it both dashboards open on the "token
+      duplication not yet corrected" warning. What is written here is what
+      write_backfill_state records for an apply that found nothing to
+      correct - which is the truth about synthetic data. Written through
+      write_backfill_state itself, so the shape cannot drift from what the
+      dashboards read.
+    - a tokens_by_model map on every session, so the by-model chart shows
+      models instead of one "no model" band.
+
+    Every path here is built from `home` and checked to be inside it; none
+    is taken from metrics_core's module constants, which point at the
+    REAL ~/.claude/metrics in this process.
+    """
+    metrics = home / ".claude" / "metrics"
+    sessions = metrics / "sessions.jsonl"
+    state = metrics / "backfill_state.json"
+    for path in (sessions, state):
+        if home.resolve() not in path.resolve().parents:
+            raise SystemExit(f"refusing to write outside the throwaway HOME: {path}")
+
+    rows = [json.loads(line) for line in sessions.read_text().splitlines() if line.strip()]
+    for row in rows:
+        row["tokens_by_model"] = split_by_model(row)
+    sessions.write_text("".join(json.dumps(row) + "\n" for row in rows))
+
+    sys.path[:0] = [str(REPO / "lib")]
+    import metrics_core as mr
+
+    mr.write_backfill_state(
+        mr.DEFAULT_CUTOFF,
+        (now - timedelta(days=2)).isoformat(),
+        0,
+        uncorrectable_rows=0,
+        earliest_corrected=None,
+        path=str(state),
+    )
 
 
 def mr_metrics() -> str:
@@ -381,6 +459,7 @@ def main() -> None:
         home.mkdir()
         work.mkdir()
         seed_home(home)
+        stage_showcase(home, datetime.now().astimezone())
         config_path = home / ".claude" / "metrics" / "config.json"
         for lang in ("en", "pt"):
             config_path.write_text(json.dumps({"language": lang}))
