@@ -17,6 +17,7 @@ apart from "the version check was accidentally skipped and it happened to
 work" without actually building a venv in a test.
 """
 
+import shutil
 import stat
 import subprocess
 from pathlib import Path
@@ -24,7 +25,7 @@ from pathlib import Path
 SCRIPT_PATH = Path(__file__).resolve().parent.parent / "scripts" / "setup-tui-venv.sh"
 REQUIREMENTS_PATH = Path(__file__).resolve().parent.parent / "requirements-tui.txt"
 
-FAKE_PYTHON3_TEMPLATE = """#!/usr/bin/env bash
+FAKE_PYTHON3_TEMPLATE = """#!/bin/bash
 if [ "$1" = "--version" ]; then
   echo "Python {version}"
   exit 0
@@ -55,30 +56,73 @@ def _make_plugin_tree(tmp_path: Path) -> Path:
     return plugin_root
 
 
+_EXTERNAL_COMMANDS = ("dirname", "rm", "cat")
+
+
 def _safe_bin(tmp_path_factory_dir: Path) -> Path:
-    """A directory with just `dirname` (the one external, non-/bin
-    coreutil the script's own PLUGIN_ROOT resolution shells out to)
-    symlinked in from the real /usr/bin - never python3 - so PATH can
-    stay otherwise minimal without the script dying on `dirname: command
-    not found` before it even gets to the version check."""
+    """A directory with just `dirname`, `rm` and `cat` - the three
+    external, non-builtin commands the script shells out to (PLUGIN_ROOT
+    resolution, removing a stale venv, and printing a captured pip error)
+    - symlinked in from wherever they really live, resolved at test time
+    with shutil.which rather than hardcoded to /usr/bin, since that
+    location isn't portable across CI runners either.
+
+    Deliberately never python3: on a machine where one of these three
+    names resolved to a python* executable (unheard of, but this is what
+    stood between "no python3 on PATH" and a silent false pass on
+    Ubuntu's usrmerged /bin - see _run_script), that would be exactly the
+    same trap, so it is asserted against here too."""
     safe_bin = tmp_path_factory_dir / "safe-bin"
     if not safe_bin.exists():
         safe_bin.mkdir()
-        (safe_bin / "dirname").symlink_to("/usr/bin/dirname")
+        for name in _EXTERNAL_COMMANDS:
+            real = shutil.which(name)
+            assert real is not None, f"{name} not found on the real PATH"
+            assert not Path(real).name.startswith("python"), (
+                f"{name} resolves to {real}, which looks like a python interpreter"
+            )
+            (safe_bin / name).symlink_to(real)
     return safe_bin
 
 
+def _assert_path_has_no_stray_python(path_dirs: list[Path], fake_bin_dir: Path) -> None:
+    """Refuses a test PATH that would leak a real python3 (or python) from
+    anywhere other than fake_bin_dir.
+
+    This is the check that would have failed before the fix: the old
+    _run_script put fake_bin_dir first, then a safe-bin, then the literal
+    string "/bin" on PATH. On macOS /bin has no python3, so that third
+    entry was inert. On Ubuntu's usrmerged /bin - a symlink to /usr/bin,
+    which does ship a real python3 >= 3.10 - it was not: a test meaning
+    to prove "no usable python3 was found" (an empty fake_bin_dir) would
+    instead find Ubuntu's, let the script proceed past every gate, and
+    exit 0 where the assertions expect 1. Fixing the test means never
+    putting a directory that might hold a real python3 on PATH in the
+    first place, and asserting that here so a regression fails loudly
+    instead of going back to a silent false pass."""
+    for directory in path_dirs:
+        if directory == fake_bin_dir or not directory.is_dir():
+            continue
+        for name in ("python3", "python"):
+            candidate = directory / name
+            if candidate.exists() or candidate.is_symlink():
+                raise AssertionError(f"{candidate} would leak a real python3 onto the test PATH")
+
+
 def _run_script(plugin_root: Path, fake_bin_dir: Path) -> subprocess.CompletedProcess[str]:
-    # PATH is fake_bin_dir, a safe-bin with only `dirname`, then /bin -
-    # never the real PATH. This has every command the script shells out
-    # to (rm, cat, dirname) but no python3 of its own on macOS, so
-    # fake_bin_dir is the sole source of a `python3` unless a test leaves
-    # it empty. That is what lets
-    # test_missing_python3_on_path_still_refuses_clearly and the old-venv
-    # test prove "no usable python3 was found" instead of silently
-    # falling through to the real interpreter that ran pytest.
+    # PATH is fake_bin_dir, then a safe-bin with only dirname/rm/cat -
+    # nothing else, and in particular no /bin or /usr/bin. Those two
+    # differ across platforms (macOS's /bin has no python3; Ubuntu's does,
+    # via the usrmerge symlink to /usr/bin), which is exactly what made
+    # this test suite pass locally and fail on CI. fake_bin_dir is the
+    # sole possible source of a `python3` unless a test leaves it empty,
+    # which is what lets test_missing_python3_on_path_still_refuses_clearly
+    # and the old-venv test prove "no usable python3 was found" instead of
+    # silently falling through to some other interpreter.
     safe_bin = _safe_bin(fake_bin_dir.parent)
-    env = {"PATH": f"{fake_bin_dir}:{safe_bin}:/bin"}
+    path_dirs = [fake_bin_dir, safe_bin]
+    _assert_path_has_no_stray_python(path_dirs, fake_bin_dir)
+    env = {"PATH": ":".join(str(directory) for directory in path_dirs)}
     return subprocess.run(
         ["/bin/bash", str(plugin_root / "scripts" / "setup-tui-venv.sh")],
         capture_output=True,
