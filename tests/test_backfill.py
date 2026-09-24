@@ -432,7 +432,9 @@ def test_plan_corrections_treats_a_row_exactly_on_the_cutoff_as_spanning_it(tmp_
     assert stats["untouched: session spans the cutoff"] == 1
 
 
-def test_plan_corrections_refuses_a_row_that_would_increase_a_field(tmp_path):
+def test_plan_corrections_refuses_a_raw_total_split_differently_across_fields(tmp_path):
+    # stored's TOTAL (200) equals the raw sum's, but its per-field split
+    # does not: it is not the raw sum, so it is not recognised at all.
     path = tmp_path / "s1.jsonl"
     write_transcript(
         path,
@@ -441,19 +443,19 @@ def test_plan_corrections_refuses_a_row_that_would_increase_a_field(tmp_path):
             ("2026-08-01T10:00:01", "msg-1", usage(input_tokens=100)),  # replay
         ],
     )
-    # deduped_now=[100,0,0,0], raw_now=[200,0,0,0]. stored's TOTAL (200)
-    # matches raw_now's total exactly (drift 0, so the "neither formula"
-    # check does not refuse it first) but its PER-FIELD split does not:
-    # input_tokens is stored as 90, below the deduped truth of 100 -
-    # correcting would raise that one field, which the row-level "only
-    # decrease" invariant forbids.
     records = [record("s1", "2026-08-01T10:00:01", 90, 110)]
     plan, stats, _factors = mr.plan_corrections(records, {"s1": str(path)}, cutoff="2026-08-13")
     assert plan == {}
-    assert stats["untouched: session where a correction would increase a raw sum"] == 1
+    assert stats["untouched: session has a row matching neither formula"] == 1
 
 
-def test_plan_corrections_accepts_a_row_within_tolerance_of_the_raw_sum(tmp_path):
+def test_plan_corrections_refuses_a_near_miss_of_the_raw_sum(tmp_path):
+    # A 2% tolerance used to accept this (0.5% off the raw sum) as broken-hook
+    # output. It was measured for the August run's rows, which are corrected
+    # now; on 2026-09-23 every row the real plan corrects - 862 subagent, 41
+    # session - matches its formula exactly, and a near-miss corrected from
+    # the reconstruction is a row rewritten from reconstruction noise. So
+    # both formulas are recognised on an exact match only.
     path = tmp_path / "s1.jsonl"
     write_transcript(
         path,
@@ -462,43 +464,7 @@ def test_plan_corrections_accepts_a_row_within_tolerance_of_the_raw_sum(tmp_path
             ("2026-08-01T10:00:01", "msg-1", usage(input_tokens=1000)),  # replay
         ],
     )
-    # raw_now is 2000; 1990 is 0.5% off, inside NEITHER_TOLERANCE (2%).
-    records = [record("s1", "2026-08-01T10:00:01", 1990, 0)]
-    plan, stats, _factors = mr.plan_corrections(records, {"s1": str(path)}, cutoff="2026-08-13")
-    assert plan == {0: [1000, 0, 0, 0]}
-    assert stats["corrected: stored the raw sum (every entry)"] == 1
-
-
-def test_plan_corrections_accepts_a_row_just_inside_the_tolerance_boundary(tmp_path):
-    # Comparison is `drift > NEITHER_TOLERANCE` (strict). Mid-range values
-    # (this test's sibling above uses 0.5%, the refusal test below uses
-    # 50%) cannot catch NEITHER_TOLERANCE drifting by a few thousandths in
-    # either direction - only a test built close to the boundary can. Not
-    # bit-exact at 0.02 itself: float division rarely lands on a repeating
-    # binary fraction like 0.02 exactly (confirmed: 1020/1000 - 1 evaluates
-    # to 0.020000000000000018, landing on the wrong side of a "==" test
-    # written naively), so this uses 0.0199/0.0201 - a margin of one part
-    # in 200 of the tolerance itself, far tighter than the existing tests
-    # but comfortably clear of float noise at this magnitude. The expected
-    # 10199 is hardcoded, not derived from the constant: a value computed
-    # FROM NEITHER_TOLERANCE would still pass trivially if it moved,
-    # proving nothing.
-    path = tmp_path / "s1.jsonl"
-    write_transcript(path, [("2026-08-01T10:00:00", "msg-1", usage(input_tokens=10000))])
-    # raw_now is 10000; drift = |10199/10000 - 1| = 0.0199, just inside 0.02.
-    records = [record("s1", "2026-08-01T10:00:00", 10199, 0)]
-    plan, stats, _factors = mr.plan_corrections(records, {"s1": str(path)}, cutoff="2026-08-13")
-    assert plan == {0: [10000, 0, 0, 0]}
-    assert stats["corrected: stored the raw sum (every entry)"] == 1
-
-
-def test_plan_corrections_refuses_a_row_just_outside_the_tolerance_boundary(tmp_path):
-    # The other side of the same boundary: see the sibling test above for
-    # why 0.0201 rather than exactly 0.02.
-    path = tmp_path / "s1.jsonl"
-    write_transcript(path, [("2026-08-01T10:00:00", "msg-1", usage(input_tokens=10000))])
-    # raw_now is 10000; drift = |10201/10000 - 1| = 0.0201, just past 0.02.
-    records = [record("s1", "2026-08-01T10:00:00", 10201, 0)]
+    records = [record("s1", "2026-08-01T10:00:01", 1990, 0)]  # raw is 2000
     plan, stats, _factors = mr.plan_corrections(records, {"s1": str(path)}, cutoff="2026-08-13")
     assert plan == {}
     assert stats["untouched: session has a row matching neither formula"] == 1
@@ -649,8 +615,8 @@ def test_plan_corrects_each_snapshot_of_a_unit_from_its_own_formula(tmp_path):
 
 
 def test_plan_never_takes_a_near_miss_for_a_first_occurrence_sum(tmp_path):
-    # The tolerance exists for the RAW formula, where it was measured (see
-    # NEITHER_TOLERANCE). Extended to the first-occurrence formula it
+    # A 2% near-miss tolerance was measured for the RAW formula in August
+    # (and has since been dropped too). Extended to this formula it
     # recognised 9 real session rows (2026-09-23 dry run) whose transcripts
     # have NO streamed ids - first == peak - and which sat one late message
     # below the as-of reconstruction: rows the hook got right, which a

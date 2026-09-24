@@ -30,14 +30,6 @@ from .transcript_ingest import (
 # fixed hook is actually deployed (see the report - as of 2026-08-18 the
 # running hook is the plugin-cache copy, which still has no dedup).
 DEFAULT_CUTOFF = "2026-08-13"
-# A row that reproduces neither formula is still treated as broken-hook output
-# when it sits this close to the raw sum. Cause: entries timestamped before a
-# snapshot were appended to the transcript after it, so the file no longer
-# reproduces that moment exactly. Measured on real data, 58 of 59 such rows
-# land within 0.3% of the raw sum while being ~2x the deduped one, and eight
-# of them belong to the largest session in the file - refusing them outright
-# would leave more than half of all inflation uncorrected.
-NEITHER_TOLERANCE = 0.02
 BACKFILL_STATE_FILE = str(Path("~/.claude/metrics/backfill_state.json").expanduser())
 
 # Which id names a unit - the owner of one growing snapshot series - in each
@@ -402,22 +394,21 @@ class CorrectionPlan(NamedTuple):
 def _recognise(stored: list[int], now: AsOf) -> str | None:
     """Which prior formula produced `stored`, or None if neither did.
 
-    Exact matches, then NEITHER_TOLERANCE - for the RAW formula only, where
-    it was measured. It is deliberately NOT extended to the first-occurrence
-    formula: on 2026-09-23 that recognised 9 real session rows whose
-    transcripts hold no streamed ids at all (first == peak) and which sat one
-    late message below the as-of reconstruction - rows the hook got right,
-    that a "correction" would have rewritten from reconstruction noise. All
-    820 real subagent rows written by the first-occurrence hook match it
-    exactly, so exactness costs nothing there.
+    Exact matches only. The August run accepted a raw-sum near-miss within
+    2% (58 of 59 such rows then sat within 0.3% of the raw sum), and those
+    rows are corrected now. Extended to the first-occurrence formula, the
+    same tolerance recognised 9 real session rows (2026-09-23) whose
+    transcripts hold no streamed ids (first == peak) and which sat one late
+    message below the as-of reconstruction - rows the hook got right, that a
+    "correction" would have rewritten from reconstruction noise. Every row
+    the 2026-09-23 plan corrects (862 subagent, 41 session) matches its
+    formula exactly, so exactness costs nothing and closes that door for
+    both formulas.
     """
     if stored == now.raw:
         return RAW
     if stored == now.first:
         return FIRST
-    total_raw = sum(now.raw)
-    if total_raw and abs(sum(stored) / total_raw - 1.0) <= NEITHER_TOLERANCE:
-        return RAW
     return None
 
 
@@ -436,11 +427,9 @@ def plan_corrections_by_formula(
     correct. A row recognised as raw or first is corrected to the peak, and
     the formula fixes the direction: a raw sum can only shrink (it counts
     every entry the peak counts, and more), a first-occurrence sum can only
-    grow (the peak of an id is at least its first entry). A raw sum
-    recognised within tolerance whose correction would raise a field is not
-    one, and its unit is refused; a first sum is recognised only exactly, so
-    it cannot move the wrong way. A row recognised as neither refuses its
-    unit too.
+    grow (the peak of an id is at least its first entry). Both are
+    recognised only on an exact match, so neither can move the wrong way. A
+    row recognised as neither refuses its unit.
 
     Decisions are taken per UNIT - the rows sharing `id_key` - and applied to
     all of its rows or none of them; every skip reason is counted so the dry
@@ -488,13 +477,11 @@ def plan_corrections_by_formula(
             if formula is None:
                 refused = "untouched: session has a row matching neither formula"
                 break
-            if formula == RAW and any(now.peak[i] > stored[i] for i in range(4)):
-                refused = "untouched: session where a correction would increase a raw sum"
-                break
-            # No FIRST counterpart: a first sum is only ever recognised
-            # exactly, and a message's peak is at least its first entry in
-            # every field, so correcting one can only raise it.
-            # verify_fields' may_increase still enforces that at write time.
+            # No direction refusal is needed: both formulas are recognised
+            # exactly, a raw sum is at least the peak in every field (it
+            # counts every entry the peak counts) and a first sum at most
+            # (a message's peak is at least its first entry). verify_fields
+            # still enforces each row's direction at write time.
             proposals[index] = (now.peak, formula)
 
         if refused:
@@ -513,9 +500,9 @@ def plan_corrections_by_formula(
             before = sum(records[index].get(field, 0) or 0 for field in TOKEN_FIELDS)
             # A planned row's peak is never zero: a zero peak means every
             # entry up to that moment is zero, so the raw and first sums are
-            # zero too, and a non-zero stored row cannot be recognised as
-            # either (its drift from a zero reference is undefined and
-            # excluded). The guard stays for the division.
+            # zero too, and a row equal to either is equal to the peak -
+            # already correct, never planned. The guard stays for the
+            # division.
             after = sum(values)
             if after:  # pragma: no branch - see the comment above
                 factors.append(before / after)
