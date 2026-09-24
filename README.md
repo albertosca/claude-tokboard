@@ -18,7 +18,7 @@ A raw token count mixes cheap cache reads with the tokens that count against rat
 
 - **A quota view, not just a volume view.** A separate line estimates how much of your rate limit a period used: input and cache writes on one side, output on the other, cache reads left out - the weighting Anthropic documents for its API. Claude Code doesn't publish its own formula, so the line is labelled approximate.
 - **One day, three slicings.** The trend chart splits each day's total by project, by token type or by model. A day stays the same height in every tab, so switching re-slices it instead of rescaling it.
-- **An honest last bar.** The bucket still in progress shows how much of it has elapsed (and is hatched, in the browser), so a half-finished week never reads as a drop.
+- **An honest last bar.** The browser always shows how much of the bucket still in progress has elapsed, hatched, so a half-finished week never reads as a drop there; the terminal app shows the same percentage in its last tick label when there's room, but drops it at narrow terminal widths for lack of space.
 - **Every session, with its subagents.** Sessions are grouped by project, each with its subagents, duration and token breakdown, and filterable by period.
 - **Click to highlight.** Click a legend entry or a bar to spotlight one project, token type or model across the chart.
 

@@ -18,7 +18,7 @@ Uma contagem crua de tokens mistura leitura de cache, que é barata, com os toke
 
 - **Uma visão de cota, não só de volume.** Uma linha à parte estima quanto do seu rate limit o período consumiu: entrada e escrita de cache de um lado, saída do outro, leitura de cache fora da conta - o peso que a Anthropic documenta para a API dela. O Claude Code não publica a própria fórmula, então a linha vem marcada como aproximada.
 - **Um dia, três recortes.** O gráfico de tendência divide o total de cada dia por projeto, por tipo de token ou por modelo. Um dia tem a mesma altura em todas as abas, então trocar de aba refatia o dia em vez de mudar a escala.
-- **Uma última barra honesta.** O período que ainda está em andamento mostra quanto dele já passou (e aparece hachurado, no navegador), para que uma semana pela metade nunca pareça uma queda.
+- **Uma última barra honesta.** No navegador, o período que ainda está em andamento sempre mostra quanto dele já passou, hachurado, para que uma semana pela metade nunca pareça uma queda ali; o app de terminal mostra a mesma porcentagem no rótulo do último eixo quando há espaço, mas a descarta em terminais estreitos por falta de espaço.
 - **Cada sessão, com os seus subagentes.** As sessões ficam agrupadas por projeto, cada uma com seus subagentes, duração e tokens detalhados, e dá para filtrar por período.
 - **Clique para destacar.** Clique numa entrada da legenda ou numa barra para destacar um projeto, tipo de token ou modelo no gráfico inteiro.
 
