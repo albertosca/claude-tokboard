@@ -86,6 +86,7 @@ import shutil
 import stat
 import sys
 import tempfile
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -230,7 +231,13 @@ def _valid_cutoff(value: str) -> str:
     return value
 
 
-def write_atomically(path: str, snapshot_prefix: bytes, new_lines: list[bytes], mode: int) -> int:
+def write_atomically(
+    path: str,
+    snapshot_prefix: bytes,
+    new_lines: list[bytes],
+    mode: int,
+    on_replaced: Callable[[], None] | None = None,
+) -> int:
     """Rename a fully written file into place, carrying over live appends.
 
     The metrics file is append-only and written by every running session, so
@@ -274,6 +281,9 @@ def write_atomically(path: str, snapshot_prefix: bytes, new_lines: list[bytes], 
 
             temporary.chmod(mode)
             temporary.replace(target)
+            if on_replaced is not None:
+                # The file is rewritten from here on; see record_state.
+                on_replaced()
             stamp = datetime.now().strftime("%Y-%m-%d-%H%M%S")
             late = carry_late_appends(old, target, stamp)
     except BaseException:
@@ -441,9 +451,30 @@ def main() -> int:
         return 1
     print(f"\nbackup verified: {backup}\n  sha256 {backup_sha}")
 
+    def record_state() -> None:
+        # The earliest timestamp_end actually corrected, and the count of
+        # rows that could never be (no transcript on disk) - both feed the
+        # boundary note's other half: WHERE correction stops for lack of
+        # transcript retention, not just the cutoff date. Called by
+        # write_atomically the moment the corrected file is in place, BEFORE
+        # the post-write checks: if one of them fails the file is already
+        # rewritten, and an unrecorded rewrite is never recorded - a re-run
+        # finds every row corrected and has nothing to write.
+        earliest_corrected = min((records[index]["timestamp_end"] for index in plan), default=None)
+        write_backfill_state(
+            args.cutoff,
+            datetime.now().isoformat(),
+            len(plan),
+            uncorrectable_rows=stats.get("untouched: no transcript on disk", 0),
+            earliest_corrected=earliest_corrected,
+            path=args.state_file,
+            kind=args.kind,
+        )
+        print(f"  backfill state recorded: {args.state_file}")
+
     mode = stat.S_IMODE(metrics_path.stat().st_mode)
     new_lines = [json.dumps(record).encode("utf-8") for record in corrected]
-    appended = write_atomically(path, snapshot, new_lines, mode)
+    appended = write_atomically(path, snapshot, new_lines, mode, on_replaced=record_state)
 
     written = metrics_path.read_bytes()
     written_count = written.count(b"\n")
@@ -457,23 +488,6 @@ def main() -> int:
         return 1
     print(f"  mode {oct(stat.S_IMODE(metrics_path.stat().st_mode))}")
     print(f"  sha256 {sha256_bytes(written)}")
-
-    # The earliest timestamp_end actually corrected, and the count of rows
-    # that could never be (no transcript on disk) - both feed the boundary
-    # note's other half: WHERE correction stops for lack of transcript
-    # retention, not just the cutoff date.
-    earliest_corrected = min((records[index]["timestamp_end"] for index in plan), default=None)
-    uncorrectable_rows = stats.get("untouched: no transcript on disk", 0)
-    write_backfill_state(
-        args.cutoff,
-        datetime.now().isoformat(),
-        len(plan),
-        uncorrectable_rows=uncorrectable_rows,
-        earliest_corrected=earliest_corrected,
-        path=args.state_file,
-        kind=args.kind,
-    )
-    print(f"  backfill state recorded: {args.state_file}")
     return 0
 
 

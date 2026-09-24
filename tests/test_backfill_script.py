@@ -884,7 +884,29 @@ def test_main_aborts_on_a_written_line_count_mismatch(tmp_path, script, monkeypa
 
     assert exit_code == 1
     assert "LINE COUNT MISMATCH: expected 1000, got 1" in capsys.readouterr().err
-    assert not state_path.exists()
+    # The file WAS rewritten before the check failed, so the correction is
+    # recorded: without it a re-run finds every row already corrected, says
+    # "nothing to correct" and the run is never recorded at all. (This test
+    # used to assert the state was absent - pinning exactly that.)
+    assert json.loads(state_path.read_text())["corrected_rows"] == 1
+
+
+def test_main_records_the_state_when_a_post_write_check_raises(
+    tmp_path, script, monkeypatch, capsys
+):
+    # A half line landing during the rename makes write_atomically raise
+    # AFTER the corrected file is in place. The state must already say so.
+    paths = _subagents_fixture(tmp_path)
+    _append_just_before_the_rename(monkeypatch, paths["metrics"], b'{"half')
+    monkeypatch.setattr("sys.argv", _subagents_argv(paths, "--apply"))
+
+    with pytest.raises(RuntimeError, match="late-append"):
+        script.main()
+
+    rows = [json.loads(line) for line in paths["metrics"].read_text().splitlines()]
+    assert [row["input_tokens"] for row in rows] == [100, 50, 20]
+    state = json.loads(paths["state"].read_text())
+    assert state["subagents"]["corrected_rows"] == 2
 
 
 def test_module_guard_calls_main_and_exits_with_its_return_code(tmp_path, monkeypatch):
