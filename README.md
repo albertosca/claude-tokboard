@@ -26,20 +26,33 @@ A raw token count mixes cheap cache reads with the tokens that count against rat
 
 <sub>The terminal app - same data, keyboard-driven: <kbd>g</kbd> charts/sessions, <kbd>t</kbd> chart mode, <kbd>p</kbd> period, <kbd>q</kbd> quit.</sub>
 
-> The interface speaks English and Brazilian Portuguese, following your terminal's locale - or set "language": "en" or "pt" (or a tag like pt-BR) in ~/.claude/metrics/config.json.
-
-> Since 2.1.0, AI task labels are cached per language. The first run migrates `~/.claude/metrics/task_labels.json` and `agent_labels.json` and keeps the old files as `task_labels.json.pre-i18n` and `agent_labels.json.pre-i18n`. Copying those back restores them for an older version.
+> The interface speaks English and Brazilian Portuguese, following your terminal's locale - or set "language": "en" or "pt" (or a tag like pt-BR) in ~/.claude/metrics/config.json. The token types - input, output, cache read, cache creation - keep their English names in both languages, because those are the terms Anthropic's API uses for them.
 
 ## Install
 
-Install it through Claude Code's plugin system (see the [Claude Code plugin docs](https://docs.claude.com/en/docs/claude-code)). Logging starts on its own; then, whenever you want to look:
+From a shell:
+
+```bash
+claude plugin marketplace add albertosca/claude-tokboard
+claude plugin install tokboard@tokboard
+```
+
+Inside Claude Code, `/plugin` does the same interactively (more in the [Claude Code plugin docs](https://docs.claude.com/en/docs/claude-code)). Logging starts on its own; then, whenever you want to look:
 
 | Command | What it does |
 |---|---|
-| `/tokboard` | Builds the HTML dashboard and opens it in your browser. No dependencies. |
-| `/tokboard-tui` | Sets up the terminal app on first run, then hands you the command to launch it in your own terminal. |
+| `/tokboard` | Builds the HTML dashboard and opens it in your browser. Standard-library Python only - nothing to install. |
+| `/tokboard-tui` | Opens the terminal app. The first run creates a virtual environment in the plugin's own folder (`.venv`) and installs `textual` and `textual-plotext` into it from PyPI. Every run then prints the command to paste into your own terminal. |
 
 The browser opens by itself on macOS; elsewhere, open `~/.claude/metrics/dashboard.html`.
+
+The command `/tokboard-tui` prints looks like this, with the plugin's real folder filled in:
+
+```bash
+<plugin folder>/.venv/bin/python3 <plugin folder>/dashboard_tui.py
+```
+
+The terminal app needs `python3` 3.10 or newer, with the `venv` module.
 
 <details>
 <summary><code>/tokboard-tui</code> fails on first run with an <code>ensurepip</code> error (Debian/Ubuntu)</summary>
@@ -71,15 +84,19 @@ Turn it on with `--label-budget N` (N new labels per run; cached ones are free),
 
 **Filters.** Both scripts also take `--project`, `--tag` and `--days`/`--all` to narrow what they show.
 
-**Naming your projects.** A session is logged under whatever directory it ran in, so work inside `my-api/docs/vendor` would show up as "vendor". Tell tokboard where your projects live, in `~/.claude/metrics/config.json`:
+**Naming your projects.** A session is logged under the directory it ran in, which isn't always the project. List the folders your projects live in, in `~/.claude/metrics/config.json`:
 
 ```json
 { "project_roots": ["~/code", "~/work"] }
 ```
 
-Any folder directly inside a listed root is one project, however deep the session went. Newer sessions record their project root automatically; this setting is what names older ones.
+| Session ran in | Shown without `project_roots` | Shown with `~/code` listed |
+|---|---|---|
+| `~/code/my-api/docs/vendor` | vendor | my-api |
 
-**tmux.** If you run Claude Code inside tmux, the HTML dashboard shows the window each session ran in. Nothing to configure.
+Every folder directly inside a listed root is one project, however deep the session went. Sessions logged by recent versions already record their project root, so this mostly fixes older history.
+
+**tmux.** If you run Claude Code inside tmux, the hook records the tmux window's name with each session, and the HTML dashboard shows it. Nothing to configure.
 
 ## Your data
 
@@ -94,6 +111,17 @@ Any folder directly inside a listed root is one project, however deep the sessio
 - **The page is tested by using it.** The rendering tests drive the real generated dashboard in jsdom - clicking, filtering, highlighting - and assert on computed styles, not on markup.
 - **Strict static checks.** `ruff` with ten rule families and `mypy --strict` on every push to main and every pull request.
 - **Careful with your data.** The scripts that repair old logs are dry runs unless given `--apply`, back up the file and verify the copy by sha256 before writing, and the per-model one first checks its reconstruction against records the hook had logged natively, refusing to run on a disagreement.
+
+## Upgrading
+
+```bash
+claude plugin marketplace update tokboard
+claude plugin update tokboard@tokboard
+```
+
+Restart Claude Code afterwards to load the new version.
+
+Since 2.1.0, AI task labels are cached per language. The first time 2.1.0 or later saves to `~/.claude/metrics/task_labels.json` or `agent_labels.json`, it converts the file to the new format and keeps the original next to it as `task_labels.json.pre-i18n` or `agent_labels.json.pre-i18n`. To go back to a version before 2.1.0, copy those files back over the new ones: that restores your AI task labels in the format the older version reads.
 
 ## Contributing
 
