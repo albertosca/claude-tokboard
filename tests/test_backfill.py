@@ -1159,6 +1159,71 @@ def test_write_backfill_state_for_sessions_keeps_the_subagents_entry(tmp_path):
     assert loaded["subagents"]["corrected_rows"] == 150
 
 
+def test_a_second_apply_extends_the_record_instead_of_replacing_it(tmp_path):
+    # A later run corrects only what the earlier ones left. Replacing the
+    # entry would report its handful of rows as the whole correction and
+    # move the retention boundary forward to ITS earliest row - on a copy of
+    # the real files, 2798 corrected sessions rows became 41 and the
+    # boundary moved from July to 2026-08-12.
+    path = str(tmp_path / "state.json")
+    mr.write_backfill_state(
+        "2026-08-21", "2026-08-21T19:49:23", 2798, 10, earliest_corrected="2026-07-22", path=path
+    )
+    written = mr.write_backfill_state(
+        "2026-09-23", "2026-09-23T21:00:00", 41, 8695, earliest_corrected="2026-08-12", path=path
+    )
+    assert written == {
+        "cutoff": "2026-09-23",
+        "applied_at": "2026-09-23T21:00:00",
+        "corrected_rows": 2839,
+        "uncorrectable_rows": 8695,
+        "earliest_corrected": "2026-07-22",
+    }
+
+
+def test_a_second_apply_over_a_record_without_a_boundary_keeps_it_unknown(tmp_path):
+    # The real state predates earliest_corrected. The earlier run's boundary
+    # is unknown, so the later run's own earliest row is no boundary either.
+    path = tmp_path / "state.json"
+    path.write_text(
+        json.dumps({"cutoff": "2026-08-21", "applied_at": "2026-08-21T19:49", "corrected_rows": 5})
+    )
+    written = mr.write_backfill_state(
+        "2026-09-23", "2026-09-23T21:00:00", 41, 0, earliest_corrected="2026-08-12", path=str(path)
+    )
+    assert written["corrected_rows"] == 46
+    assert written["earliest_corrected"] is None
+
+
+def test_a_second_subagents_apply_extends_the_subagents_record(tmp_path):
+    path = str(tmp_path / "state.json")
+    mr.write_backfill_state(
+        "2026-08-21", "a", 42, 7, earliest_corrected="2026-08-11", path=path, kind="subagents"
+    )
+    written = mr.write_backfill_state(
+        "2026-09-23", "b", 820, 3, earliest_corrected="2026-08-24", path=path, kind="subagents"
+    )
+    assert written["subagents"] == {
+        "cutoff": "2026-09-23",
+        "applied_at": "b",
+        "corrected_rows": 862,
+        "uncorrectable_rows": 3,
+        "earliest_corrected": "2026-08-11",
+    }
+
+
+def test_a_later_apply_that_reaches_further_back_moves_the_boundary_back(tmp_path):
+    # A unit an earlier run skipped (it spanned that run's cutoff) can hold
+    # rows older than anything that run corrected.
+    path = str(tmp_path / "state.json")
+    mr.write_backfill_state("2026-08-21", "a", 10, earliest_corrected="2026-08-01", path=path)
+    written = mr.write_backfill_state(
+        "2026-09-23", "b", 3, earliest_corrected="2026-07-15", path=path
+    )
+    assert written["earliest_corrected"] == "2026-07-15"
+    assert written["corrected_rows"] == 13
+
+
 def test_write_backfill_state_for_subagents_over_a_malformed_file(tmp_path):
     # A hand-edited state that is not a dict is replaced rather than merged
     # into; the sessions side then reads as never applied, which is true of

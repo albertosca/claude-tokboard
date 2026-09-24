@@ -694,13 +694,29 @@ def write_backfill_state(
     One state file serves both metrics files. The sessions entry keeps the
     flat top-level shape both dashboards read through describe_backfill_state
     (and that every state written before subagents were deduped has); a
-    subagents run nests its entry under a "subagents" key. Each kind replaces
+    subagents run nests its entry under a "subagents" key. Each kind touches
     only its own entry, so neither run erases the other's record. A file that
     does not hold a dict is replaced rather than merged into.
+
+    A later run on a kind that already has an entry EXTENDS it: it corrects
+    only what earlier runs left, so its rows are added to theirs and the
+    retention boundary stays at the earliest row any run corrected. An
+    earlier entry that never recorded that boundary (the state predates the
+    key) makes it unknown for good - the later run's own earliest row is not
+    the boundary of rows it never saw. Cutoff, time and the uncorrectable
+    count describe the file as of this run, so they are replaced.
     """
     path = path or BACKFILL_STATE_FILE
     existing = load_backfill_state(path)
     state: dict[str, Any] = existing if isinstance(existing, dict) else {}
+    previous = state.get("subagents") if kind == "subagents" else state
+    if isinstance(previous, dict) and isinstance(previous.get("applied_at"), str):
+        corrected_rows += previous.get("corrected_rows") or 0
+        earlier = previous.get("earliest_corrected")
+        if not isinstance(earlier, str):
+            earliest_corrected = None
+        elif earliest_corrected is None or earlier < earliest_corrected:
+            earliest_corrected = earlier
     entry = {
         "cutoff": cutoff,
         "applied_at": applied_at,
