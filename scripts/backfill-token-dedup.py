@@ -418,41 +418,45 @@ def main() -> int:
         return 0
 
     if not plan:
-        print("\nnothing to correct; leaving the file untouched")
-    else:
-        backup_dir = Path(args.backup_dir)
-        backup_dir.mkdir(parents=True, exist_ok=True)
-        stamp = datetime.now().strftime("%Y-%m-%d-%H%M%S")
-        backup = backup_dir / f"{metrics_path.name}.backfill-{stamp}.bak"
-        shutil.copy2(path, backup)
-        source_sha = sha256_of(path)
-        backup_sha = sha256_of(str(backup))
-        if source_sha != backup_sha:
-            # Can legitimately differ if a hook appended between the copy and the
-            # re-read; either way an unverified backup is not a backup.
-            print(
-                f"BACKUP VERIFICATION FAILED\n  source {source_sha}\n  backup {backup_sha}",
-                file=sys.stderr,
-            )
-            return 1
-        print(f"\nbackup verified: {backup}\n  sha256 {backup_sha}")
-
-        mode = stat.S_IMODE(metrics_path.stat().st_mode)
-        new_lines = [json.dumps(record).encode("utf-8") for record in corrected]
-        appended = write_atomically(path, snapshot, new_lines, mode)
-
-        written = metrics_path.read_bytes()
-        written_count = written.count(b"\n")
-        expected = len(raw_lines) + appended
+        # No state write either: the state records the run that corrected
+        # rows - its cutoff, its earliest corrected row, the retention note
+        # the dashboards render - and a caught-up rerun has nothing to add
+        # but zeros that would erase it.
+        print("\nnothing to correct; leaving the file and the backfill state untouched")
+        return 0
+    backup_dir = Path(args.backup_dir)
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now().strftime("%Y-%m-%d-%H%M%S")
+    backup = backup_dir / f"{metrics_path.name}.backfill-{stamp}.bak"
+    shutil.copy2(path, backup)
+    source_sha = sha256_of(path)
+    backup_sha = sha256_of(str(backup))
+    if source_sha != backup_sha:
+        # Can legitimately differ if a hook appended between the copy and the
+        # re-read; either way an unverified backup is not a backup.
         print(
-            f"wrote {path}: {written_count} lines "
-            f"({len(raw_lines)} rewritten + {appended} appended while running)"
+            f"BACKUP VERIFICATION FAILED\n  source {source_sha}\n  backup {backup_sha}",
+            file=sys.stderr,
         )
-        if written_count != expected:
-            print(f"LINE COUNT MISMATCH: expected {expected}, got {written_count}", file=sys.stderr)
-            return 1
-        print(f"  mode {oct(stat.S_IMODE(metrics_path.stat().st_mode))}")
-        print(f"  sha256 {sha256_bytes(written)}")
+        return 1
+    print(f"\nbackup verified: {backup}\n  sha256 {backup_sha}")
+
+    mode = stat.S_IMODE(metrics_path.stat().st_mode)
+    new_lines = [json.dumps(record).encode("utf-8") for record in corrected]
+    appended = write_atomically(path, snapshot, new_lines, mode)
+
+    written = metrics_path.read_bytes()
+    written_count = written.count(b"\n")
+    expected = len(raw_lines) + appended
+    print(
+        f"wrote {path}: {written_count} lines "
+        f"({len(raw_lines)} rewritten + {appended} appended while running)"
+    )
+    if written_count != expected:
+        print(f"LINE COUNT MISMATCH: expected {expected}, got {written_count}", file=sys.stderr)
+        return 1
+    print(f"  mode {oct(stat.S_IMODE(metrics_path.stat().st_mode))}")
+    print(f"  sha256 {sha256_bytes(written)}")
 
     # The earliest timestamp_end actually corrected, and the count of rows
     # that could never be (no transcript on disk) - both feed the boundary

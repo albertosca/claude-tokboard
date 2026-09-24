@@ -307,23 +307,31 @@ def test_write_atomically_except_handler_tolerates_a_temp_file_already_gone(
         script.write_atomically(str(path), snapshot, [b'{"a": "corrected"}'], 0o644)
 
 
-def test_main_writes_backfill_state_after_a_successful_apply(tmp_path, script, monkeypatch):
-    # No transcript exists for "s1" here, so plan_corrections finds nothing
-    # to correct and main() takes the `if not plan:` branch. This exercises
-    # the state-write call on the EMPTY-plan path (still real: this is what
-    # every run after the file is fully caught up looks like) - the
-    # non-empty path, which drives the backup/write/verify block, is
-    # covered separately below.
+def test_main_leaves_the_backfill_state_alone_when_an_apply_has_nothing_to_correct(
+    tmp_path, script, monkeypatch, capsys
+):
+    # No transcript exists for "s1" here, so the plan is empty - what every
+    # run after the file is caught up looks like. Such a run used to write
+    # the state anyway, replacing the record of the run that DID correct
+    # rows with corrected_rows 0 and earliest_corrected null: the retention
+    # note both dashboards render would have lost its date. This test used
+    # to assert exactly that overwrite.
     metrics_file = tmp_path / "sessions.jsonl"
     projects_dir = tmp_path / "projects"
     projects_dir.mkdir()
     backup_dir = tmp_path / "backups"
     state_path = tmp_path / "backfill_state.json"
+    previous = (
+        b'{"cutoff": "2026-08-21", "applied_at": "2026-08-21T19:49:23", '
+        b'"corrected_rows": 2798, "earliest_corrected": "2026-07-22T09:00:00"}'
+    )
+    state_path.write_bytes(previous)
     metrics_file.write_text(
         '{"session_id": "s1", "timestamp_end": "2026-08-01T00:00:00", '
         '"input_tokens": 0, "output_tokens": 0, '
         '"cache_read_tokens": 0, "cache_creation_tokens": 0}\n'
     )
+    before = metrics_file.read_bytes()
 
     monkeypatch.setattr(
         "sys.argv",
@@ -343,16 +351,59 @@ def test_main_writes_backfill_state_after_a_successful_apply(tmp_path, script, m
     exit_code = script.main()
 
     assert exit_code == 0
-    assert state_path.exists()
+    out = capsys.readouterr().out
+    assert "nothing to correct; leaving the file and the backfill state untouched" in out
+    assert state_path.read_bytes() == previous
+    assert metrics_file.read_bytes() == before
+    assert not backup_dir.exists()
+
+
+def test_main_records_uncorrectable_rows_beside_the_corrected_ones(tmp_path, script, monkeypatch):
+    # The retention boundary's other half: rows no transcript can reach are
+    # counted into the state of a run that corrected something.
+    projects_dir = tmp_path / "projects"
+    slug_dir = projects_dir / "some-project"
+    slug_dir.mkdir(parents=True)
+    usage = {
+        "input_tokens": 100,
+        "output_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "cache_creation_input_tokens": 0,
+    }
+    _write_transcript(
+        slug_dir / "s1.jsonl",
+        [("2026-08-01T10:00:00", "msg-1", usage), ("2026-08-01T10:00:01", "msg-1", usage)],
+    )
+    metrics_file = tmp_path / "sessions.jsonl"
+    rows = [
+        {"session_id": "s1", "timestamp_end": "2026-08-01T10:00:01", "input_tokens": 200},
+        {"session_id": "gone", "timestamp_end": "2026-08-01T10:00:01", "input_tokens": 5},
+    ]
+    for row in rows:
+        row.update(output_tokens=0, cache_read_tokens=0, cache_creation_tokens=0)
+    metrics_file.write_text("".join(json.dumps(row) + "\n" for row in rows))
+    state_path = tmp_path / "backfill_state.json"
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "backfill-token-dedup.py",
+            "--metrics-file",
+            str(metrics_file),
+            "--projects-dir",
+            str(projects_dir),
+            "--backup-dir",
+            str(tmp_path / "backups"),
+            "--state-file",
+            str(state_path),
+            "--apply",
+        ],
+    )
+
+    assert script.main() == 0
+
     state = json.loads(state_path.read_text())
-    assert state["cutoff"]
-    assert "applied_at" in state
-    assert state["corrected_rows"] == 0
-    # "s1" has no transcript on disk, so plan_corrections can never touch
-    # it - the state records that as the OTHER boundary (retention, not
-    # just the cutoff date), and there is nothing corrected to date.
+    assert state["corrected_rows"] == 1
     assert state["uncorrectable_rows"] == 1
-    assert state["earliest_corrected"] is None
 
 
 def test_main_rejects_a_malformed_cutoff(script, monkeypatch, capsys):
