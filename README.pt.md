@@ -123,6 +123,8 @@ Depois, reinicie o Claude Code para carregar a versão nova.
 
 A partir da 2.1.0, os rótulos de tarefa de IA ficam em cache por idioma. Na primeira vez que a 2.1.0 ou mais nova grava em `~/.claude/metrics/task_labels.json` ou `agent_labels.json`, ela converte o arquivo para o formato novo e guarda o original ao lado, como `task_labels.json.pre-i18n` ou `agent_labels.json.pre-i18n`. Para voltar a uma versão anterior à 2.1.0, copie esses arquivos por cima dos novos: isso restaura seus rótulos de tarefa de IA no formato que a versão antiga lê.
 
+A partir da 2.2.0, a contagem de ferramentas passa a ser por chamada distinta - cerca de 4x maior que antes para o mesmo trabalho -, enquanto as linhas antigas mantêm a contagem de quando foram gravadas; também a partir da 2.2.0, o consumo de subagente registrado pelo Claude Code 2.1.278 ou mais recente é um piso, porque o Claude Code nem sempre grava o consumo final de uma mensagem de subagente.
+
 ## Contribuindo
 
 ```bash

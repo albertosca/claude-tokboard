@@ -123,6 +123,8 @@ Restart Claude Code afterwards to load the new version.
 
 Since 2.1.0, AI task labels are cached per language. The first time 2.1.0 or later saves to `~/.claude/metrics/task_labels.json` or `agent_labels.json`, it converts the file to the new format and keeps the original next to it as `task_labels.json.pre-i18n` or `agent_labels.json.pre-i18n`. To go back to a version before 2.1.0, copy those files back over the new ones: that restores your AI task labels in the format the older version reads.
 
+From 2.2.0, the tools count is per distinct tool call - about 4x higher than before on the same work - while older rows keep their old counts as logged. Also from 2.2.0: subagent output recorded on Claude Code 2.1.278 or later is a lower bound, since Claude Code doesn't always write a subagent message's final usage.
+
 ## Contributing
 
 ```bash
