@@ -66,6 +66,8 @@ from itertools import pairwise
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "lib"))
 sys.path.insert(0, str(REPO_ROOT))
@@ -868,12 +870,14 @@ def test_no_room_for_a_canvas_draws_bars_of_no_width():
     assert [tui._bar_width_on(canvas, 30) for canvas in (-3, -2, -1, 0)] == [0.0] * 4
 
 
-def _shown_at(records: list[dict[str, Any]], sizes: list[tuple[int, int]]) -> list[str]:
+def _shown_at(
+    records: list[dict[str, Any]], sizes: list[tuple[int, int]], lang: str = "pt"
+) -> list[str]:
     """The text the mounted chart renders at each terminal size in turn."""
 
     class ChartOnly(App[None]):
         def compose(self) -> ComposeResult:
-            yield tui.TrendChart(mr, records, lang="pt")
+            yield tui.TrendChart(mr, records, lang=lang)
 
     async def drive() -> list[str]:
         shown = []
@@ -890,18 +894,25 @@ def _shown_at(records: list[dict[str, Any]], sizes: list[tuple[int, int]]) -> li
 TOO_NARROW = mr.t("chart_too_narrow", "pt")
 
 
-def test_the_chart_survives_every_narrow_width():
+@pytest.mark.parametrize("lang", ["en", "pt"])
+def test_the_chart_survives_every_narrow_width(lang: str) -> None:
     # A tmux pane can be dragged through any width; a crash in render kills
     # the whole dashboard. Measured before the fix: 4 columns (canvas -1)
     # raised ZeroDivisionError here, 5 (canvas 0) a ValueError in plotext.
     # These days peak at 100 tokens, so the widest y label is "100": the
     # canvas is the width less 5, and plotext needs at least one cell.
-    shown = _shown_at(_alternating_days(30), [(width, 20) for width in range(1, 21)])
+    #
+    # Parametrized over both languages (2026-09-23 review): every render
+    # here had only ever been checked in Portuguese, so an English-only
+    # regression in chart_too_narrow's own text - a typo, an accidental
+    # empty string, MESSAGES losing the "en" key - could ship unnoticed.
+    too_narrow = mr.t("chart_too_narrow", lang)
+    shown = _shown_at(_alternating_days(30), [(width, 20) for width in range(1, 21)], lang=lang)
     for width, text in enumerate(shown, start=1):
         if width - 5 < 1:
-            assert text == TOO_NARROW, width
+            assert text == too_narrow, (lang, width)
         else:
-            assert TOO_NARROW not in text and "┤" in text, (width, text)
+            assert too_narrow not in text and "┤" in text, (lang, width, text)
 
 
 def test_the_chart_survives_a_short_terminal():
