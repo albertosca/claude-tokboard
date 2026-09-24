@@ -61,6 +61,13 @@ Safety
   and must sum to the new totals; every other field is compared
   byte-for-byte before the rename.
 
+Limits
+------
+- only the four token fields (and tokens_by_model) are rewritten:
+  tool_call_count on historical rows stays as recorded, first-entry
+  undercount included (the hook counts distinct tool_use blocks since
+  2026-09-23).
+
 subagents.jsonl
 ---------------
 The subagent hook had the same bug, so subagents.jsonl needs the same

@@ -507,6 +507,39 @@ def test_parse_transcript_tool_call_count_counts_tool_use_blocks_only(script, tm
     assert parsed["tool_call_count"] == 2
 
 
+def test_parse_transcript_counts_tool_calls_carried_by_later_entries_of_a_message(script, tmp_path):
+    # A streamed message is one entry per content block, all sharing the
+    # message id: the thinking block first, each tool_use in an entry of its
+    # own after it. Counting only the first entry of an id counted 0 here
+    # (measured over every subagent transcript: 12,005 counted against
+    # 57,374 distinct tool_use blocks). A replayed entry repeats a block id
+    # and must not count twice.
+    def entry(second: int, block: dict[str, object]) -> str:
+        return json.dumps(
+            {
+                "type": "assistant",
+                "timestamp": f"2026-01-01T00:00:0{second}Z",
+                "message": {"id": "m1", "content": [block]},
+            }
+        )
+
+    path = tmp_path / "t.jsonl"
+    _write_lines(
+        path,
+        [
+            entry(0, {"type": "thinking", "thinking": "..."}),
+            entry(1, {"type": "tool_use", "id": "toolu_1", "name": "Read"}),
+            entry(2, {"type": "tool_use", "id": "toolu_2", "name": "Bash"}),
+            entry(3, {"type": "tool_use", "id": "toolu_1", "name": "Read"}),  # replay
+        ],
+    )
+
+    parsed = script.parse_transcript(str(path))
+
+    assert parsed["tool_call_count"] == 2
+    assert parsed["turn_count"] == 1
+
+
 def test_parse_transcript_duration_is_difference_of_first_and_last_timestamp(script, tmp_path):
     path = tmp_path / "t.jsonl"
     _write_lines(

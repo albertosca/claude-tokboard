@@ -129,6 +129,7 @@ def parse_transcript(path: str) -> dict[str, Any]:
     turn_count = 0
     tool_call_count = 0
     peaks: dict[Any, tuple[int, ...]] = {}
+    seen_tool_ids: set[Any] = set()
     first_timestamp = None
     last_timestamp = None
     git_branch = None
@@ -199,20 +200,28 @@ def parse_transcript(path: str) -> dict[str, Any]:
                     for position, field in enumerate(TOKEN_FIELDS):
                         bucket[field] += increment[position]
 
-                if not first_occurrence:
-                    # turn_count and tool_call_count keep their
-                    # first-occurrence counting unchanged. Known and NOT
-                    # fixed here (2026-09-23): a streamed message carries
-                    # its tool_use blocks in its LATER entries too, so
-                    # tool_call_count undercounts - over every transcript
-                    # on disk, 7,856 of 31,154 distinct tool_use blocks in
-                    # sessions and 12,005 of 57,374 in subagents.
-                    continue
-                turn_count += 1
+                if first_occurrence:
+                    turn_count += 1
+                # Tool calls are counted per DISTINCT tool_use block id,
+                # across every entry of the message: a streamed message
+                # writes each content block as its own entry, so its
+                # tool_use blocks sit in LATER entries of the id, which a
+                # first-entry count never saw (2026-09-23, over every
+                # transcript on disk: 7,856 of 31,154 distinct tool_use
+                # blocks counted in sessions, 12,005 of 57,374 in
+                # subagents). The block id makes a replayed entry count
+                # once. A block without an id cannot be matched, so it
+                # counts on its message's first entry only, as before.
                 content = message.get("content") or []
                 if isinstance(content, list):
                     for block in content:
-                        if isinstance(block, dict) and block.get("type") == "tool_use":
+                        if not isinstance(block, dict) or block.get("type") != "tool_use":
+                            continue
+                        block_id = block.get("id")
+                        if block_id is None:
+                            tool_call_count += first_occurrence
+                        elif block_id not in seen_tool_ids:
+                            seen_tool_ids.add(block_id)
                             tool_call_count += 1
 
     duration_seconds = None
