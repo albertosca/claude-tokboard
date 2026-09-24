@@ -436,7 +436,14 @@ def plan_corrections_by_formula(
     run shows exactly what was and was not touched. `transcripts` is keyed by
     that same id. For subagents.jsonl pass id_key="agent_id" (see
     UNIT_ID_KEYS): the session_id on a subagent row is its parent's.
+
+    Two of the disposition labels below name the unit by noun ("session" or
+    "agent") rather than hard-coding "session" - scripts/backfill-token-dedup.py
+    prints these stats verbatim in its "Row disposition" report, and a
+    --kind subagents run grouped by agent_id calling every one of its units
+    a "session" there was simply wrong (2026-09-23 review).
     """
+    unit_noun = "agent" if id_key == "agent_id" else "session"
     stats: collections.Counter[str] = collections.Counter()
     factors: list[float] = []
     plan: dict[int, list[int]] = {}
@@ -458,7 +465,7 @@ def plan_corrections_by_formula(
         ):
             # One row past the cutoff disqualifies the whole session, so the
             # snapshot series is never left half corrected.
-            stats["untouched: session spans the cutoff"] += len(indexes)
+            stats[f"untouched: {unit_noun} spans the cutoff"] += len(indexes)
             continue
 
         timeline = scan_transcript(transcript)
@@ -475,7 +482,7 @@ def plan_corrections_by_formula(
                 continue
             formula = _recognise(stored, now)
             if formula is None:
-                refused = "untouched: session has a row matching neither formula"
+                refused = f"untouched: {unit_noun} has a row matching neither formula"
                 break
             # No direction refusal is needed: both formulas are recognised
             # exactly, a raw sum is at least the peak in every field (it

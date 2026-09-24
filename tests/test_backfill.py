@@ -786,6 +786,47 @@ def test_plan_corrections_still_groups_on_session_id_by_default(tmp_path):
     assert stats["untouched: no transcript on disk"] == 1
 
 
+def test_plan_corrections_labels_a_spanning_unit_by_agent_when_grouped_by_agent_id(tmp_path):
+    # The disposition label used to say "session" unconditionally, even for
+    # a --kind subagents run grouped by agent_id (2026-09-23 review) -
+    # misleading in scripts/backfill-token-dedup.py's own printed "Row
+    # disposition" report on that kind. Grouped by agent_id, it must say
+    # "agent" instead, and never also register under the "session" wording.
+    path = tmp_path / "agent-a1.jsonl"
+    write_transcript(
+        path,
+        [
+            ("2026-08-01T10:00:00", "m1", usage(input_tokens=100)),
+            ("2026-08-01T10:00:01", "m1", usage(input_tokens=100)),
+        ],
+    )
+    records = [
+        subagent_record("a1", "2026-08-01T10:00:01", 200),  # correctable on its own
+        subagent_record("a1", "2026-08-14T00:00:00", 200),  # past the cutoff
+    ]
+    plan, stats, _factors = mr.plan_corrections(
+        records, {"a1": str(path)}, cutoff="2026-08-13", id_key="agent_id"
+    )
+    assert plan == {}
+    assert stats["untouched: agent spans the cutoff"] == 2
+    assert "untouched: session spans the cutoff" not in stats
+
+
+def test_plan_corrections_labels_a_neither_formula_unit_by_agent_when_grouped_by_agent_id(
+    tmp_path,
+):
+    path = tmp_path / "agent-a1.jsonl"
+    write_transcript(path, [("2026-08-01T10:00:00", "m1", usage(input_tokens=1000))])
+    # 1500 is 50% off the raw sum (1000) - well outside tolerance.
+    records = [subagent_record("a1", "2026-08-01T10:00:00", 1500)]
+    plan, stats, _factors = mr.plan_corrections(
+        records, {"a1": str(path)}, cutoff="2026-08-13", id_key="agent_id"
+    )
+    assert plan == {}
+    assert stats["untouched: agent has a row matching neither formula"] == 1
+    assert "untouched: session has a row matching neither formula" not in stats
+
+
 def test_find_nonmonotonic_sessions_groups_subagents_by_agent_id():
     # Two agents of one parent: a1 finishes big, a2 finishes small and later.
     # Each series is non-decreasing on its own; merged under the parent's
