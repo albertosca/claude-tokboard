@@ -121,6 +121,29 @@ def usage_increment(
     return tuple(max(0, values[i] - peak[i]) for i in fields)
 
 
+def count_incomplete(message_order: list[Any], finalised: set[Any]) -> int:
+    """How many messages are over but never got their final usage entry.
+
+    Claude Code writes a message's final entry with a non-null stop_reason,
+    and that entry carries the message's full usage. Measured 2026-09-25 over
+    every transcript on disk: all 74,698 ids that have one carry their
+    largest output there; replays repeat it, so an id can have several, all
+    with the same reason. An id with NONE never had its usage written - since
+    Claude Code 2.1.278, ~17,000 subagent ids end on a streaming placeholder
+    (output 1-4 tokens for about a third of them) - so the totals counted for
+    it are a floor, and this is the count that says so.
+
+    The message first seen LAST is excluded: a snapshot taken mid-response
+    sees the newest message before its final entry exists, and counting it
+    would flag every in-progress snapshot. A message is over once another
+    one has started after it. The price is that a transcript whose very last
+    message was never finalised goes unflagged (25 of 1,315 subagent
+    transcripts on 2026-09-25) - an undercount of the flag, never a false one.
+    `message_order` lists ids in first-seen order.
+    """
+    return sum(1 for message_id in message_order[:-1] if message_id not in finalised)
+
+
 def parse_transcript(path: str) -> dict[str, Any]:
     input_tokens = 0
     output_tokens = 0
@@ -130,6 +153,8 @@ def parse_transcript(path: str) -> dict[str, Any]:
     tool_call_count = 0
     peaks: dict[Any, tuple[int, ...]] = {}
     seen_tool_ids: set[Any] = set()
+    message_order: list[Any] = []
+    finalised: set[Any] = set()
     first_timestamp = None
     last_timestamp = None
     git_branch = None
@@ -202,6 +227,11 @@ def parse_transcript(path: str) -> dict[str, Any]:
 
                 if first_occurrence:
                     turn_count += 1
+                if message_id is not None:
+                    if first_occurrence:
+                        message_order.append(message_id)
+                    if message.get("stop_reason") is not None:
+                        finalised.add(message_id)
                 # Tool calls are counted per DISTINCT tool_use block id,
                 # across every entry of the message: a streamed message
                 # writes each content block as its own entry, so its
@@ -245,6 +275,7 @@ def parse_transcript(path: str) -> dict[str, Any]:
         "tokens_by_model": tokens_by_model,
         "turn_count": turn_count,
         "tool_call_count": tool_call_count,
+        "incomplete_usage_messages": count_incomplete(message_order, finalised),
     }
 
 

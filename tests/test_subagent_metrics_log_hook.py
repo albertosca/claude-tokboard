@@ -339,6 +339,7 @@ _PARSED_STUB = {
     "cache_read_tokens": 3,
     "cache_creation_tokens": 4,
     "tool_call_count": 6,
+    "incomplete_usage_messages": 0,
     "tokens_by_model": {
         "model-alpha": {
             "input_tokens": 1,
@@ -632,3 +633,26 @@ def test_build_record_ignores_an_empty_project_root(script, monkeypatch):
     record = script.build_record({"agent_id": "a", "cwd": "/x"}, _PARSED_STUB)
 
     assert "project_root" not in record
+
+
+def test_build_record_records_incomplete_usage_messages_only_when_there_are_some(script):
+    # Absent means zero, as in the session hook.
+    flagged = dict(_PARSED_STUB, incomplete_usage_messages=2)
+
+    assert script.build_record({"agent_id": "a1"}, flagged)["incomplete_usage_messages"] == 2
+    assert "incomplete_usage_messages" not in script.build_record({"agent_id": "a1"}, _PARSED_STUB)
+
+
+def test_parse_transcript_counts_unfinalised_subagent_messages(script, tmp_path):
+    # The shape Claude Code 2.1.278+ leaves in subagent transcripts: a
+    # streamed message with a 1-4 token placeholder and no final entry.
+    path = tmp_path / "agent.jsonl"
+    entries = [
+        {"id": "m1", "stop_reason": None, "usage": {"output_tokens": 2}},
+        {"id": "m2", "stop_reason": "end_turn", "usage": {"output_tokens": 80}},
+    ]
+    path.write_text(
+        "".join(json.dumps({"type": "assistant", "message": m}) + "\n" for m in entries)
+    )
+
+    assert script.parse_transcript(str(path))["incomplete_usage_messages"] == 1

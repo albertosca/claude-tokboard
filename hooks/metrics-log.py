@@ -97,6 +97,10 @@ def build_record(hook_input: dict[str, Any], parsed: dict[str, Any]) -> dict[str
         "internal_name": get_internal_name(session_id),
         "transcript_path": hook_input.get("transcript_path"),
     }
+    # Only when there are some: absent means zero, as for every row
+    # written before the key existed, and most rows have none.
+    if parsed["incomplete_usage_messages"]:
+        record["incomplete_usage_messages"] = parsed["incomplete_usage_messages"]
     # Added, never set to None: the whole historical corpus has no such
     # key, so "absent" already has to mean "unknown" - a null would be a
     # second spelling of the same thing for every reader to handle.

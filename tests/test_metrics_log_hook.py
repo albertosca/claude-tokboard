@@ -540,6 +540,86 @@ def test_parse_transcript_counts_tool_calls_carried_by_later_entries_of_a_messag
     assert parsed["turn_count"] == 1
 
 
+def _message(message_id: str, output: int, stop_reason: str | None = None) -> str:
+    """One assistant entry; `stop_reason` set marks the entry Claude Code
+    writes when a message is final (measured 2026-09-25: every id that has
+    one carries its largest output there)."""
+    return json.dumps(
+        {
+            "type": "assistant",
+            "timestamp": "2026-01-01T00:00:00Z",
+            "message": {
+                "id": message_id,
+                "model": "model-alpha",
+                "stop_reason": stop_reason,
+                "usage": {"input_tokens": 1, "output_tokens": output},
+            },
+        }
+    )
+
+
+def test_parse_transcript_counts_messages_that_never_got_a_final_entry(script, tmp_path):
+    # m1 streamed placeholders and was never finalised, but m2 came after it,
+    # so m1 is over: its usage will never be written.
+    path = tmp_path / "t.jsonl"
+    _write_lines(path, [_message("m1", 1), _message("m1", 3), _message("m2", 50, "end_turn")])
+
+    parsed = script.parse_transcript(str(path))
+
+    assert parsed["incomplete_usage_messages"] == 1
+
+
+def test_parse_transcript_does_not_flag_a_streamed_message_that_was_finalised(script, tmp_path):
+    path = tmp_path / "t.jsonl"
+    _write_lines(
+        path,
+        [_message("m1", 1), _message("m1", 40, "tool_use"), _message("m2", 9, "end_turn")],
+    )
+
+    assert script.parse_transcript(str(path))["incomplete_usage_messages"] == 0
+
+
+def test_parse_transcript_does_not_flag_the_last_message_which_may_still_be_streaming(
+    script, tmp_path
+):
+    # A snapshot taken mid-response sees the newest message without its final
+    # entry yet; flagging it would mark every in-progress snapshot.
+    path = tmp_path / "t.jsonl"
+    _write_lines(path, [_message("m1", 9, "end_turn"), _message("m2", 1)])
+
+    assert script.parse_transcript(str(path))["incomplete_usage_messages"] == 0
+
+
+def test_parse_transcript_counts_an_unfinalised_message_even_when_it_is_replayed_last(
+    script, tmp_path
+):
+    # "Last" is the message first seen last, not the last line: a replay of
+    # an older message at the end of the file does not make it in progress.
+    path = tmp_path / "t.jsonl"
+    _write_lines(
+        path,
+        [_message("m1", 2), _message("m2", 9, "end_turn"), _message("m1", 2)],
+    )
+
+    assert script.parse_transcript(str(path))["incomplete_usage_messages"] == 1
+
+
+def test_parse_transcript_replayed_final_entries_do_not_flag_or_double_count(script, tmp_path):
+    path = tmp_path / "t.jsonl"
+    final = _message("m1", 9, "end_turn")
+    _write_lines(path, [final, _message("m2", 1), _message("m2", 5, "end_turn"), final])
+
+    assert script.parse_transcript(str(path))["incomplete_usage_messages"] == 0
+
+
+def test_parse_transcript_entries_without_an_id_are_never_flagged(script, tmp_path):
+    path = tmp_path / "t.jsonl"
+    no_id = json.dumps({"type": "assistant", "message": {"usage": {"output_tokens": 2}}})
+    _write_lines(path, [no_id, _message("m2", 9, "end_turn"), no_id])
+
+    assert script.parse_transcript(str(path))["incomplete_usage_messages"] == 0
+
+
 def test_parse_transcript_duration_is_difference_of_first_and_last_timestamp(script, tmp_path):
     path = tmp_path / "t.jsonl"
     _write_lines(
@@ -821,6 +901,7 @@ _PARSED_STUB = {
     "cache_creation_tokens": 4,
     "turn_count": 5,
     "tool_call_count": 6,
+    "incomplete_usage_messages": 0,
     "tokens_by_model": {
         "model-alpha": {
             "input_tokens": 1,
@@ -1105,3 +1186,16 @@ def test_build_record_ignores_an_empty_project_root(script, monkeypatch):
     record = script.build_record({"session_id": "s", "cwd": "/x"}, _PARSED_STUB)
 
     assert "project_root" not in record
+
+
+def test_build_record_records_incomplete_usage_messages_only_when_there_are_some(
+    script, monkeypatch
+):
+    # Absent means zero: the whole historical corpus has no such key, and a
+    # key on every row would only grow the file.
+    monkeypatch.setattr(script, "get_tmux_window", lambda: None)
+    monkeypatch.setattr(script, "get_internal_name", lambda session_id, sessions_dir=None: None)
+    flagged = dict(_PARSED_STUB, incomplete_usage_messages=3)
+
+    assert script.build_record({"session_id": "s"}, flagged)["incomplete_usage_messages"] == 3
+    assert "incomplete_usage_messages" not in script.build_record({"session_id": "s"}, _PARSED_STUB)
