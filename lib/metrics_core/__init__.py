@@ -30,7 +30,13 @@ from .backfill import (
     verify_fields,
     write_backfill_state,
 )
-from .format import format_date, format_duration, format_tokens, model_display_label
+from .format import (
+    assign_model_slots,
+    format_date,
+    format_duration,
+    format_tokens,
+    model_display_label,
+)
 from .granularity import (
     GRANULARITY_CONFIG,
     aggregate_by_day,
@@ -122,6 +128,7 @@ __all__ = [
     "apply_plan",
     "as_of",
     "assign_group_colors",
+    "assign_model_slots",
     "build_prefix_sums",
     "build_project_groups",
     "choose_granularity",

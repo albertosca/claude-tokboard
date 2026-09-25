@@ -61,7 +61,7 @@ import asyncio
 import json
 import re
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
 from itertools import pairwise
 from pathlib import Path
 from typing import Any
@@ -1104,3 +1104,114 @@ def test_the_whole_dashboard_survives_every_narrow_width(monkeypatch, tmp_path):
         # single row of dates, so no axis is asserted here - the chart-only
         # sweep above checks the axis.
         assert all(text.strip() for _, _, text in renders[switch:]), mode
+
+
+# ---------------------------------------------------------------------------
+# A model's colour does not depend on the period (backlog 2026-09-24 #6)
+# ---------------------------------------------------------------------------
+
+
+def _dated_model_session(
+    session_id: str, days_ago: int, by_model: dict[str, dict[str, int]]
+) -> dict[str, Any]:
+    start = datetime.now().astimezone().replace(hour=9, minute=0, second=0, microsecond=0)
+    start -= timedelta(days=days_ago)
+    total = sum(sum(bucket.values()) for bucket in by_model.values())
+    return {
+        "session_id": session_id,
+        "project_path": "/projects/p",
+        "timestamp_start": start.isoformat(),
+        "timestamp_end": (start + timedelta(hours=1)).isoformat(),
+        "input_tokens": total,
+        "output_tokens": 0,
+        "cache_read_tokens": 0,
+        "cache_creation_tokens": 0,
+        "tokens_by_model": by_model,
+    }
+
+
+OPUS, SONNET = "claude-opus-4-8", "claude-sonnet-4-5"
+# Two ids that hash to the same one of seven slots. Only the older sessions
+# have "model-0", so a tie settled per period would hand "model-1" the slot
+# both want in the last fifteen days and a different one over everything.
+EARLY, LATE = "model-0", "model-1"
+
+# Opus leads the whole history; sonnet leads the last fifteen days. Ranked,
+# opus drew in the first colour under "tudo" and the second under "15-dias".
+_OLD = {OPUS: _m(input_tokens=2000), SONNET: _m(input_tokens=10)}
+_NEW = {OPUS: _m(input_tokens=10), SONNET: _m(input_tokens=1000)}
+_RANKINGS_DIFFER = [
+    _dated_model_session("old-1", 20, _OLD | {EARLY: _m(input_tokens=5), LATE: _m(input_tokens=5)}),
+    _dated_model_session("old-2", 19, _OLD),
+    _dated_model_session("new-1", 3, _NEW | {LATE: _m(input_tokens=5)}),
+    _dated_model_session("new-2", 2, _NEW),
+]
+
+
+def _top_model(data: dict[str, Any]) -> str:
+    totals = mr.compute_model_totals(data["daily_chart_records"])[0]
+    return max(totals, key=lambda model: totals[model])
+
+
+def _model_colours(data: dict[str, Any]) -> dict[str, str]:
+    chart = tui.TrendChart(
+        mr, data["daily_chart_records"], mode="model", lang="pt", model_slots=data["model_slots"]
+    )
+    chart.render_chart()
+    raw = chart.plt.build()
+    return {
+        model: _legend_colour(raw, mr.model_display_label(model)) for model in (OPUS, SONNET, LATE)
+    }
+
+
+def test_a_model_keeps_its_colour_in_periods_that_rank_it_differently(monkeypatch, tmp_path):
+    isolate_tui_from_the_real_filesystem(monkeypatch, tmp_path)
+    _write_sessions(tmp_path, _RANKINGS_DIFFER)
+    args = tui.build_arg_parser().parse_args(["--label-budget", "0"])
+    base = tui.load_base_data(args, mr=mr)
+    everything = tui.apply_period(base, "tudo", mr)
+    recent = tui.apply_period(base, "15-dias", mr)
+    # The premise: the two periods really do rank the models differently.
+    assert (_top_model(everything), _top_model(recent)) == (OPUS, SONNET)
+    colours = _model_colours(everything)
+    assert colours == _model_colours(recent)
+    assert len(set(colours.values())) == 3
+
+
+def test_the_dashboard_hands_its_chart_the_slots_settled_over_the_whole_history(
+    monkeypatch, tmp_path
+):
+    isolate_tui_from_the_real_filesystem(monkeypatch, tmp_path)
+    _write_sessions(tmp_path, _RANKINGS_DIFFER)
+    args = tui.build_arg_parser().parse_args(["--label-budget", "0"])
+
+    async def drive() -> list[dict[str, int | None] | None]:
+        app = tui.MetricsTUIApp(mr, tui.load_data(args, mr=mr), args=args)
+        seen = []
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause()
+            seen.append(app.query_one(tui.TrendChart).model_slots)
+            await pilot.press("p")
+            await pilot.pause()
+            seen.append(app.query_one(tui.TrendChart).model_slots)
+        return seen
+
+    expected = mr.assign_model_slots([OPUS, SONNET, EARLY, LATE], len(tui.PANE_COLORS))
+    assert asyncio.run(drive()) == [expected, expected]
+
+
+def test_a_model_past_the_last_colour_is_drawn_in_the_other_colour():
+    # Eight models, seven colours: the one left without a slot shares the
+    # "other" colour with the unattributed band rather than reusing a
+    # model's colour.
+    models = [f"model-{i}" for i in range(8)]
+    records = [
+        _model_session(f"s{i}", 1 + i % 2, {model: _m(input_tokens=100)}, total=200)
+        for i, model in enumerate(models)
+    ]
+    chart = tui.TrendChart(mr, records, mode="model", lang="pt")
+    chart.render_chart(now=datetime(2026, 8, 12, 0, 0).astimezone())
+    raw = chart.plt.build()
+    colours = [_legend_colour(raw, model) for model in models]
+    assert len(set(colours)) == 8
+    assert _legend_colour(raw, mr.t("no_model", "pt")) in colours

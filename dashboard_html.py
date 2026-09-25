@@ -322,6 +322,10 @@ def render_detail_panel(
     )
 
 
+# The group-color-N classes the stylesheet defines (dashboard_html_assets.py).
+MODEL_COLOR_SLOTS = 30
+
+
 def render_trend_chart(
     records: list[dict[str, Any]],
     group_colors: dict[str | None, str],
@@ -329,6 +333,7 @@ def render_trend_chart(
     now: datetime | None = None,
     *,
     lang: str,
+    model_slots: dict[str, int | None] | None = None,
 ) -> str:
     granularity, days = mr.aggregate_by_day(records)
     parse_fmt = mr.GRANULARITY_CONFIG[granularity]["parse_fmt"]
@@ -552,8 +557,24 @@ def render_trend_chart(
     # one trend-mode pane is ever visible at once" - and showTrendMode now
     # clears the highlight when the pane changes, so a model's slot can
     # never be left lighting up a project that happens to share it.
-    model_class = {m: f"group-color-{(i % 30) + 1}" for i, m in enumerate(model_order)}
+    #
+    # The slot is the model's own, not its rank in this period (backlog
+    # 2026-09-24 #6): ranked, a model changed colour between periods
+    # whenever another one outspent it. render_html settles the slots once,
+    # over the whole history, so every period's chart agrees; a chart
+    # rendered on its own settles them over its own records. A model past
+    # the last slot shares the unattributed colour, the same "other" the
+    # TUI gives it.
+    slots = (
+        model_slots
+        if model_slots is not None
+        else mr.assign_model_slots(model_order, MODEL_COLOR_SLOTS)
+    )
     unattributed_class = "group-color-none"
+    model_class = {
+        m: unattributed_class if (slot := slots.get(m)) is None else f"group-color-{slot + 1}"
+        for m in model_order
+    }
 
     def bars_for_model() -> str:
         bars = []
@@ -985,6 +1006,11 @@ def render_html(
     lang: str,
 ) -> str:
     group_colors = build_group_colors(chart_records, daily_chart_records)
+    # Over the whole history, not per period, so a model keeps its colour
+    # in every period's chart - see mr.assign_model_slots.
+    model_slots = mr.assign_model_slots(
+        mr.compute_model_totals(daily_chart_records)[0], MODEL_COLOR_SLOTS
+    )
 
     def periods_for(record: dict[str, Any]) -> tuple[str, ...]:
         return tuple(
@@ -1104,7 +1130,9 @@ def render_html(
         hidden_attr = "" if period.id == mr.DEFAULT_PERIOD_ID else " hidden"
         trend_blocks.append(
             f'<div class="period-block" data-period="{period.id}"{hidden_attr}>'
-            + render_trend_chart(scoped_daily, group_colors, period.id, now=now, lang=lang)
+            + render_trend_chart(
+                scoped_daily, group_colors, period.id, now=now, lang=lang, model_slots=model_slots
+            )
             + "</div>"
         )
         panorama_blocks.append(

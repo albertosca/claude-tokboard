@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import re
+import zlib
+from collections.abc import Iterable
 
 from .i18n import session_date
 
@@ -26,6 +28,68 @@ def model_display_label(model: str) -> str:
     """
     label = model[len("claude-") :] if model.startswith("claude-") else model
     return _MODEL_DATE_SUFFIX.sub("", label)
+
+
+# The families every chart knows, in the slot each one prefers. Matched as a
+# whole hyphen-separated word, so "claude-opus-4-8" and "claude-3-opus-..."
+# are both opus.
+_MODEL_FAMILIES = ("opus", "sonnet", "haiku", "fable")
+_MODEL_FAMILY = re.compile(r"(?:^|-)(" + "|".join(_MODEL_FAMILIES) + r")(?:-|$)")
+
+
+def _family_rank(model: str) -> int:
+    """The model's family's place in _MODEL_FAMILIES, or one past the end."""
+    match = _MODEL_FAMILY.search(model)
+    return _MODEL_FAMILIES.index(match.group(1)) if match else len(_MODEL_FAMILIES)
+
+
+def _preferred_model_slot(model: str, slots: int) -> int:
+    rank = _family_rank(model)
+    if rank < min(len(_MODEL_FAMILIES), slots):
+        return rank
+    # crc32, not hash(): Python salts str hashes per process, and a colour
+    # that followed hash() would change every time the dashboard starts.
+    return zlib.crc32(model.encode()) % slots
+
+
+def assign_model_slots(models: Iterable[str], slots: int) -> dict[str, int | None]:
+    """A colour slot per model id, the same whichever period is on screen.
+
+    Both dashboards used to colour the "by model" chart by each model's
+    rank in the period being shown, so a model changed colour whenever
+    another one outspent it (backlog 2026-09-24 #6). Here a model's slot
+    comes from its id: the four known families take slots 0-3, anything
+    else a stable hash of its id.
+
+    Two models can want one slot - two versions of a family always do - so
+    the ties are settled over the WHOLE set of models passed in, which is
+    why callers pass every model in the history rather than those in one
+    period: in id order (families first), the first to want a slot gets it,
+    and each of the rest takes the next free one after the slot it wanted.
+    A model's slot therefore only moves when a model new to the history
+    competes for it - wants the same slot and sorts first, or takes a slot
+    the model had probed its way to. Once every slot is taken, the rest get
+    None - the caller's shared "other" colour.
+    """
+    ordered = sorted(set(models), key=lambda m: (_family_rank(m), m))
+    assignment: dict[str, int | None] = {}
+    taken: set[int] = set()
+    waiting: list[str] = []
+    for model in ordered:
+        preferred = _preferred_model_slot(model, slots)
+        if preferred in taken:
+            waiting.append(model)
+            continue
+        assignment[model] = preferred
+        taken.add(preferred)
+    for model in waiting:
+        preferred = _preferred_model_slot(model, slots)
+        free = [(preferred + step) % slots for step in range(1, slots)]
+        slot = next((candidate for candidate in free if candidate not in taken), None)
+        assignment[model] = slot
+        if slot is not None:
+            taken.add(slot)
+    return assignment
 
 
 def format_tokens(n: int | float | None) -> str:

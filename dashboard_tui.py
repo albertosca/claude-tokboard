@@ -257,6 +257,11 @@ def load_base_data(args: argparse.Namespace, mr: ModuleType | None = None) -> di
     project_first_seen = mr.compute_project_first_seen(all_time_records)
     project_last_seen = mr.compute_project_last_seen(all_time_records)
     open_projects = mr.get_open_projects()
+    # Over the whole history, not per period, so a model keeps its colour
+    # whichever period is on screen - see assign_model_slots.
+    model_slots = mr.assign_model_slots(
+        mr.compute_model_totals(daily_chart_records)[0], len(PANE_COLORS)
+    )
 
     return {
         "records": records,
@@ -266,6 +271,7 @@ def load_base_data(args: argparse.Namespace, mr: ModuleType | None = None) -> di
         "project_first_seen": project_first_seen,
         "project_last_seen": project_last_seen,
         "open_projects": open_projects,
+        "model_slots": model_slots,
         "lang": lang,
     }
 
@@ -301,6 +307,7 @@ def apply_period(
         "project_first_seen": base["project_first_seen"],
         "project_last_seen": base["project_last_seen"],
         "open_projects": base["open_projects"],
+        "model_slots": base["model_slots"],
         "lang": base["lang"],
         "period_id": period_id,
         # The period-independent source this view was derived from, carried
@@ -712,6 +719,7 @@ class TrendChart(PlotextPlot):
         mode: str = "pane",
         *,
         lang: str,
+        model_slots: dict[str, int | None] | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
@@ -719,6 +727,10 @@ class TrendChart(PlotextPlot):
         self.chart_records = chart_records
         self.mode = mode
         self.lang = lang
+        # Each model's colour slot, settled over the whole history by
+        # load_base_data. None - a chart built on its own - settles them
+        # over this chart's records instead.
+        self.model_slots = model_slots
         self.highlighted: set[str] | None = None
         self.project_highlighted: set[str | None] | None = None
         self._now: datetime | None = None
@@ -851,9 +863,18 @@ class TrendChart(PlotextPlot):
             series_lists.append(unattributed)
             series_labels = [self.mr.model_display_label(m) for m in model_keys]
             series_labels.append(self.mr.t("no_model", self.lang))
+            # By the model's own slot, not its rank here: ranked, a model
+            # changed colour whenever another outspent it in the period on
+            # screen (backlog 2026-09-24 #6). The legend still lists them by
+            # spend.
+            slots = (
+                self.model_slots
+                if self.model_slots is not None
+                else self.mr.assign_model_slots(model_keys, len(PANE_COLORS))
+            )
             color = [
-                PANE_COLORS[i] if i < len(PANE_COLORS) else PANE_OTHER_COLOR
-                for i in range(len(model_keys))
+                PANE_OTHER_COLOR if (slot := slots.get(m)) is None else PANE_COLORS[slot]
+                for m in model_keys
             ]
             color.append(PANE_OTHER_COLOR)
             title = "chart_title.model"
@@ -1195,7 +1216,11 @@ class MetricsTUIApp(App[None]):
                 # recomposes every widget, and a fresh chart would silently
                 # drop the slicing they chose (2026-09-22).
                 yield TrendChart(
-                    self.mr, self.data["daily_chart_records"], mode=self.chart_mode, lang=lang
+                    self.mr,
+                    self.data["daily_chart_records"],
+                    mode=self.chart_mode,
+                    lang=lang,
+                    model_slots=self.data["model_slots"],
                 )
                 yield ProjectRankingList(
                     self.mr,

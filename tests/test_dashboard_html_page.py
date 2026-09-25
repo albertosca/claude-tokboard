@@ -27,6 +27,7 @@ one does not share that defect.
 
 import json
 import os
+import re
 import subprocess
 import sys
 from datetime import datetime, timedelta
@@ -240,6 +241,55 @@ def test_render_html_default_highlight_opens_with_every_series_and_project_color
     assert tokens == expected
 
 
+def _model_legends_by_period(out: str) -> dict[str, dict[str, str]]:
+    """Each period's "by model" legend, as {label: group-color class}."""
+    legends: dict[str, dict[str, str]] = {}
+    for chunk in out.split('<div class="period-block" data-period="')[1:]:
+        entries = re.findall(
+            r"highlightModel\('([^']+)', event\)\"><span class=\"legend-swatch [^\"]+\"></span>"
+            r"([^<]+)</span>",
+            chunk,
+        )
+        if entries:
+            legends[chunk.split('"', 1)[0]] = {label: css for css, label in entries}
+    return legends
+
+
+def test_render_html_gives_a_model_one_colour_in_periods_that_rank_it_differently() -> None:
+    # Backlog 2026-09-24 #6: the "by model" bands were coloured by rank in
+    # each period's own window. Opus leads the whole history and sonnet the
+    # last fifteen days; "model-0" and "model-1" hash to the same slot, and
+    # only the older days have "model-0", so a tie settled per period would
+    # move "model-1" too.
+    def day(date: str, by_model: dict[str, int]) -> dict[str, Any]:
+        buckets = {model: {"input_tokens": amount} for model, amount in by_model.items()}
+        return _session_record(
+            f"s-{date}",
+            "/work/proj-a",
+            tokens=sum(by_model.values()),
+            timestamp_start=f"{date}T10:00:00Z",
+            tokens_by_model=buckets,
+        )
+
+    old = {"claude-opus-4-8": 2000, "claude-sonnet-4-5": 10, "model-0": 5, "model-1": 5}
+    new = {"claude-opus-4-8": 10, "claude-sonnet-4-5": 1000, "model-1": 5}
+    kwargs = _empty_render_html_kwargs()
+    kwargs["daily_chart_records"] = [
+        day("2026-08-01", old),
+        day("2026-08-02", old),
+        day("2026-08-17", new),
+        day("2026-08-18", new),
+    ]
+    legends = _model_legends_by_period(dashboard_html.render_html(**kwargs, lang="pt"))
+    everything, recent = legends["tudo"], legends["15-dias"]
+    # The premise: the two periods list (so rank) the models differently.
+    assert list(everything)[:2] == ["opus-4-8", "sonnet-4-5"]
+    assert list(recent)[:2] == ["sonnet-4-5", "opus-4-8"]
+    for label in ("opus-4-8", "sonnet-4-5", "model-1"):
+        assert everything[label] == recent[label], label
+    assert len(set(everything.values())) == len(everything)
+
+
 def test_render_html_marks_exactly_one_default_period_active_per_block_family(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -253,7 +303,13 @@ def test_render_html_marks_exactly_one_default_period_active_per_block_family(
     call_order: list[int] = []
 
     def fake_trend(
-        records: Any, group_colors: Any, period_id: str, now: Any = None, *, lang: str
+        records: Any,
+        group_colors: Any,
+        period_id: str,
+        now: Any = None,
+        *,
+        lang: str,
+        model_slots: Any = None,
     ) -> str:
         return f"TREND::{period_id}"
 
