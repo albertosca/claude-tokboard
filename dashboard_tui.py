@@ -545,6 +545,29 @@ def pane_series_label(mr: ModuleType, key: str | None, *, lang: str) -> str:
     return label
 
 
+def partial_marker(
+    mr: ModuleType, granularity: str, pct: int, canvas_width: int | None, *, lang: str
+) -> str | None:
+    """The in-progress marker for the chart's last bucket, in the longest
+    form that fits under a canvas this many cells wide.
+
+    plotext centres an x label on the canvas and silently drops it when it
+    would run past either edge; one no longer than the canvas always fits
+    (plotext/_build.py: col_center = col_start + width_canvas // 2, and the
+    frame adds a cell on the right). None - before the widget is laid out -
+    means the full sentence. A canvas under three cells has room for none of
+    them, and gets nothing rather than a label plotext would drop anyway.
+    """
+    forms: list[str] = [
+        mr.t(f"partial_bar.{granularity}", lang, pct=pct),
+        mr.t("partial_bar.short", lang, pct=pct),
+        f"{pct}%",
+    ]
+    if canvas_width is None:
+        return forms[0]
+    return next((form for form in forms if len(form) <= canvas_width), None)
+
+
 def draw_stacked_bars(
     plt: Any,
     xlabels: list[str],
@@ -758,6 +781,11 @@ class TrendChart(PlotextPlot):
         # instead of a hardcoded [5:] MM-DD slice.
         granularity, days = self.mr.aggregate_by_day(self.chart_records)
         self.plt.clear_data()
+        # clear_data keeps labels, and the in-progress marker below must not
+        # outlive the bucket it describes: a chart left open past the end
+        # of that bucket, or dragged too narrow for the marker, redraws
+        # through here without setting it.
+        self.plt.xlabel(None)
         if len(days) < 2:
             return
         parse_fmt = self.mr.GRANULARITY_CONFIG[granularity]["parse_fmt"]
@@ -767,14 +795,12 @@ class TrendChart(PlotextPlot):
         ]
         # The last bucket is always a fraction of a full one while it's
         # still running (backlog, 2026-09-02: "the newest bar always reads
-        # as a decline") - annotated on its own label rather than greyed
-        # out like dashboard_html.py's SVG rects are: each series is drawn
-        # in one colour across every bucket (see draw_stacked_bars).
+        # as a decline") - said in words rather than greyed out like
+        # dashboard_html.py's SVG rects are: each series is drawn in one
+        # colour across every bucket (see draw_stacked_bars).
         partial_frac = self.mr.partial_bucket_fraction(
             granularity, days[-1]["day"], now or datetime.now().astimezone()
         )
-        if partial_frac is not None:
-            labels[-1] += f" · {round(partial_frac * 100)}%"
         color: Sequence[PlotColor]
         if self.mode == "pane":
             top_keys, has_other = compute_pane_projects(self.mr, self.chart_records)
@@ -883,6 +909,18 @@ class TrendChart(PlotextPlot):
         )
         self.plt.title(self.mr.t(title, self.lang))
         self.plt.yticks(tick_values, tick_labels)
+        # On a line of its own under the axis, not appended to the last
+        # tick label as it once was: plotext drops any tick label that
+        # would touch the one before it, walking left to right, so the
+        # last one - made longest by the suffix - was the first to go.
+        # Measured 2026-09-25 over 30 days of data: the percentage showed
+        # at 25 of the 141 widths from 60 to 200 columns, none under 163.
+        if partial_frac is not None:
+            marker = partial_marker(
+                self.mr, granularity, round(partial_frac * 100), canvas_width, lang=self.lang
+            )
+            if marker is not None:
+                self.plt.xlabel(marker)
 
 
 class ProjectLegend(Static):

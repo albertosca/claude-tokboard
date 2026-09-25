@@ -65,6 +65,34 @@ MESSAGES: dict[str, dict[str, str]] = {
     "mode.tokens": {"en": "By token type", "pt": "Por tipo de token"},
     "mode.model": {"en": "By model", "pt": "Por modelo"},
     "partial": {"en": " (partial, {pct}%)", "pt": " (parcial, {pct}%)"},
+    # The TUI chart's in-progress marker, one per granularity, printed on a
+    # line of its own under the x axis (see TrendChart._draw_chart for why
+    # not on the last tick). The short form is what a narrow chart gets.
+    "partial_bar.minute": {
+        "en": "last bar: {pct}% of the minute so far",
+        "pt": "última barra: {pct}% do minuto até agora",
+    },
+    "partial_bar.hour": {
+        "en": "last bar: {pct}% of the hour so far",
+        "pt": "última barra: {pct}% da hora até agora",
+    },
+    "partial_bar.day": {
+        "en": "last bar: {pct}% of the day so far",
+        "pt": "última barra: {pct}% do dia até agora",
+    },
+    "partial_bar.week": {
+        "en": "last bar: {pct}% of the week so far",
+        "pt": "última barra: {pct}% da semana até agora",
+    },
+    "partial_bar.month": {
+        "en": "last bar: {pct}% of the month so far",
+        "pt": "última barra: {pct}% do mês até agora",
+    },
+    "partial_bar.year": {
+        "en": "last bar: {pct}% of the year so far",
+        "pt": "última barra: {pct}% do ano até agora",
+    },
+    "partial_bar.short": {"en": "last bar: {pct}%", "pt": "última barra: {pct}%"},
     # Tabs and periods.
     "tab.sessions": {"en": "Sessions", "pt": "Sessões"},
     "tab.panorama": {"en": "Overview", "pt": "Panorama"},

@@ -407,7 +407,7 @@ def test_render_chart_annotates_the_last_label_when_its_bucket_is_still_running(
     # deliberately avoids, per this file's own module docstring precedent.
     chart = tui.TrendChart(mr, _AUGUST_RECORDS, lang="pt")
     chart.render_chart(now=datetime(2026, 8, 10, 12, 0).astimezone())
-    assert "10/08 · 50%" in chart.plt.build()
+    assert mr.t("partial_bar.day", "pt", pct=50) in chart.plt.build()
 
 
 def test_render_chart_does_not_annotate_a_bucket_thats_already_fully_elapsed():
@@ -420,6 +420,102 @@ def test_render_chart_does_not_annotate_a_bucket_thats_already_fully_elapsed():
     raw = chart.plt.build()
     assert "10/08" in raw
     assert "%" not in raw
+
+
+def test_the_in_progress_marker_goes_away_when_its_bucket_ends_on_the_same_chart():
+    # plotext's clear_data keeps labels, so a chart redrawn after the last
+    # bucket ended - left open past midnight - would keep saying the day
+    # is half over unless the redraw clears it.
+    chart = tui.TrendChart(mr, _AUGUST_RECORDS, lang="pt")
+    chart.render_chart(now=datetime(2026, 8, 10, 12, 0).astimezone())
+    chart.render_chart(now=datetime(2026, 8, 12, 0, 0).astimezone())
+    assert "%" not in chart.plt.build()
+
+
+@pytest.mark.parametrize(
+    ("canvas_width", "expected"),
+    [
+        (None, "última barra: 37% da semana até agora"),
+        (37, "última barra: 37% da semana até agora"),
+        (36, "última barra: 37%"),
+        (17, "última barra: 37%"),
+        (16, "37%"),
+        (3, "37%"),
+        (2, None),
+    ],
+)
+def test_partial_marker_is_the_longest_form_that_fits(
+    canvas_width: int | None, expected: str | None
+) -> None:
+    assert tui.partial_marker(mr, "week", 37, canvas_width, lang="pt") == expected
+
+
+# Every width the backlog item named, plus the two ends of the old failure:
+# with the percentage on the last tick label, plotext's left-to-right
+# thinning dropped it at every width under 163 columns for 30 days of data.
+MARKER_WIDTHS = [60, 80, 100, 120, 150, 200]
+
+
+def _shown_with_now(
+    records: list[dict[str, Any]], widths: list[int], now: datetime, lang: str, mode: str = "pane"
+) -> list[str]:
+    """The mounted chart's text at each width, with the clock pinned - real
+    time would leave these August buckets long finished, and a marker test
+    whose bucket is not in progress proves nothing."""
+
+    class ChartOnly(App[None]):
+        def compose(self) -> ComposeResult:
+            yield tui.TrendChart(mr, records, mode=mode, lang=lang)
+
+    async def drive() -> list[str]:
+        shown = []
+        async with ChartOnly().run_test(size=(widths[0], 24)) as pilot:
+            await pilot.pause()
+            chart = pilot.app.query_one(tui.TrendChart)
+            chart.render_chart(now=now)
+            for width in widths:
+                await pilot.resize_terminal(width, 24)
+                await pilot.pause()
+                shown.append(str(chart.render()))
+        return shown
+
+    return asyncio.run(drive())
+
+
+_THIRTY_AUGUST_DAYS = [_august_session(f"s{d}", day=d, tokens=100 * d) for d in range(1, 31)]
+
+
+@pytest.mark.parametrize("lang", ["en", "pt"])
+def test_the_in_progress_marker_is_visible_at_every_common_width(lang: str) -> None:
+    now = datetime(2026, 8, 30, 12, 0).astimezone()
+    marker = mr.t("partial_bar.day", lang, pct=50)
+    shown = _shown_with_now(_THIRTY_AUGUST_DAYS, MARKER_WIDTHS, now, lang)
+    for width, text in zip(MARKER_WIDTHS, shown, strict=True):
+        assert marker in text, (lang, width, text.splitlines()[-2:])
+
+
+def test_a_narrow_chart_gets_the_short_marker_and_plotext_keeps_it() -> None:
+    # The fit rule in partial_marker is only worth something if plotext
+    # agrees with it: at these widths the full sentence would be dropped.
+    now = datetime(2026, 8, 30, 12, 0).astimezone()
+    short = mr.t("partial_bar.short", "pt", pct=50)
+    for width, text in zip(
+        (24, 30, 40), _shown_with_now(_THIRTY_AUGUST_DAYS, [24, 30, 40], now, "pt"), strict=True
+    ):
+        assert short in text, (width, text.splitlines()[-2:])
+
+
+@pytest.mark.parametrize("mode", ["tokens", "model"])
+def test_the_in_progress_marker_is_drawn_in_every_chart_mode(mode: str) -> None:
+    now = datetime(2026, 8, 30, 12, 0).astimezone()
+    (text,) = _shown_with_now(_THIRTY_AUGUST_DAYS, [80], now, "en", mode=mode)
+    assert mr.t("partial_bar.day", "en", pct=50) in text
+
+
+def test_no_marker_at_any_width_once_the_last_bucket_is_complete() -> None:
+    now = datetime(2026, 8, 31, 0, 0).astimezone()
+    for text in _shown_with_now(_THIRTY_AUGUST_DAYS, MARKER_WIDTHS, now, "en"):
+        assert "%" not in text and "last bar" not in text
 
 
 # ---------------------------------------------------------------------------
@@ -663,11 +759,19 @@ def test_a_window_with_no_tokens_at_all_still_draws_its_axis():
     assert "05/08" in text
 
 
+def _tick_row_and_marker(text: str) -> list[str]:
+    """The x tick labels - the row right under the axis - followed by the
+    in-progress marker's words when the chart has one, on the row below."""
+    lines = text.splitlines()
+    axis = next(i for i, line in enumerate(lines) if "└" in line)
+    return " ".join(lines[axis + 1 :]).split()
+
+
 def _axis_labels(records: list[dict[str, Any]], now: datetime) -> list[str]:
     chart = tui.TrendChart(mr, records, lang="pt")
     chart.plt.plotsize(80, 12)
     chart.render_chart(now=now)
-    return _ANSI.sub("", chart.plt.build()).splitlines()[-1].split()
+    return _tick_row_and_marker(_ANSI.sub("", chart.plt.build()))
 
 
 def test_a_zero_token_bucket_at_the_end_keeps_its_date_and_its_in_progress_label():
@@ -675,11 +779,12 @@ def test_a_zero_token_bucket_at_the_end_keeps_its_date_and_its_in_progress_label
     # layer skips its zero days - so a bucket with records but no tokens,
     # at the window's edge, fell outside the plot. When that bucket was
     # today's, the " · 25%" in-progress label went with it. Found by the
-    # 2026-09-23 re-review.
+    # 2026-09-23 re-review. The percentage has since moved to a line of
+    # its own under the ticks (2026-09-25); the date must still be there.
     records = [_august_session(f"s{d}", day=d, tokens=100) for d in (1, 5, 10)]
     records.append(_august_session("s12", day=12, tokens=0))
     labels = _axis_labels(records, datetime(2026, 8, 12, 6, 0).astimezone())
-    assert labels[-3:] == ["12/08", "·", "25%"], labels
+    assert labels[-8:] == ["12/08", *mr.t("partial_bar.day", "pt", pct=25).split()], labels
 
 
 def test_a_zero_token_bucket_at_the_start_keeps_its_date():
@@ -692,8 +797,8 @@ def test_a_zero_token_bucket_at_the_start_keeps_its_date():
 def _mounted_axis_labels(records: list[dict[str, Any]], now: datetime) -> list[str]:
     """_axis_labels through the production width path: the chart mounted
     at 100 columns, sized and redrawn by its own render(). At 40 columns
-    and under plotext drops the long " · 25%" label for lack of room
-    (measured 2026-09-23), which would pin nothing."""
+    and under plotext dropped the long " · 25%" tick label for lack of
+    room (measured 2026-09-23), which would have pinned nothing."""
 
     class ChartOnly(App[None]):
         def compose(self) -> ComposeResult:
@@ -705,7 +810,7 @@ def _mounted_axis_labels(records: list[dict[str, Any]], now: datetime) -> list[s
             chart = pilot.app.query_one(tui.TrendChart)
             chart.render_chart(now=now)
             await pilot.pause()
-            return str(chart.render()).splitlines()[-1].split()
+            return _tick_row_and_marker(str(chart.render()))
 
     return asyncio.run(drive())
 
@@ -714,7 +819,7 @@ def test_a_mounted_chart_keeps_a_zero_token_bucket_at_either_edge():
     end = [_august_session(f"s{d}", day=d, tokens=100) for d in (1, 5, 10)]
     end.append(_august_session("s12", day=12, tokens=0))
     labels = _mounted_axis_labels(end, datetime(2026, 8, 12, 6, 0).astimezone())
-    assert labels[-3:] == ["12/08", "·", "25%"], labels
+    assert labels[-8:] == ["12/08", *mr.t("partial_bar.day", "pt", pct=25).split()], labels
 
     start = [_august_session("s1", day=1, tokens=0)]
     start += [_august_session(f"s{d}", day=d, tokens=100) for d in (5, 10, 12)]
