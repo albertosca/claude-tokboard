@@ -1104,11 +1104,22 @@ class MetricsTUIApp(App[None]):
     # a product name.
     TITLE = "tokboard"
 
+    # TabbedContent's height is `auto` by default and its panes fill the
+    # screen, so it used to claim the whole terminal whatever sat above it:
+    # the layout ran taller than the screen by the backfill note's height,
+    # and focusing the tree on mount scrolled the note out of sight on both
+    # tabs (measured 2026-09-25: 2-4 lines at 80-140 columns). At 1fr it
+    # takes what the note leaves. The note itself is held to one line, so
+    # it never takes the chart's rows either; the whole text is its tooltip.
     CSS = """
     Horizontal { height: 1fr; }
+    TabbedContent { height: 1fr; }
     Tree { width: 62%; }
     SessionDetailPanel { width: 1fr; border-left: solid $panel; padding: 1; }
-    .backfill-note { color: $text-muted; height: auto; padding: 0 1; }
+    .backfill-note {
+        color: $text-muted; height: 1; padding: 0 1;
+        text-wrap: nowrap; text-overflow: ellipsis;
+    }
     """
     # Bound per instance in __init__, because their descriptions are in
     # the run's language and a class attribute is fixed before any app
@@ -1154,10 +1165,10 @@ class MetricsTUIApp(App[None]):
 
     def compose(self) -> ComposeResult:
         lang = self.data["lang"]
-        yield Static(
-            self.mr.describe_backfill_state(self.mr.load_backfill_state(), lang=lang),
-            classes="backfill-note",
-        )
+        note = self.mr.describe_backfill_state(self.mr.load_backfill_state(), lang=lang)
+        backfill_note = Static(note, classes="backfill-note")
+        backfill_note.tooltip = note
+        yield backfill_note
         with TabbedContent(initial=self.active_tab_id):
             with TabPane(self.mr.t("tab.sessions", lang), id="tab-sessions"), Horizontal():
                 yield build_session_tree(
