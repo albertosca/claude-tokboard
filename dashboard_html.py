@@ -90,7 +90,23 @@ def render_composition_legend(totals: dict[str, int], *, lang: str) -> str:
     return quota_line + '<div class="comp-legend">' + "".join(chips) + "</div>"
 
 
+def render_floor_total(record: dict[str, Any], css_class: str, *, lang: str) -> str:
+    """A record's token total as a span - prefixed with "≥" and carrying the
+    catalog note as its tooltip when the record's output is only a floor
+    (incomplete_usage_messages), plain otherwise so unflagged rows are
+    unchanged."""
+    total = mr.format_tokens(mr.record_token_total(record))
+    incomplete = mr.incomplete_usage_messages(record)
+    if not incomplete:
+        return f'<span class="{css_class}">{total}</span>'
+    note = html.escape(mr.tn("floor_note", incomplete, lang), quote=True)
+    return f'<span class="{css_class}" title="{note}">≥{total}</span>'
+
+
 def render_composition_bar(record: dict[str, Any]) -> str:
+    # The output segment's figure gets the same "≥" as the row's total when
+    # it is a floor; the explanation lives on the total, once per row.
+    floor = "≥" if mr.incomplete_usage_messages(record) else ""
     segments = [
         ("series-1", record.get("input_tokens", 0) or 0),
         ("series-2", record.get("output_tokens", 0) or 0),
@@ -106,9 +122,10 @@ def render_composition_bar(record: dict[str, Any]) -> str:
             continue
         pct = value / total * 100
         name = SERIES_NAMES[css_class]
+        prefix = floor if css_class == "series-2" else ""
         parts.append(
             f'<span class="comp-seg {css_class}" style="width:{pct:.2f}%" '
-            f'title="{name} · {mr.format_tokens(value)} ({pct:.0f}%)" '
+            f'title="{name} · {prefix}{mr.format_tokens(value)} ({pct:.0f}%)" '
             f"onclick=\"highlightTokenType('{css_class}', event)\"></span>"
         )
     return f'<div class="comp-bar">{"".join(parts)}</div>'
@@ -139,7 +156,6 @@ def render_session_row(
     task_label = html.escape(raw_task_label)
     date_str = mr.format_date(record.get("timestamp_start"), lang=lang)
     duration_str = mr.format_duration(record.get("duration_seconds"))
-    total_tokens = mr.format_tokens(mr.record_token_total(record))
     active_class = " active" if is_active else ""
     group_class = group_colors.get(record.get("project_path"), "group-color-none")
     # Compact "has subagents" indicator (2026-07-21) - a count badge here
@@ -177,7 +193,7 @@ def render_session_row(
         f'<span class="label-col">{task_label}</span>'
         f'<span class="tag-col">{tag}</span>'
         f'<span class="branch-col" title="{branch}">{branch}</span>'
-        f'<span class="tokens-total">{total_tokens}</span>'
+        f"{render_floor_total(record, 'tokens-total', lang=lang)}"
         f"{render_composition_bar(record)}"
         f'<span class="duration-col">{duration_str}</span>'
         f"</div>"
@@ -291,7 +307,7 @@ def render_detail_panel(
             # número de tokens gastos") - the bar alone showed the
             # composition/proportions but never the actual amount,
             # unlike the session table's tokens column which has both.
-            subagent_total_tokens = mr.format_tokens(mr.record_token_total(subagent))
+            subagent_total_tokens = render_floor_total(subagent, "floor-total", lang=lang)
             zebra_class = " subagent-row-odd" if i % 2 == 1 else ""
             rows.append(
                 f'<div class="subagent-row{zebra_class}">'

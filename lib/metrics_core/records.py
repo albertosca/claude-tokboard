@@ -309,6 +309,15 @@ def filter_deltas_by_window(
     return kept
 
 
+def incomplete_usage_messages(record: dict[str, Any]) -> int:
+    """How many of this record's messages never got their final usage entry,
+    so its output is a floor - 0 when the key is absent (every row written
+    before 2026-09-25, and every complete one since) or not a positive int
+    (the file is hand-editable)."""
+    value = record.get("incomplete_usage_messages")
+    return value if isinstance(value, int) and value > 0 else 0
+
+
 def record_token_total(record: dict[str, Any]) -> int:
     # Every token a record consumed, all four kinds. Cache dominates real
     # usage by orders of magnitude - measured 2026-08-10 against Claude
@@ -521,7 +530,12 @@ def fold_subagent_tokens_into_sessions(
     # in-place so every list derived from the same dicts earlier in the
     # pipeline (all_time_records, chart_records, the day/limit-filtered
     # records) picks up the fold automatically.
+    #
+    # incomplete_usage_messages folds the same way: once a session's output
+    # includes a subagent's, it is a floor whenever that subagent's is. It is
+    # only ever ADDED when positive, so absent keeps meaning zero.
     subagent_totals_by_session: dict[Any, dict[str, int]] = {}
+    incomplete_by_session: dict[Any, int] = {}
     for subagent in subagent_records:
         session_id = subagent.get("session_id")
         if session_id is None:
@@ -529,10 +543,18 @@ def fold_subagent_tokens_into_sessions(
         totals = subagent_totals_by_session.setdefault(session_id, dict.fromkeys(TOKEN_FIELDS, 0))
         for field in TOKEN_FIELDS:
             totals[field] += subagent.get(field, 0) or 0
+        incomplete_by_session[session_id] = incomplete_by_session.get(
+            session_id, 0
+        ) + incomplete_usage_messages(subagent)
     for record in records:
-        session_totals = subagent_totals_by_session.get(record.get("session_id"))
+        session_id = record.get("session_id")
+        session_totals = subagent_totals_by_session.get(session_id)
         if not session_totals:
             continue
         for field in TOKEN_FIELDS:
             record[field] = (record.get(field, 0) or 0) + session_totals[field]
+        if incomplete_by_session[session_id]:
+            record["incomplete_usage_messages"] = (
+                incomplete_usage_messages(record) + incomplete_by_session[session_id]
+            )
     return records

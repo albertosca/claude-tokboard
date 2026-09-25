@@ -53,6 +53,17 @@ MESSAGES: dict[str, dict[str, str]] = {
     },
     # The detail panel's close button - also missed by the plan's table.
     "detail.close": {"en": "Close", "pt": "Fechar"},
+    # Why an output figure carries a "≥": the hooks' incomplete_usage_messages
+    # (transcript_ingest.count_incomplete). "output" stays untranslated, as in
+    # the composition legend it points at.
+    "floor_note.one": {
+        "en": "Claude Code didn't record the final usage of {n} message; output is a minimum",
+        "pt": "O Claude Code não registrou o uso final de {n} mensagem; o output é um mínimo",
+    },
+    "floor_note.other": {
+        "en": "Claude Code didn't record the final usage of {n} messages; output is a minimum",
+        "pt": "O Claude Code não registrou o uso final de {n} mensagens; o output é um mínimo",
+    },
     # Charts.
     "chart_title.pane": {"en": "Tokens per day (by project)", "pt": "Tokens por dia (por projeto)"},
     "chart_title.tokens": {

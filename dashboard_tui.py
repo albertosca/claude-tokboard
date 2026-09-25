@@ -365,6 +365,10 @@ def build_session_tree(
             date_str = mr.format_date(record.get("timestamp_start"), lang=lang)
             task_label = record.get("task_label") or "-"
             tokens = mr.format_tokens(mr.record_token_total(record))
+            # A floor gets a "≥" inside the same right-aligned column; the
+            # detail panel carries the note that says why.
+            if mr.incomplete_usage_messages(record):
+                tokens = "≥" + tokens
             duration = record.get("duration_seconds")
             duration_str = f"{duration:.0f}s" if duration is not None else "-"
             # Subagent count badge (2026-07-21, ported from
@@ -399,7 +403,12 @@ class SessionDetailPanel(VerticalScroll):
     def clear(self) -> None:
         self._body.update("")
 
-    def show_session(self, session_id: str, subagents: list[dict[str, Any]]) -> None:
+    def show_session(
+        self, session_id: str, subagents: list[dict[str, Any]], incomplete_usage: int = 0
+    ) -> None:
+        """`incomplete_usage` is the session's folded count (its own messages
+        plus every subagent's, see fold_subagent_tokens_into_sessions): when
+        positive, the one note line saying why its figures carry a "≥"."""
         lines = [f"[bold]{session_id}[/bold]", ""]
         if not subagents:
             lines.append(f"[dim]{self.mr.t('detail.no_subagents', self.lang)}[/dim]")
@@ -416,6 +425,8 @@ class SessionDetailPanel(VerticalScroll):
                 agent_label = subagent.get("agent_label") or "-"
                 in_tok = self.mr.format_tokens(subagent.get("input_tokens", 0))
                 out_tok = self.mr.format_tokens(subagent.get("output_tokens", 0))
+                if self.mr.incomplete_usage_messages(subagent):
+                    out_tok = "≥" + out_tok
                 duration = subagent.get("duration_seconds")
                 duration_str = f"{duration:.0f}s" if duration is not None else "-"
                 task = f"{agent_type} — {agent_label}"[:38]
@@ -425,6 +436,8 @@ class SessionDetailPanel(VerticalScroll):
                     f"{subagent.get('tool_call_count', 0):>8}{duration_str:>10}"
                 )
                 lines.append(f"[{style}]{row}[/{style}]" if style else row)
+        if incomplete_usage:
+            lines.append(f"[dim]{self.mr.tn('floor_note', incomplete_usage, self.lang)}[/dim]")
         self._body.update("\n".join(lines))
 
 
@@ -1247,7 +1260,17 @@ class MetricsTUIApp(App[None]):
             return
         session_id = session_data["session_id"]
         subagents = self.data["subagents_by_session"].get(session_id, [])
-        self.query_one(SessionDetailPanel).show_session(session_id, subagents)
+        # The session's own row, already folded, holds the count its "≥"
+        # stands for - so the panel explains exactly what the row shows.
+        incomplete = next(
+            (
+                self.mr.incomplete_usage_messages(record)
+                for record in self.data["records"]
+                if record.get("session_id") == session_id
+            ),
+            0,
+        )
+        self.query_one(SessionDetailPanel).show_session(session_id, subagents, incomplete)
 
     def action_toggle_chart_mode(self) -> None:
         chart = self.query_one(TrendChart)

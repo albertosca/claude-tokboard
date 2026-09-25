@@ -8,6 +8,7 @@ membership, absence of inline styles) rather than byte-exact markup, so an
 innocent whitespace refactor doesn't fail the suite.
 """
 
+import html
 import re
 import sys
 from datetime import datetime
@@ -127,6 +128,42 @@ def test_render_session_row_pins_own_fields():
     assert _extract_span(out, "tokens-total") == mr.format_tokens(mr.record_token_total(record))
     assert _extract_span(out, "duration-col") == mr.format_duration(record["duration_seconds"])
     assert _extract_span(out, "subagent-col") == "🤖5"
+
+
+def _tag_with_class(html_out: str, css_class: str) -> tuple[str, str]:
+    """(attributes, inner text) of the first span carrying css_class."""
+    for m in re.finditer(r"<span\b([^>]*)>([^<]*)", html_out):
+        if css_class in (_attr(m.group(1), "class") or "").split():
+            return m.group(1), m.group(2)
+    raise AssertionError(f"no span with class {css_class!r}")
+
+
+def _output_segment_title(html_out: str) -> str:
+    for m in re.finditer(r"<span\b([^>]*)>", html_out):
+        if "series-2" in (_attr(m.group(1), "class") or "").split():
+            return _attr(m.group(1), "title") or ""
+    raise AssertionError("no output segment")
+
+
+@pytest.mark.parametrize("lang", ["en", "pt"])
+def test_render_session_row_marks_a_floor_output_with_a_prefix_and_a_note(lang):
+    record = _base_record(incomplete_usage_messages=3)
+    out = dashboard_html.render_session_row(
+        record, is_active=False, group_colors={}, group_index=0, lang=lang
+    )
+    attrs, text = _tag_with_class(out, "tokens-total")
+    assert text == "≥" + mr.format_tokens(mr.record_token_total(record))
+    assert html.unescape(_attr(attrs, "title") or "") == mr.tn("floor_note", 3, lang)
+    assert _output_segment_title(out).startswith("output · ≥")
+
+
+def test_render_session_row_without_the_flag_shows_no_floor_marker():
+    out = dashboard_html.render_session_row(
+        _base_record(), is_active=False, group_colors={}, group_index=0, lang="en"
+    )
+    assert "≥" not in out
+    attrs, _text = _tag_with_class(out, "tokens-total")
+    assert _attr(attrs, "title") is None
 
 
 def test_render_session_row_subagent_badge_absent_when_count_is_zero():
@@ -587,3 +624,18 @@ def test_render_detail_panel_html_escapes_agent_type_and_label():
     assert "<script>" not in out
     assert "&lt;script&gt;" in out
     assert "&lt;b&gt;bold&lt;/b&gt;" in out
+
+
+@pytest.mark.parametrize("lang", ["en", "pt"])
+def test_render_detail_panel_marks_only_the_flagged_subagent_as_a_floor(lang):
+    subagents = [
+        _subagent("flagged", "2026-08-20T09:00:00Z", incomplete_usage_messages=1),
+        _subagent("complete", "2026-08-20T08:00:00Z"),
+    ]
+    out = dashboard_html.render_detail_panel("sess-1", subagents, is_active=False, lang=lang)
+    flagged_row, complete_row = out.split('<div class="subagent-row')[2:]
+    attrs, text = _tag_with_class(flagged_row, "floor-total")
+    assert text == "≥" + mr.format_tokens(15)
+    assert html.unescape(_attr(attrs, "title") or "") == mr.tn("floor_note", 1, lang)
+    assert _output_segment_title(flagged_row).startswith("output · ≥")
+    assert "≥" not in complete_row

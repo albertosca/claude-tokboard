@@ -10,6 +10,7 @@ from typing import Any
 
 import metrics_core as mr
 import metrics_core.records as records_module
+import pytest
 from metrics_core.transcript_ingest import TOKEN_FIELDS
 
 
@@ -746,6 +747,34 @@ def test_fold_mutates_the_input_records_in_place_not_a_copy():
     result = mr.fold_subagent_tokens_into_sessions(sessions, subagents)
     assert sessions[0]["input_tokens"] == 15
     assert result[0] is sessions[0]
+
+
+def test_fold_carries_the_subagents_incomplete_usage_count_onto_the_session():
+    # The session's folded output includes its subagents' output, so it is a
+    # floor whenever any of theirs is.
+    sessions = [
+        {"session_id": "s1", "output_tokens": 1, "incomplete_usage_messages": 2},
+        {"session_id": "s2", "output_tokens": 1},
+        {"session_id": "s3", "output_tokens": 1},
+    ]
+    subagents = [
+        {"session_id": "s1", "output_tokens": 1, "incomplete_usage_messages": 3},
+        {"session_id": "s2", "output_tokens": 1, "incomplete_usage_messages": 4},
+        {"session_id": "s2", "output_tokens": 1},
+        {"session_id": "s3", "output_tokens": 1},
+    ]
+    mr.fold_subagent_tokens_into_sessions(sessions, subagents)
+    assert [mr.incomplete_usage_messages(s) for s in sessions] == [5, 4, 0]
+    # Absent stays absent: a session with nothing to flag gains no key.
+    assert "incomplete_usage_messages" not in sessions[2]
+
+
+@pytest.mark.parametrize("value", [None, 0, -1, "3", 2.5])
+def test_incomplete_usage_messages_reads_anything_but_a_positive_int_as_zero(value):
+    # The file is hand-editable and the key is absent on every older row.
+    assert mr.incomplete_usage_messages({"incomplete_usage_messages": value}) == 0
+    assert mr.incomplete_usage_messages({}) == 0
+    assert mr.incomplete_usage_messages({"incomplete_usage_messages": 7}) == 7
 
 
 # --- filter_sessions_by_window gap not covered by test_period_filters.py ---

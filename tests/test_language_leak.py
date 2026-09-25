@@ -190,6 +190,9 @@ _SEEDED_SUBAGENT: dict[str, Any] = {
     "cache_creation_tokens": 1,
     "tool_call_count": 3,
     "duration_seconds": 12.5,
+    # Flagged, so the drive's click into week-1 also reaches the output
+    # floor note (the session is flagged through the fold).
+    "incomplete_usage_messages": 2,
 }
 
 
@@ -283,6 +286,23 @@ def test_detail_panel_subagents_title_and_no_transcript_speak_only_their_own_lan
         assert mr.t("detail.subagents_title", lang, n=1) in panel
         assert mr.t("no_transcript", lang) in panel
         assert language_leaks(panel, lang) == []
+
+
+def test_output_floor_note_speaks_only_its_own_language() -> None:
+    # The note lives in title attributes, which _visible_html_text strips -
+    # so the page-wide HTML test above can never see it. Checked directly,
+    # both plural forms, in both renderers that carry it.
+    import dashboard_html as dh
+
+    session = {"session_id": "s-1", "output_tokens": 5, "incomplete_usage_messages": 1}
+    subagent = dict(session, agent_type="general-purpose", incomplete_usage_messages=2)
+    for lang in ("en", "pt"):
+        row = dh.render_session_row(session, False, {}, 0, lang=lang)
+        panel = dh.render_detail_panel("s-1", [subagent], True, lang=lang)
+        titles = html_lib.unescape(" ".join(re.findall(r'title="([^"]*)"', row + panel)))
+        assert mr.tn("floor_note", 1, lang) in titles
+        assert mr.tn("floor_note", 2, lang) in titles
+        assert language_leaks(titles, lang) == []
 
 
 def _no_project_records() -> list[dict[str, Any]]:
@@ -479,6 +499,9 @@ def test_the_tui_speaks_only_its_own_language(tmp_path: Path, lang: str) -> None
     # here, and the leak check above would report a clean pass for a
     # screen that never rendered the thing this test exists to cover.
     assert mr.t("detail.subagents_title", lang, n=1) in combined
+    # The panel wraps the note over two lines, so only its head is matched
+    # whole; the leak check below still reads every word of both lines.
+    assert mr.tn("floor_note", 2, lang)[:40] in combined
     assert language_leaks(combined, lang) == []
 
 
