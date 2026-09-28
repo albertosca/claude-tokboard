@@ -123,18 +123,18 @@ class TestRealClaudeDirGuard:
         _assert_guard_hit_and_clear_it()
 
     def test_os_replace_into_the_real_claude_dir_is_blocked(self, tmp_path: Path) -> None:
-        canary_dir = _REAL_CLAUDE_DIR / "no-such-dir-canary"
-        assert not canary_dir.exists()
-        src = tmp_path / "source.jsonl"
-        src.write_text("{}\n")
+        canary_directory = _REAL_CLAUDE_DIR / "no-such-dir-canary"
+        assert not canary_directory.exists()
+        source = tmp_path / "source.jsonl"
+        source.write_text("{}\n")
         # Same shape as above: the destination's parent does not exist, so
         # without the guard this would raise FileNotFoundError, never
         # actually move anything. Path.replace() fires the same "os.rename"
         # audit event as os.replace() (verified in scratch).
         with pytest.raises(RealClaudeDirWrite):
-            src.replace(canary_dir / "moved.jsonl")
-        assert not canary_dir.exists()
-        assert src.exists()  # never moved
+            source.replace(canary_directory / "moved.jsonl")
+        assert not canary_directory.exists()
+        assert source.exists()  # never moved
         _assert_guard_hit_and_clear_it()
 
     def test_launching_the_real_claude_cli_is_blocked(
@@ -304,16 +304,16 @@ class TestUnguardedPythonChildIsBlocked:
         # and tests/test_language_leak.py's fixture_page_html already use
         # - must keep working, or every existing sys.executable child in
         # this suite would start failing.
-        env = dict(os.environ, HOME=str(tmp_path))
-        proc = subprocess.Popen([sys.executable, "-c", "pass"], env=env)
-        assert proc.wait(timeout=10) == 0
+        environment = dict(os.environ, HOME=str(tmp_path))
+        process = subprocess.Popen([sys.executable, "-c", "pass"], env=environment)
+        assert process.wait(timeout=10) == 0
 
     def test_a_non_python_child_is_unaffected_by_this_check(self) -> None:
         # "echo" is not a Python interpreter, so _is_python_interpreter
         # never matches it, regardless of env - a real system binary
         # actually runs here to prove that.
-        proc = subprocess.Popen(["/bin/echo", "hi"], stdout=subprocess.DEVNULL)
-        assert proc.wait(timeout=10) == 0
+        process = subprocess.Popen(["/bin/echo", "hi"], stdout=subprocess.DEVNULL)
+        assert process.wait(timeout=10) == 0
 
 
 class TestCaseAndSymlinkEscapes:
@@ -365,16 +365,16 @@ class TestCaseAndSymlinkEscapes:
         # the guard's own captured directories are redirected below - a
         # test setup step, not the operation under test, so it must not
         # itself trip the (not-yet-installed-here) guard.
-        fake_claude_dir = tmp_path / ".claude"
-        fake_claude_dir.mkdir()
+        fake_claude_directory = tmp_path / ".claude"
+        fake_claude_directory.mkdir()
         outside_target = tmp_path / "outside-target"
         outside_target.mkdir()
-        link = fake_claude_dir / "skills"
+        link = fake_claude_directory / "skills"
         link.symlink_to(outside_target)  # a symlink INSIDE the fake guarded dir...
         target = link / "escape.md"  # ...pointing OUTSIDE it - resolve() alone would miss this
 
-        monkeypatch.setattr(conftest, "_REAL_CLAUDE_DIR", fake_claude_dir.resolve())
-        monkeypatch.setattr(conftest, "_REAL_CLAUDE_DIR_LEXICAL", fake_claude_dir)
+        monkeypatch.setattr(conftest, "_REAL_CLAUDE_DIR", fake_claude_directory.resolve())
+        monkeypatch.setattr(conftest, "_REAL_CLAUDE_DIR_LEXICAL", fake_claude_directory)
 
         with pytest.raises(RealClaudeDirWrite):
             target.open("a")
@@ -396,11 +396,11 @@ class TestRunningCheckoutIsExempt:
     def test_a_write_inside_the_running_checkouts_own_tree_is_exempt(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        fake_claude_dir = tmp_path / ".claude"
-        fake_repo_root = fake_claude_dir / "plugins" / "cache" / "fake-claude-tokboard"
+        fake_claude_directory = tmp_path / ".claude"
+        fake_repo_root = fake_claude_directory / "plugins" / "cache" / "fake-claude-tokboard"
         fake_repo_root.mkdir(parents=True)
-        monkeypatch.setattr(conftest, "_REAL_CLAUDE_DIR", fake_claude_dir.resolve())
-        monkeypatch.setattr(conftest, "_REAL_CLAUDE_DIR_LEXICAL", fake_claude_dir)
+        monkeypatch.setattr(conftest, "_REAL_CLAUDE_DIR", fake_claude_directory.resolve())
+        monkeypatch.setattr(conftest, "_REAL_CLAUDE_DIR_LEXICAL", fake_claude_directory)
         monkeypatch.setattr(conftest, "REPO_ROOT", fake_repo_root)
 
         pycache_file = fake_repo_root / "some_module" / "__pycache__" / "x.cpython-314.pyc"
@@ -416,24 +416,24 @@ class TestRunningCheckoutIsExempt:
     def test_a_write_elsewhere_inside_the_fake_guarded_dir_is_still_blocked(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        fake_claude_dir = tmp_path / ".claude"
-        fake_repo_root = fake_claude_dir / "plugins" / "cache" / "fake-claude-tokboard"
+        fake_claude_directory = tmp_path / ".claude"
+        fake_repo_root = fake_claude_directory / "plugins" / "cache" / "fake-claude-tokboard"
         fake_repo_root.mkdir(parents=True)
         # Real user data, NOT inside the checkout's own tree - built BEFORE
         # the guard is redirected below, same reasoning as the symlink test
         # above. The exemption must stay narrow, not become a blanket
         # bypass of the whole fake ~/.claude just because it happens to
         # also hold this checkout somewhere inside it.
-        metrics_dir = fake_claude_dir / "metrics"
-        metrics_dir.mkdir()
+        metrics_directory = fake_claude_directory / "metrics"
+        metrics_directory.mkdir()
 
-        monkeypatch.setattr(conftest, "_REAL_CLAUDE_DIR", fake_claude_dir.resolve())
-        monkeypatch.setattr(conftest, "_REAL_CLAUDE_DIR_LEXICAL", fake_claude_dir)
+        monkeypatch.setattr(conftest, "_REAL_CLAUDE_DIR", fake_claude_directory.resolve())
+        monkeypatch.setattr(conftest, "_REAL_CLAUDE_DIR_LEXICAL", fake_claude_directory)
         monkeypatch.setattr(conftest, "REPO_ROOT", fake_repo_root)
 
         with pytest.raises(RealClaudeDirWrite):
-            (metrics_dir / "sessions.jsonl").write_text("x")
-        assert not (metrics_dir / "sessions.jsonl").exists()
+            (metrics_directory / "sessions.jsonl").write_text("x")
+        assert not (metrics_directory / "sessions.jsonl").exists()
         _assert_guard_hit_and_clear_it()
 
 
@@ -476,10 +476,10 @@ class TestGuardHitsSurviveExceptClauses:
         import json
         import sys
 
-        fake_claude_dir = tmp_path / ".claude"
-        fake_metrics_dir = fake_claude_dir / "metrics"
-        fake_metrics_dir.mkdir(parents=True)
-        monkeypatch.setattr(conftest, "_REAL_CLAUDE_DIR", fake_claude_dir.resolve())
+        fake_claude_directory = tmp_path / ".claude"
+        fake_metrics_directory = fake_claude_directory / "metrics"
+        fake_metrics_directory.mkdir(parents=True)
+        monkeypatch.setattr(conftest, "_REAL_CLAUDE_DIR", fake_claude_directory.resolve())
 
         hook_path = Path(__file__).resolve().parent.parent / "hooks" / "metrics-log.py"
         spec = importlib.util.spec_from_file_location("metrics_log_hook_fix_round_1", hook_path)
@@ -487,7 +487,7 @@ class TestGuardHitsSurviveExceptClauses:
         assert spec.loader is not None
         hook = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(hook)
-        monkeypatch.setattr(hook, "METRICS_FILE", fake_metrics_dir / "sessions.jsonl")
+        monkeypatch.setattr(hook, "METRICS_FILE", fake_metrics_directory / "sessions.jsonl")
 
         transcript = tmp_path / "transcript.jsonl"
         transcript.write_text("")  # empty is enough - parse_transcript tolerates it
@@ -499,5 +499,5 @@ class TestGuardHitsSurviveExceptClauses:
 
         with pytest.raises(RealClaudeDirWrite):
             hook.main()
-        assert not fake_metrics_dir.joinpath("sessions.jsonl").exists()
+        assert not fake_metrics_directory.joinpath("sessions.jsonl").exists()
         _assert_guard_hit_and_clear_it()
