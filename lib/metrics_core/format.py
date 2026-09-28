@@ -71,7 +71,7 @@ def assign_model_slots(models: Iterable[str], slots: int) -> dict[str, int | Non
     the model had probed its way to. Once every slot is taken, the rest get
     None - the caller's shared "other" colour.
     """
-    ordered = sorted(set(models), key=lambda m: (_family_rank(m), m))
+    ordered = sorted(set(models), key=lambda model: (_family_rank(model), model))
     assignment: dict[str, int | None] = {}
     taken: set[int] = set()
     waiting: list[str] = []
@@ -92,19 +92,19 @@ def assign_model_slots(models: Iterable[str], slots: int) -> dict[str, int | Non
     return assignment
 
 
-def format_tokens(n: int | float | None) -> str:
-    if n is None:
+def format_tokens(count: int | float | None) -> str:
+    if count is None:
         return "-"
-    n = int(n)
-    if abs(n) >= 1_000_000_000_000:
-        return f"{n / 1_000_000_000_000:.1f}T"
-    if abs(n) >= 1_000_000_000:
-        return f"{n / 1_000_000_000:.1f}B"
-    if abs(n) >= 1_000_000:
-        return f"{n / 1_000_000:.1f}M"
-    if abs(n) >= 1_000:
-        return f"{n / 1_000:.1f}k"
-    return str(n)
+    count = int(count)
+    if abs(count) >= 1_000_000_000_000:
+        return f"{count / 1_000_000_000_000:.1f}T"
+    if abs(count) >= 1_000_000_000:
+        return f"{count / 1_000_000_000:.1f}B"
+    if abs(count) >= 1_000_000:
+        return f"{count / 1_000_000:.1f}M"
+    if abs(count) >= 1_000:
+        return f"{count / 1_000:.1f}k"
+    return str(count)
 
 
 def format_duration(seconds: int | float | None) -> str:

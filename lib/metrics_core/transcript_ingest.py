@@ -117,8 +117,8 @@ def usage_increment(
     # Indexed rather than zip(..., strict=True): the hooks import this module
     # and may run under macOS's bundled Python 3.9, which has no `strict`.
     fields = range(len(values))
-    peaks[message_id] = tuple(max(values[i], peak[i]) for i in fields)
-    return tuple(max(0, values[i] - peak[i]) for i in fields)
+    peaks[message_id] = tuple(max(values[field_index], peak[field_index]) for field_index in fields)
+    return tuple(max(0, values[field_index] - peak[field_index]) for field_index in fields)
 
 
 def count_incomplete(message_order: list[Any], finalised: set[Any]) -> int:
@@ -160,8 +160,8 @@ def parse_transcript(path: str) -> dict[str, Any]:
     git_branch = None
     tokens_by_model: dict[str, dict[str, int]] = {}
 
-    with Path(path).open() as f:
-        for line in f:
+    with Path(path).open() as transcript_file:
+        for line in transcript_file:
             line = line.strip()
             if not line:
                 continue
@@ -282,7 +282,7 @@ def parse_transcript(path: str) -> dict[str, Any]:
 def append_record(metrics_file: Path, record: dict[str, Any]) -> None:
     metrics_file.parent.mkdir(parents=True, exist_ok=True)
     is_new = not metrics_file.exists()
-    with metrics_file.open("a") as f:
-        f.write(json.dumps(record) + "\n")
+    with metrics_file.open("a") as metrics_output_file:
+        metrics_output_file.write(json.dumps(record) + "\n")
     if is_new:
         metrics_file.chmod(stat.S_IRUSR | stat.S_IWUSR)

@@ -42,11 +42,11 @@ UNIT_ID_KEYS: dict[str, str] = {"sessions": "session_id", "subagents": "agent_id
 
 
 def sha256_of(path: str) -> str:
-    h = hashlib.sha256()
-    with Path(path).open("rb") as f:
-        for chunk in iter(lambda: f.read(1 << 20), b""):
-            h.update(chunk)
-    return h.hexdigest()
+    hasher = hashlib.sha256()
+    with Path(path).open("rb") as input_file:
+        for chunk in iter(lambda: input_file.read(1 << 20), b""):
+            hasher.update(chunk)
+    return hasher.hexdigest()
 
 
 def sha256_bytes(data: bytes) -> str:
@@ -79,14 +79,14 @@ def carry_late_appends(old: BinaryIO, target: Path, stamp: str) -> int:
             f"a live append landed during the rename and ends mid-line; its "
             f"{len(late)} byte(s) were saved to {rescue} and NOT added to {target}"
         )
-    with target.open("ab") as f:
-        f.write(late)
-        f.flush()
-        os.fsync(f.fileno())
+    with target.open("ab") as target_file:
+        target_file.write(late)
+        target_file.flush()
+        os.fsync(target_file.fileno())
     return late.count(b"\n")
 
 
-def index_transcripts(projects_dir: str) -> dict[str, str]:
+def index_transcripts(projects_directory: str) -> dict[str, str]:
     """session_id -> transcript path.
 
     Session transcripts live at <projects>/<slug>/<session_id>.jsonl. Deeper
@@ -98,7 +98,7 @@ def index_transcripts(projects_dir: str) -> dict[str, str]:
     index: dict[str, str] = {}
     # Path.glob (unlike glob.glob) also matches dot-prefixed entries; safe here
     # because Claude Code's own naming scheme never produces a leading dot.
-    for path in (str(p) for p in Path(projects_dir).glob("*/*.jsonl")):
+    for path in (str(found_path) for found_path in Path(projects_directory).glob("*/*.jsonl")):
         session_id = Path(path).name[: -len(".jsonl")]
         current = index.get(session_id)
         if current is None or Path(path).stat().st_size > Path(current).stat().st_size:
@@ -107,7 +107,7 @@ def index_transcripts(projects_dir: str) -> dict[str, str]:
 
 
 def index_subagent_transcripts(
-    projects_dir: str, found: dict[str, list[str]] | None = None
+    projects_directory: str, found: dict[str, list[str]] | None = None
 ) -> tuple[dict[str, str], list[str]]:
     """agent_id -> transcript path, for the files index_transcripts excludes.
 
@@ -149,7 +149,7 @@ def index_subagent_transcripts(
     the same way.
     """
     if found is None:
-        found = find_subagent_transcripts(projects_dir)
+        found = find_subagent_transcripts(projects_directory)
     index: dict[str, str] = {}
     ambiguous: list[str] = []
     for agent_id, paths in sorted(found.items()):
@@ -160,7 +160,7 @@ def index_subagent_transcripts(
     return index, ambiguous
 
 
-def find_subagent_transcripts(projects_dir: str) -> dict[str, list[str]]:
+def find_subagent_transcripts(projects_directory: str) -> dict[str, list[str]]:
     """agent_id -> every copy of its transcript on disk, in sorted order.
 
     See index_subagent_transcripts for the path shape and the `agent-`
@@ -168,7 +168,7 @@ def find_subagent_transcripts(projects_dir: str) -> dict[str, list[str]]:
     """
     prefix = "agent-"
     found: dict[str, list[str]] = collections.defaultdict(list)
-    for path in Path(projects_dir).glob("*/*/subagents/*.jsonl"):
+    for path in Path(projects_directory).glob("*/*/subagents/*.jsonl"):
         stem = path.name[: -len(".jsonl")]
         found[stem.removeprefix(prefix)].append(str(path))
     return {agent_id: sorted(paths) for agent_id, paths in found.items()}
@@ -320,8 +320,8 @@ def scan_transcript(path: str) -> list[TimelineEntry]:
     """
     timeline: list[TimelineEntry] = []
     seen_ids: set[Any] = set()
-    with Path(path).open() as f:
-        for line in f:
+    with Path(path).open() as transcript_file:
+        for line in transcript_file:
             line = line.strip()
             if not line:
                 continue
@@ -365,12 +365,12 @@ def build_prefix_sums(timeline: list[TimelineEntry]) -> PrefixSums:
     peaks: dict[Any, tuple[int, ...]] = {}
     for _stamp, is_duplicate, values, _model, message_id in ordered:
         increment = usage_increment(peaks, message_id, values)
-        peak.append([peak[-1][i] + increment[i] for i in range(4)])
-        raw.append([raw[-1][i] + values[i] for i in range(4)])
+        peak.append([peak[-1][field_index] + increment[field_index] for field_index in range(4)])
+        raw.append([raw[-1][field_index] + values[field_index] for field_index in range(4)])
         if is_duplicate:
             first.append(list(first[-1]))
         else:
-            first.append([first[-1][i] + values[i] for i in range(4)])
+            first.append([first[-1][field_index] + values[field_index] for field_index in range(4)])
     return PrefixSums(stamps, peak, first, raw)
 
 
@@ -902,11 +902,11 @@ def find_nonmonotonic_sessions(
         by_session[record.get(id_key)].append(record)
     offenders: set[Any] = set()
     for session_id, snapshots in by_session.items():
-        snapshots = sorted(snapshots, key=lambda r: r.get("duration_seconds") or 0)
+        snapshots = sorted(snapshots, key=lambda snapshot: snapshot.get("duration_seconds") or 0)
         previous = [0] * 4
         for snapshot in snapshots:
             current = [snapshot.get(field, 0) or 0 for field in TOKEN_FIELDS]
-            if any(current[i] < previous[i] for i in range(4)):
+            if any(current[field_index] < previous[field_index] for field_index in range(4)):
                 offenders.add(session_id)
                 break
             previous = current
@@ -948,7 +948,7 @@ def apply_plan(
 def daily_totals(records: list[dict[str, Any]], days: int | None) -> list[tuple[str, int]]:
     """Per-day token totals through the same code path the trend chart uses."""
     totals: collections.Counter[str] = collections.Counter()
-    for delta in expand_records_to_daily_deltas([dict(r) for r in records]):
+    for delta in expand_records_to_daily_deltas([dict(record) for record in records]):
         moment = delta.get("timestamp_start")
         if not moment:
             continue
@@ -1023,8 +1023,8 @@ def load_backfill_state(path: str | None = None) -> dict[str, Any] | None:
     if not Path(path).exists():
         return None
     try:
-        with Path(path).open() as f:
-            return cast("dict[str, Any]", json.load(f))
+        with Path(path).open() as state_file:
+            return cast("dict[str, Any]", json.load(state_file))
     except (json.JSONDecodeError, OSError):
         return None
 
@@ -1084,8 +1084,8 @@ def write_backfill_state(
         state.update(entry)
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
-    with target.open("w") as f:
-        json.dump(state, f, indent=2)
+    with target.open("w") as state_file:
+        json.dump(state, state_file, indent=2)
     return state
 
 

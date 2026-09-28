@@ -1,12 +1,12 @@
 """Tests for hooks/subagent-metrics-log.py.
 
-DANGER: this module's METRICS_DIR/METRICS_FILE constants resolve at import
-time to Alberto's real, irreplaceable metrics history
+DANGER: this module's METRICS_DIRECTORY/METRICS_FILE constants resolve at
+import time to Alberto's real, irreplaceable metrics history
 (~/.claude/metrics/subagents.jsonl), actively appended to by other running
 Claude sessions. monkeypatch.setenv("HOME", ...) does NOT redirect them,
 since they are already-resolved Path objects on the module object by the
 time any test runs. Every test in this file that can write MUST
-monkeypatch.setattr both METRICS_DIR and METRICS_FILE on the loaded
+monkeypatch.setattr both METRICS_DIRECTORY and METRICS_FILE on the loaded
 `script` module before calling anything that appends. Never point those
 constants at anything under ~/.claude/.
 
@@ -48,11 +48,11 @@ def script() -> types.ModuleType:
 def _isolate_metrics(
     monkeypatch: pytest.MonkeyPatch, script: types.ModuleType, tmp_path: Path
 ) -> Path:
-    """Redirect METRICS_DIR/METRICS_FILE to a throwaway location under
+    """Redirect METRICS_DIRECTORY/METRICS_FILE to a throwaway location under
     tmp_path. Must be called by every test that can reach append_record."""
     metrics_dir = tmp_path / "metrics"
     metrics_file = metrics_dir / "subagents.jsonl"
-    monkeypatch.setattr(script, "METRICS_DIR", metrics_dir)
+    monkeypatch.setattr(script, "METRICS_DIRECTORY", metrics_dir)
     monkeypatch.setattr(script, "METRICS_FILE", metrics_file)
     return metrics_file
 
@@ -581,7 +581,7 @@ def test_module_guard_calls_main_and_exits_zero_when_run_as_a_script(tmp_path, m
     # hooks/subagent-metrics-log.py - it loads a second, independent copy
     # of it with __name__ pre-set to "__main__", which is a test
     # technique, not a production change. HOME is redirected to tmp_path
-    # BEFORE exec, because METRICS_DIR/METRICS_FILE are computed the
+    # BEFORE exec, because METRICS_DIRECTORY/METRICS_FILE are computed the
     # moment this fresh copy executes its top-level code - there is no
     # chance to monkeypatch.setattr them afterwards the way every other
     # test here does. The hook input carries no agent_transcript_path, so

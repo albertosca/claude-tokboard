@@ -167,7 +167,7 @@ def test_cold_summary_source_respects_max_turns_boundary(tmp_path: Path) -> None
         path,
         [{"type": "user", "message": {"content": f"turn{i}"}} for i in range(4)],
     )
-    result = mr.cold_summary_source(str(path), max_turns=3)
+    result = mr.cold_summary_source(str(path), maximum_turns=3)
     assert result is not None
     assert "turn2" in result
     assert "turn3" not in result
@@ -841,7 +841,7 @@ def test_warm_summary_source_reads_the_last_turns_in_chronological_order(tmp_pat
             },
         ],
     )
-    result = mr.warm_summary_source(str(path), max_turns=2)
+    result = mr.warm_summary_source(str(path), maximum_turns=2)
     assert result == "Caught. Now mutation 5. Spec Compliance: Compliant. All mutations caught."
 
 

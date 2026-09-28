@@ -22,7 +22,7 @@ PERIODS = (
 
 DEFAULT_PERIOD_ID = "tudo"
 
-_VALID_IDS = {p.id for p in PERIODS}
+_VALID_IDS = {period.id for period in PERIODS}
 
 
 def period_label(period_id: str, *, lang: str) -> str:

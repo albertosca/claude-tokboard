@@ -15,9 +15,9 @@ from .records import record_token_total
 
 def compute_project_first_seen(records: list[dict[str, Any]]) -> dict[str, str]:
     first_seen: dict[str, str] = {}
-    for r in records:
-        project = r.get("project_path")
-        timestamp_start = r.get("timestamp_start")
+    for record in records:
+        project = record.get("project_path")
+        timestamp_start = record.get("timestamp_start")
         if not project or not timestamp_start:
             continue
         if project not in first_seen or timestamp_start < first_seen[project]:
@@ -27,9 +27,9 @@ def compute_project_first_seen(records: list[dict[str, Any]]) -> dict[str, str]:
 
 def compute_project_last_seen(records: list[dict[str, Any]]) -> dict[str, str]:
     last_seen: dict[str, str] = {}
-    for r in records:
-        project = r.get("project_path")
-        timestamp_start = r.get("timestamp_start")
+    for record in records:
+        project = record.get("project_path")
+        timestamp_start = record.get("timestamp_start")
         if not project or not timestamp_start:
             continue
         if project not in last_seen or timestamp_start > last_seen[project]:
@@ -68,12 +68,12 @@ def compute_project_totals(
     records: list[dict[str, Any]], project_last_seen: dict[str, str]
 ) -> tuple[list[str | None], dict[str | None, int], int]:
     totals: dict[str | None, int] = {}
-    for r in records:
-        project = r.get("project_path")
+    for record in records:
+        project = record.get("project_path")
         # All four token kinds - this panel is titled "Total de tokens por
         # projeto", and until 2026-08-10 it summed input+output only,
         # reporting ~0.3% of real volume under a label promising totals.
-        totals[project] = totals.get(project, 0) + record_token_total(r)
+        totals[project] = totals.get(project, 0) + record_token_total(record)
     # Sorted by spend, with most-recent activity only as a tie-break.
     # This panel used to sort by recency, answering "what have I touched
     # lately" - a reasonable question, but not the one it is titled for
@@ -81,11 +81,14 @@ def compute_project_totals(
     # survives elsewhere as a marker on the row, not as the order.
     ordered_projects = sorted(
         totals.keys(),
-        key=lambda p: (totals[p], project_last_seen.get(p, "") if p is not None else ""),
+        key=lambda project: (
+            totals[project],
+            project_last_seen.get(project, "") if project is not None else "",
+        ),
         reverse=True,
     )
-    max_total = max(totals.values()) if totals else 0
-    return ordered_projects, totals, max_total
+    maximum_total = max(totals.values()) if totals else 0
+    return ordered_projects, totals, maximum_total
 
 
 def project_days_running(
@@ -122,21 +125,21 @@ def project_days_running(
         return ""
 
 
-def get_open_projects(sessions_dir: str | None = None) -> set[str]:
-    if sessions_dir is None:
-        sessions_dir = str(Path("~/.claude/sessions").expanduser())
+def get_open_projects(sessions_directory: str | None = None) -> set[str]:
+    if sessions_directory is None:
+        sessions_directory = str(Path("~/.claude/sessions").expanduser())
     open_projects: set[str] = set()
     try:
         # Path.glob (unlike glob.glob) also matches dot-prefixed entries; safe
         # here because Claude Code's own naming scheme never produces a
         # leading dot.
-        paths = list(Path(sessions_dir).glob("*.json"))
+        paths = list(Path(sessions_directory).glob("*.json"))
     except Exception:
         return open_projects
     for path in paths:
         try:
-            with path.open() as f:
-                data = json.load(f)
+            with path.open() as session_file:
+                data = json.load(session_file)
         except Exception:
             continue
         cwd = data.get("cwd")
@@ -180,10 +183,10 @@ def build_project_groups(
     # function). Individual records keep their own real project_path
     # (still used for e.g. the session row's own detail panel/title) -
     # only the grouping key changes.
-    ordered_desc = list(reversed(records))
+    ordered_descending = list(reversed(records))
     groups: dict[str | None, dict[str, Any]] = {}
     group_order: list[str | None] = []
-    for record in ordered_desc:
+    for record in ordered_descending:
         project = record.get("project_path")
         key = color_group_key(project)
         if key not in groups:

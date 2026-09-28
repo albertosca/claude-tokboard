@@ -27,8 +27,8 @@ def find_away_summary(transcript_path: str | None) -> str | None:
         return None
     last_content = None
     try:
-        with Path(transcript_path).open() as f:
-            for line in f:
+        with Path(transcript_path).open() as transcript_file:
+            for line in transcript_file:
                 line = line.strip()
                 if not line:
                     continue
@@ -43,14 +43,14 @@ def find_away_summary(transcript_path: str | None) -> str | None:
     return last_content
 
 
-def cold_summary_source(transcript_path: str | None, max_turns: int = 6) -> str | None:
+def cold_summary_source(transcript_path: str | None, maximum_turns: int = 6) -> str | None:
     if not transcript_path or not Path(transcript_path).exists():
         return None
     texts: list[str] = []
     try:
-        with Path(transcript_path).open() as f:
-            for line in f:
-                if len(texts) >= max_turns:
+        with Path(transcript_path).open() as transcript_file:
+            for line in transcript_file:
+                if len(texts) >= maximum_turns:
                     break
                 line = line.strip()
                 if not line:
@@ -72,12 +72,12 @@ def cold_summary_source(transcript_path: str | None, max_turns: int = 6) -> str 
                             break
     except Exception:
         return None
-    joined = " ".join(t for t in texts if t).strip()
+    joined = " ".join(text for text in texts if text).strip()
     return joined or None
 
 
-def warm_summary_source(transcript_path: str | None, max_turns: int = 4) -> str | None:
-    """The LAST max_turns of assistant text, in chronological order.
+def warm_summary_source(transcript_path: str | None, maximum_turns: int = 4) -> str | None:
+    """The LAST maximum_turns of assistant text, in chronological order.
 
     A subagent has no internal_name or away_summary (those are session-only
     concepts), so get_agent_label used to fall back straight to
@@ -104,10 +104,10 @@ def warm_summary_source(transcript_path: str | None, max_turns: int = 4) -> str 
         return None
     texts: list[str] = []
     try:
-        with Path(transcript_path).open() as f:
-            lines = f.readlines()
+        with Path(transcript_path).open() as transcript_file:
+            lines = transcript_file.readlines()
         for line in reversed(lines):
-            if len(texts) >= max_turns:
+            if len(texts) >= maximum_turns:
                 break
             line = line.strip()
             if not line:
@@ -132,7 +132,7 @@ def warm_summary_source(transcript_path: str | None, max_turns: int = 4) -> str 
     # Chronological order for the prompt, even though the scan above ran
     # newest-first - a label built from "conclusion, then earlier context"
     # reads worse to the summarizer than "context, then conclusion".
-    joined = " ".join(t for t in reversed(texts) if t).strip()
+    joined = " ".join(text for text in reversed(texts) if text).strip()
     return joined or None
 
 
@@ -291,9 +291,9 @@ def compress_to_label(source_text: Any, *, lang: str) -> str | None:
     # session table's layout). Truncate defensively rather than trusting
     # the model's output length - this is a display safeguard, not an
     # attempt to fix the model's behavior.
-    max_label_chars = 60
-    if len(label) > max_label_chars:
-        label = label[:max_label_chars].rsplit(" ", 1)[0].rstrip(".,;:") + "…"
+    maximum_label_chars = 60
+    if len(label) > maximum_label_chars:
+        label = label[:maximum_label_chars].rsplit(" ", 1)[0].rstrip(".,;:") + "…"
     return label or None
 
 
@@ -330,8 +330,8 @@ def load_label_cache() -> LabelCache:
     if not Path(TASK_LABELS_FILE).exists():
         return {}
     try:
-        with Path(TASK_LABELS_FILE).open() as f:
-            raw = json.load(f)
+        with Path(TASK_LABELS_FILE).open() as cache_file:
+            raw = json.load(cache_file)
     except (json.JSONDecodeError, OSError):
         return {}
     return _migrate(raw)
@@ -361,11 +361,11 @@ def _holds_old_shape(path: Path) -> bool:
     whether a pre-i18n backup is still owed; a file that fails to parse is
     treated as not-old-shape, the same tolerant default reads use."""
     try:
-        with path.open() as f:
-            raw = json.load(f)
+        with path.open() as cache_file:
+            raw = json.load(cache_file)
     except (json.JSONDecodeError, OSError):
         return False
-    return isinstance(raw, dict) and any(isinstance(v, str) for v in raw.values())
+    return isinstance(raw, dict) and any(isinstance(value, str) for value in raw.values())
 
 
 def _atomic_save(path: str, cache: LabelCache) -> None:
@@ -393,16 +393,18 @@ def _atomic_save(path: str, cache: LabelCache) -> None:
     with _CACHE_LOCK:
         if target.exists() and not backup.exists() and _holds_old_shape(target):
             shutil.copy2(target, backup)
-        fd, tmp_name = tempfile.mkstemp(dir=target.parent, prefix=target.name + ".", suffix=".tmp")
-        tmp = Path(tmp_name)
+        file_descriptor, temporary_file_name = tempfile.mkstemp(
+            dir=target.parent, prefix=target.name + ".", suffix=".tmp"
+        )
+        temporary_file_path = Path(temporary_file_name)
         try:
-            with os.fdopen(fd, "w") as f:
-                json.dump(cache, f, indent=2)
+            with os.fdopen(file_descriptor, "w") as temporary_file:
+                json.dump(cache, temporary_file, indent=2)
             # os.replace, not Path.replace (PTH105): a failure test simulates
             # a disk-full replace by monkeypatching this exact name.
-            os.replace(tmp, target)  # noqa: PTH105
+            os.replace(temporary_file_path, target)  # noqa: PTH105
         except BaseException:
-            tmp.unlink(missing_ok=True)
+            temporary_file_path.unlink(missing_ok=True)
             raise
 
 
@@ -499,8 +501,8 @@ def load_agent_label_cache() -> LabelCache:
     if not Path(AGENT_LABELS_FILE).exists():
         return {}
     try:
-        with Path(AGENT_LABELS_FILE).open() as f:
-            raw = json.load(f)
+        with Path(AGENT_LABELS_FILE).open() as cache_file:
+            raw = json.load(cache_file)
     except (json.JSONDecodeError, OSError):
         return {}
     return _migrate(raw)

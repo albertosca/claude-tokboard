@@ -12,8 +12,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 from metrics_core import append_record as _append_record
 from metrics_core import parse_transcript
 
-METRICS_DIR = Path("~/.claude/metrics").expanduser()
-METRICS_FILE = METRICS_DIR / "subagents.jsonl"
+METRICS_DIRECTORY = Path("~/.claude/metrics").expanduser()
+METRICS_FILE = METRICS_DIRECTORY / "subagents.jsonl"
 
 
 def get_project_root() -> str | None:
