@@ -20,6 +20,7 @@ from .records import expand_records_to_daily_deltas
 from .transcript_ingest import (
     SYNTHETIC_MODEL,
     TOKEN_FIELDS,
+    count_incomplete,
     model_key,
     usage_increment,
     usage_values,
@@ -578,6 +579,308 @@ def plan_corrections(
     each row is corrected to, without the formula and per-model detail."""
     result = plan_corrections_by_formula(records, transcripts, cutoff, id_key)
     return result.values, result.stats, result.factors
+
+
+# --- non-token fields --------------------------------------------------------
+#
+# The token correction above rewrites only the four token fields. Two other
+# fields of a historical row can be rebuilt from the same transcript, as of
+# the same timestamp_end, each in its own explicitly requested pass
+# (scripts/backfill-token-dedup.py --fields): tool_call_count, which every
+# hook before 2026-09-23 undercounted, and incomplete_usage_messages, which
+# no hook before 2026-09-25 recorded.
+
+
+class EntryFacts(NamedTuple):
+    """What one assistant entry says about tool calls and finalisation."""
+
+    stamp: str
+    message_id: Any
+    finalised: bool
+    # tool_use block ids in content order; None for a block without an id.
+    tool_ids: tuple[Any, ...]
+
+
+def scan_entry_facts(path: str) -> list[EntryFacts]:
+    """Every assistant entry of a transcript, in FILE order - the order the
+    hook read them in, which decides first occurrences."""
+    facts: list[EntryFacts] = []
+    with Path(path).open() as handle:
+        for line in handle:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                entry = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if entry.get("type") != "assistant":
+                continue
+            message = entry.get("message") or {}
+            content = message.get("content") or []
+            tool_ids = tuple(
+                block.get("id")
+                for block in (content if isinstance(content, list) else [])
+                if isinstance(block, dict) and block.get("type") == "tool_use"
+            )
+            facts.append(
+                EntryFacts(
+                    entry.get("timestamp") or "",
+                    message.get("id"),
+                    message.get("stop_reason") is not None,
+                    tool_ids,
+                )
+            )
+    return facts
+
+
+def _entries_as_of(facts: list[EntryFacts], end_timestamp: str | None) -> list[EntryFacts]:
+    """The entries at or before a moment, still in file order - what a hook
+    that wrote a row at `end_timestamp` had read (a replay keeps its original
+    timestamp, so it sorts with the turn it repeats)."""
+    if end_timestamp is None:
+        return list(facts)
+    return [fact for fact in facts if fact.stamp <= end_timestamp]
+
+
+class ToolCounts(NamedTuple):
+    """tool_call_count by each rule a hook has used.
+
+    `distinct` is the current rule (transcript_ingest.parse_transcript): each
+    tool_use block id once, wherever in the message's entries it appears; a
+    block without an id on its message's first entry only. `first` is the
+    2026-08-11 hook's: the blocks of each message's first entry only, which
+    misses every block a streamed message writes in a later entry. `raw` is
+    the original hook's: every block of every entry, replays included.
+    raw >= distinct >= first always, so a row recognised as raw can only
+    fall and one recognised as first can only rise.
+    """
+
+    distinct: int
+    first: int
+    raw: int
+
+
+def tool_calls_as_of(facts: list[EntryFacts], end_timestamp: str | None) -> ToolCounts:
+    distinct = first = raw = 0
+    seen_messages: set[Any] = set()
+    seen_tools: set[Any] = set()
+    for fact in _entries_as_of(facts, end_timestamp):
+        first_occurrence = fact.message_id is None or fact.message_id not in seen_messages
+        if fact.message_id is not None:
+            seen_messages.add(fact.message_id)
+        raw += len(fact.tool_ids)
+        if first_occurrence:
+            first += len(fact.tool_ids)
+        for tool_id in fact.tool_ids:
+            if tool_id is None:
+                distinct += first_occurrence
+            elif tool_id not in seen_tools:
+                seen_tools.add(tool_id)
+                distinct += 1
+    return ToolCounts(distinct, first, raw)
+
+
+def incomplete_as_of(facts: list[EntryFacts], end_timestamp: str | None) -> int:
+    """incomplete_usage_messages as the current hook would have written it at
+    `end_timestamp` - through the hook's own count_incomplete."""
+    order: list[Any] = []
+    seen: set[Any] = set()
+    finalised: set[Any] = set()
+    for fact in _entries_as_of(facts, end_timestamp):
+        if fact.message_id is None:
+            continue
+        if fact.message_id not in seen:
+            seen.add(fact.message_id)
+            order.append(fact.message_id)
+        if fact.finalised:
+            finalised.add(fact.message_id)
+    return count_incomplete(order, finalised)
+
+
+class FieldPlan(NamedTuple):
+    """What a field pass decided: each planned row index's new value, the
+    formula it was recognised as (tool calls only), and every disposition."""
+
+    values: dict[int, int]
+    formulas: dict[int, str]
+    stats: collections.Counter[str]
+
+
+def _eligible_units(
+    records: list[dict[str, Any]],
+    transcripts: dict[str, str],
+    cutoff: str,
+    id_key: str,
+    stats: collections.Counter[str],
+) -> list[tuple[list[int], str]]:
+    """(row indexes, transcript) of every unit a field pass may look at, with
+    the same two unit-level refusals as the token correction: no transcript
+    on disk, or any row without a timestamp_end or at/after the cutoff."""
+    unit_noun = "agent" if id_key == "agent_id" else "session"
+    rows_by_unit: dict[Any, list[int]] = collections.defaultdict(list)
+    for index, record in enumerate(records):
+        rows_by_unit[record.get(id_key)].append(index)
+    units = []
+    for unit_id, indexes in rows_by_unit.items():
+        transcript = transcripts.get(unit_id)
+        if transcript is None:
+            stats["untouched: no transcript on disk"] += len(indexes)
+        elif any(
+            not records[index].get("timestamp_end") or records[index]["timestamp_end"] >= cutoff
+            for index in indexes
+        ):
+            stats[f"untouched: {unit_noun} spans the cutoff"] += len(indexes)
+        else:
+            units.append((indexes, transcript))
+    return units
+
+
+TOOL_CALL_REASONS = {
+    RAW: "corrected: stored the every-entry count",
+    FIRST: "corrected: stored the first-entry count",
+}
+
+
+def plan_tool_call_corrections(
+    records: list[dict[str, Any]],
+    transcripts: dict[str, str],
+    cutoff: str,
+    id_key: str = "session_id",
+) -> FieldPlan:
+    """Which rows' tool_call_count to rebuild by the current rule, and to what.
+
+    The same evidence rule as the token correction: a row is rewritten only
+    when its stored count EXACTLY equals, as of its own timestamp_end, the
+    count one of the two earlier hooks would have written - proof of which
+    hook wrote it, and that the reconstruction models it. A row equal to the
+    current rule is left alone (so a second run is a no-op); a row matching
+    none refuses its whole unit, and a unit is corrected all or nothing, so
+    one agent's series never mixes two rules.
+    """
+    unit_noun = "agent" if id_key == "agent_id" else "session"
+    stats: collections.Counter[str] = collections.Counter()
+    values: dict[int, int] = {}
+    formulas: dict[int, str] = {}
+    for indexes, transcript in _eligible_units(records, transcripts, cutoff, id_key, stats):
+        facts = scan_entry_facts(transcript)
+        proposals: dict[int, tuple[int, str]] = {}
+        refused = False
+        for index in indexes:
+            stored = records[index].get("tool_call_count")
+            now = tool_calls_as_of(facts, records[index]["timestamp_end"])
+            if stored == now.distinct:
+                continue
+            if stored == now.raw:
+                proposals[index] = (now.distinct, RAW)
+            elif stored == now.first:
+                proposals[index] = (now.distinct, FIRST)
+            else:
+                refused = True
+                break
+        if refused:
+            stats[f"untouched: {unit_noun} has a row matching no formula"] += len(indexes)
+            continue
+        stats["untouched: already correct"] += len(indexes) - len(proposals)
+        for index, (value, formula) in proposals.items():
+            stats[TOOL_CALL_REASONS[formula]] += 1
+            values[index] = value
+            formulas[index] = formula
+    return FieldPlan(values, formulas, stats)
+
+
+def plan_incomplete_usage(
+    records: list[dict[str, Any]],
+    transcripts: dict[str, str],
+    cutoff: str,
+    id_key: str = "session_id",
+) -> FieldPlan:
+    """Which rows gain incomplete_usage_messages, and with what count.
+
+    There is no earlier formula to recognise - no hook wrote the key before
+    2026-09-25 - so the evidence that the as-of reconstruction models a row
+    is its TOKENS: every row of the unit must equal the transcript's as-of
+    peak total exactly, or the unit is refused. A row that already carries
+    the key must carry what the transcript gives, or the unit is refused.
+    Only positive counts are added (absent means zero, as the hooks write
+    it), so a row with nothing to flag is left byte-for-byte alone.
+    """
+    unit_noun = "agent" if id_key == "agent_id" else "session"
+    stats: collections.Counter[str] = collections.Counter()
+    values: dict[int, int] = {}
+    for indexes, transcript in _eligible_units(records, transcripts, cutoff, id_key, stats):
+        sums = build_prefix_sums(scan_transcript(transcript))
+        facts = scan_entry_facts(transcript)
+        proposals: dict[int, int] = {}
+        refusal = None
+        for index in indexes:
+            record = records[index]
+            stored_tokens = [record.get(field, 0) or 0 for field in TOKEN_FIELDS]
+            if stored_tokens != as_of(sums, record["timestamp_end"]).peak:
+                refusal = "has a row whose tokens the transcript does not reproduce"
+                break
+            count = incomplete_as_of(facts, record["timestamp_end"])
+            if "incomplete_usage_messages" in record:
+                if record["incomplete_usage_messages"] != count:
+                    refusal = "has a recorded count the transcript does not reproduce"
+                    break
+            elif count:
+                proposals[index] = count
+        if refusal:
+            stats[f"untouched: {unit_noun} {refusal}"] += len(indexes)
+            continue
+        stats["untouched: already correct"] += len(indexes) - len(proposals)
+        if proposals:
+            stats["flagged: messages without a final usage entry"] += len(proposals)
+            values.update(proposals)
+    return FieldPlan(values, {}, stats)
+
+
+def apply_field_plan(
+    records: list[dict[str, Any]], field: str, values: dict[int, int]
+) -> list[dict[str, Any]]:
+    """The records with `field` set on each planned row - replaced in place
+    where the row has it, appended where it does not. Unplanned rows are the
+    same objects; planned ones are copies."""
+    corrected = []
+    for index, record in enumerate(records):
+        if index in values:
+            updated = dict(record)
+            updated[field] = values[index]
+            corrected.append(updated)
+        else:
+            corrected.append(record)
+    return corrected
+
+
+def write_field_state(
+    kind: str,
+    field: str,
+    cutoff: str,
+    applied_at: str,
+    corrected_rows: int,
+    path: str | None = None,
+) -> dict[str, Any]:
+    """Record a successful field pass under state["fields"]["<kind>.<field>"],
+    leaving the token entries - the ones the dashboards read - untouched. A
+    later pass of the same kind and field adds its rows to the earlier ones',
+    as write_backfill_state does."""
+    path = path or BACKFILL_STATE_FILE
+    existing = load_backfill_state(path)
+    state: dict[str, Any] = existing if isinstance(existing, dict) else {}
+    fields = state.get("fields")
+    if not isinstance(fields, dict):
+        fields = state["fields"] = {}
+    key = f"{kind}.{field}"
+    previous = fields.get(key)
+    if isinstance(previous, dict):
+        corrected_rows += previous.get("corrected_rows") or 0
+    fields[key] = {"cutoff": cutoff, "applied_at": applied_at, "corrected_rows": corrected_rows}
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with target.open("w") as handle:
+        json.dump(state, handle, indent=2)
+    return state
 
 
 def find_nonmonotonic_sessions(
