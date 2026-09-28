@@ -47,7 +47,7 @@ def isolated_label_caches(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tu
 
 @pytest.fixture(autouse=True)
 def forbid_real_subprocess(monkeypatch: pytest.MonkeyPatch) -> None:
-    def fail(*args: Any, **kwargs: Any) -> Any:
+    def fail(*arguments: Any, **keyword_arguments: Any) -> Any:
         raise AssertionError("real subprocess.run must never be called in tests")
 
     monkeypatch.setattr(subprocess, "run", fail)
@@ -62,8 +62,8 @@ def recording_fake_run(calls: list[list[str]]) -> Any:
     and returns a fixed successful result - used to assert a code path
     does NOT reach _run_label_prompt (calls stays empty)."""
 
-    def fake_run(cmd: list[str], **kwargs: Any) -> FakeCompletedProcess:
-        calls.append(cmd)
+    def fake_run(command: list[str], **keyword_arguments: Any) -> FakeCompletedProcess:
+        calls.append(command)
         return FakeCompletedProcess(0, "x")
 
     return fake_run
@@ -141,9 +141,9 @@ def test_find_away_summary_returns_none_for_none_path() -> None:
 
 
 def test_find_away_summary_returns_none_for_unreadable_path(tmp_path: Path) -> None:
-    a_directory = tmp_path / "adir"
-    a_directory.mkdir()
-    assert mr.find_away_summary(str(a_directory)) is None
+    unreadable_directory = tmp_path / "adir"
+    unreadable_directory.mkdir()
+    assert mr.find_away_summary(str(unreadable_directory)) is None
 
 
 # --- cold_summary_source -----------------------------------------------------
@@ -165,7 +165,7 @@ def test_cold_summary_source_respects_max_turns_boundary(tmp_path: Path) -> None
     path = tmp_path / "t.jsonl"
     write_transcript(
         path,
-        [{"type": "user", "message": {"content": f"turn{i}"}} for i in range(4)],
+        [{"type": "user", "message": {"content": f"turn{index}"}} for index in range(4)],
     )
     result = mr.cold_summary_source(str(path), maximum_turns=3)
     assert result is not None
@@ -274,9 +274,9 @@ def test_cold_summary_source_returns_none_for_none_path() -> None:
 
 
 def test_cold_summary_source_returns_none_for_unreadable_path(tmp_path: Path) -> None:
-    a_directory = tmp_path / "adir"
-    a_directory.mkdir()
-    assert mr.cold_summary_source(str(a_directory)) is None
+    unreadable_directory = tmp_path / "adir"
+    unreadable_directory.mkdir()
+    assert mr.cold_summary_source(str(unreadable_directory)) is None
 
 
 def test_cold_summary_source_returns_none_when_all_turn_content_is_blank(tmp_path: Path) -> None:
@@ -326,7 +326,11 @@ def test_looks_like_bad_label_true_at_121_chars() -> None:
 def test_run_label_prompt_returns_stripped_label_on_success(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(subprocess, "run", lambda cmd, **kw: FakeCompletedProcess(0, "  a label  "))
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda command, **keyword_arguments: FakeCompletedProcess(0, "  a label  "),
+    )
     assert labels_module._run_label_prompt("prompt") == "a label"
 
 
@@ -336,7 +340,7 @@ def test_run_label_prompt_strips_surrounding_double_quotes(
     monkeypatch.setattr(
         subprocess,
         "run",
-        lambda cmd, **kw: FakeCompletedProcess(0, '"quoted label"'),
+        lambda command, **keyword_arguments: FakeCompletedProcess(0, '"quoted label"'),
     )
     assert labels_module._run_label_prompt("prompt") == "quoted label"
 
@@ -347,7 +351,7 @@ def test_run_label_prompt_strips_surrounding_single_quotes(
     monkeypatch.setattr(
         subprocess,
         "run",
-        lambda cmd, **kw: FakeCompletedProcess(0, "'quoted label'"),
+        lambda command, **keyword_arguments: FakeCompletedProcess(0, "'quoted label'"),
     )
     assert labels_module._run_label_prompt("prompt") == "quoted label"
 
@@ -355,26 +359,32 @@ def test_run_label_prompt_strips_surrounding_single_quotes(
 def test_run_label_prompt_returns_none_on_nonzero_returncode(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(subprocess, "run", lambda cmd, **kw: FakeCompletedProcess(1, "a label"))
+    monkeypatch.setattr(
+        subprocess, "run", lambda command, **keyword_arguments: FakeCompletedProcess(1, "a label")
+    )
     assert labels_module._run_label_prompt("prompt") is None
 
 
 def test_run_label_prompt_returns_none_on_empty_output(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(subprocess, "run", lambda cmd, **kw: FakeCompletedProcess(0, ""))
+    monkeypatch.setattr(
+        subprocess, "run", lambda command, **keyword_arguments: FakeCompletedProcess(0, "")
+    )
     assert labels_module._run_label_prompt("prompt") is None
 
 
 def test_run_label_prompt_returns_none_on_whitespace_only_output(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(subprocess, "run", lambda cmd, **kw: FakeCompletedProcess(0, "   \n  "))
+    monkeypatch.setattr(
+        subprocess, "run", lambda command, **keyword_arguments: FakeCompletedProcess(0, "   \n  ")
+    )
     assert labels_module._run_label_prompt("prompt") is None
 
 
 def test_run_label_prompt_returns_none_when_subprocess_raises(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    def raise_it(cmd: list[str], **kw: Any) -> FakeCompletedProcess:
+    def raise_it(command: list[str], **keyword_arguments: Any) -> FakeCompletedProcess:
         raise TimeoutError("simulated timeout")
 
     monkeypatch.setattr(subprocess, "run", raise_it)
@@ -384,25 +394,25 @@ def test_run_label_prompt_returns_none_when_subprocess_raises(
 def test_run_label_prompt_passes_the_cost_control_flags(monkeypatch: pytest.MonkeyPatch) -> None:
     captured: dict[str, Any] = {}
 
-    def fake_run(cmd: list[str], **kw: Any) -> FakeCompletedProcess:
-        captured["cmd"] = cmd
-        captured["kwargs"] = kw
+    def fake_run(command: list[str], **keyword_arguments: Any) -> FakeCompletedProcess:
+        captured["cmd"] = command
+        captured["kwargs"] = keyword_arguments
         return FakeCompletedProcess(0, "a label")
 
     monkeypatch.setattr(subprocess, "run", fake_run)
     labels_module._run_label_prompt("prompt")
-    cmd = captured["cmd"]
+    command = captured["cmd"]
     # `nice -n 15` MUST prefix the actual command, not just appear
     # somewhere in argv - it's what stops the labeling subprocess from
     # competing for CPU with interactive work (labels.py:116-118).
-    assert cmd[:3] == ["nice", "-n", "15"]
-    assert "--setting-sources" in cmd
-    assert cmd[cmd.index("--setting-sources") + 1] == ""
-    assert "--tools" in cmd
-    assert cmd[cmd.index("--tools") + 1] == ""
-    assert "--system-prompt" in cmd
-    assert "--model" in cmd
-    assert cmd[cmd.index("--model") + 1] == "haiku"
+    assert command[:3] == ["nice", "-n", "15"]
+    assert "--setting-sources" in command
+    assert command[command.index("--setting-sources") + 1] == ""
+    assert "--tools" in command
+    assert command[command.index("--tools") + 1] == ""
+    assert "--system-prompt" in command
+    assert "--model" in command
+    assert command[command.index("--model") + 1] == "haiku"
     # A hung CLI process without a timeout would block dashboard
     # generation forever - argv alone can't carry this, it's a
     # subprocess.run kwarg.
@@ -416,7 +426,7 @@ def test_compress_to_label_returns_label_for_good_input(monkeypatch: pytest.Monk
     monkeypatch.setattr(
         subprocess,
         "run",
-        lambda cmd, **kw: FakeCompletedProcess(0, "good label"),
+        lambda command, **keyword_arguments: FakeCompletedProcess(0, "good label"),
     )
     assert mr.compress_to_label("some source text", lang="pt") == "good label"
 
@@ -424,7 +434,9 @@ def test_compress_to_label_returns_label_for_good_input(monkeypatch: pytest.Monk
 def test_compress_to_label_returns_none_when_both_attempts_return_none(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(subprocess, "run", lambda cmd, **kw: FakeCompletedProcess(1, ""))
+    monkeypatch.setattr(
+        subprocess, "run", lambda command, **keyword_arguments: FakeCompletedProcess(1, "")
+    )
     assert mr.compress_to_label("some source text", lang="pt") is None
 
 
@@ -436,7 +448,7 @@ def test_compress_to_label_retries_and_recovers_from_a_bad_first_label(
         FakeCompletedProcess(0, "recovered label"),
     ]
 
-    def fake_run(cmd: list[str], **kw: Any) -> FakeCompletedProcess:
+    def fake_run(command: list[str], **keyword_arguments: Any) -> FakeCompletedProcess:
         return responses.pop(0)
 
     monkeypatch.setattr(subprocess, "run", fake_run)
@@ -451,7 +463,7 @@ def test_compress_to_label_returns_none_when_both_attempts_look_bad(
         FakeCompletedProcess(0, "i'm sorry still cannot"),
     ]
 
-    def fake_run(cmd: list[str], **kw: Any) -> FakeCompletedProcess:
+    def fake_run(command: list[str], **keyword_arguments: Any) -> FakeCompletedProcess:
         return responses.pop(0)
 
     monkeypatch.setattr(subprocess, "run", fake_run)
@@ -479,8 +491,8 @@ def test_compress_to_label_bounds_the_prompt_length_for_a_very_long_source_text(
     # actually is.
     captured: dict[str, str] = {}
 
-    def fake_run(cmd: list[str], **kw: Any) -> FakeCompletedProcess:
-        captured["prompt"] = cmd[cmd.index("-p") + 1]
+    def fake_run(command: list[str], **keyword_arguments: Any) -> FakeCompletedProcess:
+        captured["prompt"] = command[command.index("-p") + 1]
         return FakeCompletedProcess(0, "a label")
 
     monkeypatch.setattr(subprocess, "run", fake_run)
@@ -498,7 +510,9 @@ def test_compress_to_label_truncates_a_long_but_not_bad_label_with_ellipsis(
 ) -> None:
     mid_label = ("lorem " * 15).strip()
     assert 60 < len(mid_label) <= 120
-    monkeypatch.setattr(subprocess, "run", lambda cmd, **kw: FakeCompletedProcess(0, mid_label))
+    monkeypatch.setattr(
+        subprocess, "run", lambda command, **keyword_arguments: FakeCompletedProcess(0, mid_label)
+    )
     result = mr.compress_to_label("some source text", lang="pt")
     assert result is not None
     assert result.endswith("…")
@@ -637,8 +651,8 @@ def test_get_task_label_long_internal_name_is_used_as_source_text_for_generation
     # transcript at a nonexistent path is never even read.
     captured: dict[str, str] = {}
 
-    def fake_run(cmd: list[str], **kw: Any) -> FakeCompletedProcess:
-        captured["prompt"] = cmd[cmd.index("-p") + 1]
+    def fake_run(command: list[str], **keyword_arguments: Any) -> FakeCompletedProcess:
+        captured["prompt"] = command[command.index("-p") + 1]
         return FakeCompletedProcess(0, "generated label")
 
     monkeypatch.setattr(subprocess, "run", fake_run)
@@ -664,8 +678,8 @@ def test_get_task_label_falls_back_to_away_summary(
     )
     captured: dict[str, str] = {}
 
-    def fake_run(cmd: list[str], **kw: Any) -> FakeCompletedProcess:
-        captured["prompt"] = cmd[cmd.index("-p") + 1]
+    def fake_run(command: list[str], **keyword_arguments: Any) -> FakeCompletedProcess:
+        captured["prompt"] = command[command.index("-p") + 1]
         return FakeCompletedProcess(0, "generated label")
 
     monkeypatch.setattr(subprocess, "run", fake_run)
@@ -683,8 +697,8 @@ def test_get_task_label_falls_back_to_cold_summary_source(
     write_transcript(path, [{"type": "user", "message": {"content": "first turn text"}}])
     captured: dict[str, str] = {}
 
-    def fake_run(cmd: list[str], **kw: Any) -> FakeCompletedProcess:
-        captured["prompt"] = cmd[cmd.index("-p") + 1]
+    def fake_run(command: list[str], **keyword_arguments: Any) -> FakeCompletedProcess:
+        captured["prompt"] = command[command.index("-p") + 1]
         return FakeCompletedProcess(0, "generated label")
 
     monkeypatch.setattr(subprocess, "run", fake_run)
@@ -734,7 +748,7 @@ def test_get_task_label_generates_and_caches_on_success(
     monkeypatch.setattr(
         subprocess,
         "run",
-        lambda cmd, **kw: FakeCompletedProcess(0, "generated label"),
+        lambda command, **keyword_arguments: FakeCompletedProcess(0, "generated label"),
     )
     cache: mr.LabelCache = {}
     record = {"session_id": "s1", "transcript_path": str(path)}
@@ -762,7 +776,7 @@ def test_get_task_label_caches_no_label_marker_when_generation_runs_but_refuses(
     monkeypatch.setattr(
         subprocess,
         "run",
-        lambda cmd, **kw: FakeCompletedProcess(0, "i cannot do that"),
+        lambda command, **keyword_arguments: FakeCompletedProcess(0, "i cannot do that"),
     )
     cache: mr.LabelCache = {}
     record = {"session_id": "s1", "transcript_path": str(path)}
@@ -891,9 +905,9 @@ def test_warm_summary_source_ignores_an_entry_whose_content_is_neither_str_nor_l
 
 
 def test_warm_summary_source_returns_none_for_an_unreadable_path(tmp_path: Path) -> None:
-    a_directory = tmp_path / "adir"
-    a_directory.mkdir()
-    assert mr.warm_summary_source(str(a_directory)) is None
+    unreadable_directory = tmp_path / "adir"
+    unreadable_directory.mkdir()
+    assert mr.warm_summary_source(str(unreadable_directory)) is None
 
 
 def test_warm_summary_source_extracts_text_blocks_from_list_content(tmp_path: Path) -> None:
@@ -961,7 +975,7 @@ def test_get_agent_label_generates_and_caches_on_success(
     monkeypatch.setattr(
         subprocess,
         "run",
-        lambda cmd, **kw: FakeCompletedProcess(0, "generated label"),
+        lambda command, **keyword_arguments: FakeCompletedProcess(0, "generated label"),
     )
     cache: mr.LabelCache = {}
     record = {"agent_id": "a1", "agent_transcript_path": str(path)}
@@ -984,7 +998,7 @@ def test_get_agent_label_caches_no_label_marker_when_generation_runs_but_refuses
     monkeypatch.setattr(
         subprocess,
         "run",
-        lambda cmd, **kw: FakeCompletedProcess(0, "i cannot do that"),
+        lambda command, **keyword_arguments: FakeCompletedProcess(0, "i cannot do that"),
     )
     cache: mr.LabelCache = {}
     record = {"agent_id": "a1", "agent_transcript_path": str(path)}
