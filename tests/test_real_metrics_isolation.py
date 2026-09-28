@@ -35,6 +35,7 @@ never an actual write or an actual launch of the real CLI.
 """
 
 import os
+import sqlite3
 import subprocess
 import sys
 from pathlib import Path
@@ -501,3 +502,398 @@ class TestGuardHitsSurviveExceptClauses:
             hook.main()
         assert not fake_metrics_directory.joinpath("sessions.jsonl").exists()
         _assert_guard_hit_and_clear_it()
+
+
+class TestChmodAndUtimeAreBlocked:
+    """Backlog 2026-09-24 #3: os.chmod and os.utime were documented, uncovered
+    blind spots - metadata-only mutations of a real file (no data written),
+    but still something no test here should ever do to the real ~/.claude.
+    Both audit events were confirmed in scratch to fire with a trailing
+    dir_fd argument (-1 when unused), same shape as os.mkdir.
+    """
+
+    def test_chmod_inside_the_real_claude_dir_is_blocked(self) -> None:
+        # no-such-dir-canary does not exist under the real ~/.claude, so
+        # without the guard this would raise FileNotFoundError - it can
+        # never actually touch anything real, guard or no guard.
+        canary = _REAL_CLAUDE_DIR / "no-such-dir-canary" / "x.jsonl"
+        assert not canary.parent.exists()
+        with pytest.raises(RealClaudeDirWrite):
+            canary.chmod(0o600)
+        assert not canary.parent.exists()
+        _assert_guard_hit_and_clear_it()
+
+    def test_utime_inside_the_real_claude_dir_is_blocked(self) -> None:
+        canary = _REAL_CLAUDE_DIR / "no-such-dir-canary" / "x.jsonl"
+        assert not canary.parent.exists()
+        with pytest.raises(RealClaudeDirWrite):
+            os.utime(canary, None)
+        assert not canary.parent.exists()
+        _assert_guard_hit_and_clear_it()
+
+    def test_chmod_and_utime_outside_the_real_dir_remain_allowed(self, tmp_path: Path) -> None:
+        target = tmp_path / "harmless.txt"
+        target.write_text("x")
+        target.chmod(0o600)  # must not raise
+        os.utime(target, None)  # must not raise
+
+
+class TestSqliteConnectIsBlocked:
+    """Backlog 2026-09-24 #3: sqlite3 opens its own file handle in C, below
+    the audit-event layer the "open" case above watches - but sqlite3.connect
+    fires its own dedicated audit event, carrying only the raw database
+    string (confirmed in scratch: no separate mode/uri flag). A plain
+    sqlite3.connect can CREATE the file if it does not exist, so it is
+    treated as write-capable unless the caller explicitly opted into a
+    read-only URI (uri=True, "file:...?mode=ro") - the one shape sqlite3
+    itself guarantees never creates or mutates anything.
+    """
+
+    def test_connect_inside_the_real_claude_dir_is_blocked(self) -> None:
+        # no-such-dir-canary does not exist, so without the guard this
+        # would raise sqlite3.OperationalError trying to open the file -
+        # it can never actually create anything under the real dir.
+        canary = _REAL_CLAUDE_DIR / "no-such-dir-canary" / "x.db"
+        assert not canary.parent.exists()
+        with pytest.raises(RealClaudeDirWrite):
+            sqlite3.connect(str(canary))
+        assert not canary.parent.exists()
+        _assert_guard_hit_and_clear_it()
+
+    def test_read_only_uri_connect_inside_the_real_claude_dir_is_not_blocked_by_this_guard(
+        self,
+    ) -> None:
+        # Proves the guard is not over-broad: an explicit read-only URI is
+        # let through by THIS check (sqlite3 itself still refuses to open a
+        # database file that does not exist in read-only mode, so this
+        # raises sqlite3.OperationalError, never RealClaudeDirWrite).
+        canary = _REAL_CLAUDE_DIR / "no-such-dir-canary" / "x.db"
+        assert not canary.parent.exists()
+        with pytest.raises(sqlite3.OperationalError):
+            sqlite3.connect(f"file:{canary}?mode=ro", uri=True)
+        assert not canary.parent.exists()
+
+    def test_connect_outside_the_real_claude_dir_remains_allowed(self, tmp_path: Path) -> None:
+        connection = sqlite3.connect(str(tmp_path / "harmless.db"))
+        connection.close()
+
+
+class TestOsSystemIsBlocked:
+    """Backlog 2026-09-24 #3: os.system shells out via /bin/sh -c but fires
+    its own "os.system" audit event, distinct from subprocess.Popen's - the
+    same `claude`/unguarded-python checks Popen already gets are applied
+    here too. os.system always runs under the CALLING process's own real
+    environment (there is no env= parameter at all), so any Python
+    interpreter it launches is unconditionally unguarded - there is no
+    "was HOME redirected" question to even ask, unlike the Popen case.
+    """
+
+    def test_launching_claude_via_os_system_is_blocked(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        # Empty PATH: without the guard, /bin/sh -c would fail to find
+        # "claude" and os.system would return a nonzero shell exit status -
+        # it can never actually launch the real CLI either way.
+        monkeypatch.setenv("PATH", str(tmp_path))
+        with pytest.raises(RealClaudeDirWrite):
+            os.system("claude --version")
+        _assert_guard_hit_and_clear_it()
+
+    def test_launching_a_python_child_via_os_system_is_blocked(self) -> None:
+        # No PATH manipulation needed: the guard must fire before the shell
+        # ever gets a chance to actually resolve or run "python3".
+        with pytest.raises(RealClaudeDirWrite):
+            os.system("python3 -c 'pass'")
+        _assert_guard_hit_and_clear_it()
+
+    def test_an_unrelated_os_system_command_remains_allowed(self) -> None:
+        exit_status = os.system("true")
+        assert exit_status == 0
+
+    def test_a_claude_lookalike_via_os_system_is_not_blocked(self) -> None:
+        # "claudette" is not a whole-word match for "claude" - matches
+        # TestClaudeLaunchMatchingIsPrecise's own lookalike coverage above.
+        exit_status = os.system("echo claudette")
+        assert exit_status == 0
+
+
+class TestPosixSpawnIsBlocked:
+    """Backlog 2026-09-24 #3: os.posix_spawn/os.posix_spawnp fire the SAME
+    "os.posix_spawn" audit event (confirmed in scratch - there is no
+    separate "os.posix_spawnp" event), shaped exactly like
+    subprocess.Popen's own (path, argv, env) - env is a MANDATORY positional
+    argument here, unlike Popen's optional env= kwarg, but a caller can
+    still hand it one that does not redirect HOME away from the real one,
+    so the exact same two checks Popen already gets apply unchanged.
+    """
+
+    def test_launching_claude_is_blocked(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        # An absolute path that does not exist: without the guard,
+        # posix_spawn would raise FileNotFoundError immediately - it can
+        # never actually launch anything real either way.
+        monkeypatch.setenv("PATH", str(tmp_path))
+        nonexistent_claude_path = str(tmp_path / "claude")
+        with pytest.raises(RealClaudeDirWrite):
+            os.posix_spawn(nonexistent_claude_path, [nonexistent_claude_path], {"PATH": ""})
+        _assert_guard_hit_and_clear_it()
+
+    def test_a_child_with_no_home_override_is_blocked(self) -> None:
+        with pytest.raises(RealClaudeDirWrite):
+            os.posix_spawn(sys.executable, [sys.executable, "-c", "pass"], {"PATH": "/usr/bin"})
+        _assert_guard_hit_and_clear_it()
+
+    def test_a_child_with_home_redirected_to_a_tmp_dir_is_allowed(self, tmp_path: Path) -> None:
+        environment = dict(os.environ, HOME=str(tmp_path))
+        process_id = os.posix_spawn(sys.executable, [sys.executable, "-c", "pass"], environment)
+        exit_status = os.waitpid(process_id, 0)[1]
+        assert exit_status == 0
+
+    def test_a_non_python_non_claude_child_is_unaffected(self) -> None:
+        process_id = os.posix_spawn("/bin/echo", ["/bin/echo", "hi"], {"PATH": "/usr/bin:/bin"})
+        exit_status = os.waitpid(process_id, 0)[1]
+        assert exit_status == 0
+
+
+class TestVersionedClaudeCliPathIsBlocked:
+    """Backlog 2026-09-24 #3: the real `claude` on the author's own machine
+    is a shim (~/.local/bin/claude) whose realpath is a VERSIONED file
+    under ~/.local/share/claude/versions/<version> - a basename that is
+    never the literal word "claude". Built entirely against a FAKE
+    installation directory (monkeypatched onto conftest's own module-level
+    seam), never the real one, so this passes identically whether or not
+    the real Claude CLI happens to be installed on the machine running the
+    suite (e.g. a bare CI runner).
+    """
+
+    def test_an_executable_whose_realpath_is_inside_the_fake_installation_directory_is_blocked(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        fake_installation_directory = tmp_path / "versions"
+        fake_installation_directory.mkdir()
+        fake_versioned_binary = fake_installation_directory / "2.1.999"
+        fake_versioned_binary.write_text("not a real binary")
+        monkeypatch.setattr(
+            conftest, "_CLAUDE_INSTALLATION_DIRECTORY", fake_installation_directory.resolve()
+        )
+        with pytest.raises(RealClaudeDirWrite):
+            subprocess.Popen([str(fake_versioned_binary)])
+        _assert_guard_hit_and_clear_it()
+
+    def test_the_same_check_applies_to_posix_spawn(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        fake_installation_directory = tmp_path / "versions"
+        fake_installation_directory.mkdir()
+        fake_versioned_binary = fake_installation_directory / "2.1.999"
+        fake_versioned_binary.write_text("not a real binary")
+        monkeypatch.setattr(
+            conftest, "_CLAUDE_INSTALLATION_DIRECTORY", fake_installation_directory.resolve()
+        )
+        with pytest.raises(RealClaudeDirWrite):
+            os.posix_spawn(str(fake_versioned_binary), [str(fake_versioned_binary)], {})
+        _assert_guard_hit_and_clear_it()
+
+    def test_an_executable_outside_the_fake_installation_directory_is_not_blocked(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        fake_installation_directory = tmp_path / "versions"
+        fake_installation_directory.mkdir()
+        monkeypatch.setattr(
+            conftest, "_CLAUDE_INSTALLATION_DIRECTORY", fake_installation_directory.resolve()
+        )
+        process = subprocess.Popen(["/bin/echo", "hi"], stdout=subprocess.DEVNULL)
+        assert process.wait(timeout=10) == 0
+
+    def test_no_installation_directory_found_does_not_crash_the_guard(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The real machine running the suite may not have `claude`
+        # installed at all (a bare CI runner) - the guard must degrade to
+        # the plain basename check, never raise from ITS OWN code.
+        monkeypatch.setattr(conftest, "_CLAUDE_INSTALLATION_DIRECTORY", None)
+        process = subprocess.Popen(["/bin/echo", "hi"], stdout=subprocess.DEVNULL)
+        assert process.wait(timeout=10) == 0
+
+
+class TestDirFdRelativeOperationsAreBlocked:
+    """Backlog 2026-09-24 #3: os.mkdir/os.remove/os.rmdir/os.rename/
+    os.symlink/os.link/shutil.rmtree all accept a dir_fd (a bare relative
+    name like "victim.txt", resolved against an already-open directory file
+    descriptor instead of the current working directory) - and, confirmed
+    in scratch, their audit events DO carry that dir_fd as a trailing
+    integer argument (unlike "open", which does not carry one at all - see
+    this module's own docstring for that honestly-undecidable case). Before
+    this fix, _inside_real_claude_dir resolved a bare relative name against
+    the test process's OWN current working directory, which is never the
+    real ~/.claude - so a dir_fd-relative mutation into the real dir would
+    have silently succeeded, guard or no guard. Every fixture here builds
+    its own FAKE guarded directory (monkeypatching conftest's own
+    _REAL_CLAUDE_DIR/_REAL_CLAUDE_DIR_LEXICAL) and creates any pre-existing
+    victim file BEFORE that redirect - the same ordering
+    TestCaseAndSymlinkEscapes above uses - so test setup itself never trips
+    the guard.
+
+    macOS's os.readlink(f"/dev/fd/{fd}") does NOT resolve a directory fd
+    (confirmed in scratch: OSError(22, "Invalid argument")) - the guard
+    uses fcntl(fd, F_GETPATH, ...) there instead; these tests exercise that
+    production code path directly (they do not run on Linux CI, but the
+    guard's own fallback for that platform is a plain os.readlink on
+    /proc/self/fd, documented in _directory_from_dir_fd's own docstring).
+    """
+
+    def test_mkdir_dir_fd_relative_into_the_real_dir_is_blocked(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        fake_claude_directory = tmp_path / ".claude"
+        fake_claude_directory.mkdir()
+        monkeypatch.setattr(conftest, "_REAL_CLAUDE_DIR", fake_claude_directory.resolve())
+        monkeypatch.setattr(conftest, "_REAL_CLAUDE_DIR_LEXICAL", fake_claude_directory)
+        directory_file_descriptor = os.open(str(fake_claude_directory), os.O_RDONLY)
+        try:
+            with pytest.raises(RealClaudeDirWrite):
+                os.mkdir("canary-child", dir_fd=directory_file_descriptor)
+        finally:
+            os.close(directory_file_descriptor)
+        assert not (fake_claude_directory / "canary-child").exists()
+        _assert_guard_hit_and_clear_it()
+
+    def test_remove_dir_fd_relative_into_the_real_dir_is_blocked(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        fake_claude_directory = tmp_path / ".claude"
+        fake_claude_directory.mkdir()
+        victim = fake_claude_directory / "victim.txt"
+        victim.write_text("do not delete")
+        monkeypatch.setattr(conftest, "_REAL_CLAUDE_DIR", fake_claude_directory.resolve())
+        monkeypatch.setattr(conftest, "_REAL_CLAUDE_DIR_LEXICAL", fake_claude_directory)
+        directory_file_descriptor = os.open(str(fake_claude_directory), os.O_RDONLY)
+        try:
+            with pytest.raises(RealClaudeDirWrite):
+                os.remove("victim.txt", dir_fd=directory_file_descriptor)
+        finally:
+            os.close(directory_file_descriptor)
+        assert victim.exists()
+        _assert_guard_hit_and_clear_it()
+
+    def test_rmdir_dir_fd_relative_into_the_real_dir_is_blocked(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        fake_claude_directory = tmp_path / ".claude"
+        fake_claude_directory.mkdir()
+        victim_directory = fake_claude_directory / "victim_directory"
+        victim_directory.mkdir()
+        monkeypatch.setattr(conftest, "_REAL_CLAUDE_DIR", fake_claude_directory.resolve())
+        monkeypatch.setattr(conftest, "_REAL_CLAUDE_DIR_LEXICAL", fake_claude_directory)
+        directory_file_descriptor = os.open(str(fake_claude_directory), os.O_RDONLY)
+        try:
+            with pytest.raises(RealClaudeDirWrite):
+                os.rmdir("victim_directory", dir_fd=directory_file_descriptor)
+        finally:
+            os.close(directory_file_descriptor)
+        assert victim_directory.exists()
+        _assert_guard_hit_and_clear_it()
+
+    def test_rename_dir_fd_relative_into_the_real_dir_is_blocked(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        fake_claude_directory = tmp_path / ".claude"
+        fake_claude_directory.mkdir()
+        source = fake_claude_directory / "source.txt"
+        source.write_text("x")
+        monkeypatch.setattr(conftest, "_REAL_CLAUDE_DIR", fake_claude_directory.resolve())
+        monkeypatch.setattr(conftest, "_REAL_CLAUDE_DIR_LEXICAL", fake_claude_directory)
+        directory_file_descriptor = os.open(str(fake_claude_directory), os.O_RDONLY)
+        try:
+            with pytest.raises(RealClaudeDirWrite):
+                os.rename(
+                    "source.txt",
+                    "renamed.txt",
+                    src_dir_fd=directory_file_descriptor,
+                    dst_dir_fd=directory_file_descriptor,
+                )
+        finally:
+            os.close(directory_file_descriptor)
+        assert source.exists()
+        assert not (fake_claude_directory / "renamed.txt").exists()
+        _assert_guard_hit_and_clear_it()
+
+    def test_symlink_dir_fd_relative_into_the_real_dir_is_blocked(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        fake_claude_directory = tmp_path / ".claude"
+        fake_claude_directory.mkdir()
+        monkeypatch.setattr(conftest, "_REAL_CLAUDE_DIR", fake_claude_directory.resolve())
+        monkeypatch.setattr(conftest, "_REAL_CLAUDE_DIR_LEXICAL", fake_claude_directory)
+        directory_file_descriptor = os.open(str(fake_claude_directory), os.O_RDONLY)
+        try:
+            with pytest.raises(RealClaudeDirWrite):
+                os.symlink("target.txt", "link.txt", dir_fd=directory_file_descriptor)
+        finally:
+            os.close(directory_file_descriptor)
+        assert not (fake_claude_directory / "link.txt").exists()
+        _assert_guard_hit_and_clear_it()
+
+    def test_link_dir_fd_relative_into_the_real_dir_is_blocked(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        fake_claude_directory = tmp_path / ".claude"
+        fake_claude_directory.mkdir()
+        source = fake_claude_directory / "hardlink_source.txt"
+        source.write_text("x")
+        monkeypatch.setattr(conftest, "_REAL_CLAUDE_DIR", fake_claude_directory.resolve())
+        monkeypatch.setattr(conftest, "_REAL_CLAUDE_DIR_LEXICAL", fake_claude_directory)
+        directory_file_descriptor = os.open(str(fake_claude_directory), os.O_RDONLY)
+        try:
+            with pytest.raises(RealClaudeDirWrite):
+                os.link(
+                    "hardlink_source.txt",
+                    "hardlink_target.txt",
+                    src_dir_fd=directory_file_descriptor,
+                    dst_dir_fd=directory_file_descriptor,
+                )
+        finally:
+            os.close(directory_file_descriptor)
+        assert not (fake_claude_directory / "hardlink_target.txt").exists()
+        _assert_guard_hit_and_clear_it()
+
+    def test_rmtree_dir_fd_relative_into_the_real_dir_is_blocked(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        import shutil
+
+        fake_claude_directory = tmp_path / ".claude"
+        fake_claude_directory.mkdir()
+        victim_directory = fake_claude_directory / "victim_tree"
+        victim_directory.mkdir()
+        (victim_directory / "inside.txt").write_text("x")
+        monkeypatch.setattr(conftest, "_REAL_CLAUDE_DIR", fake_claude_directory.resolve())
+        monkeypatch.setattr(conftest, "_REAL_CLAUDE_DIR_LEXICAL", fake_claude_directory)
+        directory_file_descriptor = os.open(str(fake_claude_directory), os.O_RDONLY)
+        try:
+            with pytest.raises(RealClaudeDirWrite):
+                shutil.rmtree("victim_tree", dir_fd=directory_file_descriptor)
+        finally:
+            os.close(directory_file_descriptor)
+        assert victim_directory.exists()
+        _assert_guard_hit_and_clear_it()
+
+    def test_a_dir_fd_relative_write_outside_the_fake_guarded_dir_remains_allowed(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        # Proves the new dir_fd resolution is not over-broad: a dir_fd
+        # pointing OUTSIDE the (fake) guarded directory must not itself
+        # become a false positive.
+        fake_claude_directory = tmp_path / ".claude"
+        fake_claude_directory.mkdir()
+        harmless_directory = tmp_path / "harmless"
+        harmless_directory.mkdir()
+        monkeypatch.setattr(conftest, "_REAL_CLAUDE_DIR", fake_claude_directory.resolve())
+        monkeypatch.setattr(conftest, "_REAL_CLAUDE_DIR_LEXICAL", fake_claude_directory)
+        directory_file_descriptor = os.open(str(harmless_directory), os.O_RDONLY)
+        try:
+            os.mkdir("harmless-child", dir_fd=directory_file_descriptor)
+        finally:
+            os.close(directory_file_descriptor)
+        assert (harmless_directory / "harmless-child").exists()
