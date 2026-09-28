@@ -40,12 +40,14 @@ def test_t_fills_its_placeholders() -> None:
 
 
 @pytest.mark.parametrize(
-    ("count", "en", "pt"),
+    ("count", "english_text", "portuguese_text"),
     [(0, "0 sessions", "0 sessões"), (1, "1 session", "1 sessão"), (2, "2 sessions", "2 sessões")],
 )
-def test_tn_uses_the_singular_for_exactly_one(count: int, en: str, pt: str) -> None:
-    assert mr.tn("sessions", count, "en") == en
-    assert mr.tn("sessions", count, "pt") == pt
+def test_tn_uses_the_singular_for_exactly_one(
+    count: int, english_text: str, portuguese_text: str
+) -> None:
+    assert mr.tn("sessions", count, "en") == english_text
+    assert mr.tn("sessions", count, "pt") == portuguese_text
 
 
 @pytest.mark.parametrize(
@@ -86,7 +88,7 @@ MOMENT = datetime(2026, 9, 23, 9, 30)
 
 
 @pytest.mark.parametrize(
-    ("granularity", "pt", "en"),
+    ("granularity", "portuguese_text", "english_text"),
     [
         ("minute", "09:30", "09:30"),
         ("hour", "23/09 09h", "Sep 23 09:00"),
@@ -96,13 +98,17 @@ MOMENT = datetime(2026, 9, 23, 9, 30)
         ("year", "2026", "2026"),
     ],
 )
-def test_tick_label_in_both_languages(granularity: str, pt: str, en: str) -> None:
-    assert mr.tick_label(granularity, MOMENT, "pt") == pt
-    assert mr.tick_label(granularity, MOMENT, "en") == en
+def test_tick_label_in_both_languages(
+    granularity: str, portuguese_text: str, english_text: str
+) -> None:
+    assert mr.tick_label(granularity, MOMENT, "pt") == portuguese_text
+    assert mr.tick_label(granularity, MOMENT, "en") == english_text
 
 
 def test_english_month_names_come_from_the_table_for_every_month() -> None:
-    names = [mr.tick_label("month", datetime(2026, m, 1), "en").split()[0] for m in range(1, 13)]
+    names = [
+        mr.tick_label("month", datetime(2026, month, 1), "en").split()[0] for month in range(1, 13)
+    ]
     assert names == ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
                      "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]  # fmt: skip
 

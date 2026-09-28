@@ -164,14 +164,14 @@ def test_assign_model_slots_does_not_depend_on_the_order_models_arrive_in():
 def test_assign_model_slots_never_gives_two_models_one_slot_while_slots_remain():
     # Two versions of one family want the same slot; so, by construction,
     # do nine models hashed into nine slots more often than not.
-    models = [f"model-{i}" for i in range(7)] + ["claude-opus-4-1", "claude-opus-4-8"]
+    models = [f"model-{index}" for index in range(7)] + ["claude-opus-4-1", "claude-opus-4-8"]
     slots = mr.assign_model_slots(models, 9)
     assert len(slots) == 9
     assert sorted(slot for slot in slots.values() if slot is not None) == list(range(9))
 
 
 def test_assign_model_slots_leaves_the_overflow_without_a_slot():
-    slots = mr.assign_model_slots([f"model-{i}" for i in range(10)], 7)
+    slots = mr.assign_model_slots([f"model-{index}" for index in range(10)], 7)
     assert sorted(slot for slot in slots.values() if slot is not None) == list(range(7))
     assert sum(slot is None for slot in slots.values()) == 3
 
