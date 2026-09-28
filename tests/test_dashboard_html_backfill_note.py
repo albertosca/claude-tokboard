@@ -13,7 +13,7 @@ def test_render_backfill_note_wraps_the_description_in_a_span(monkeypatch):
     # tests/test_backfill.py (Task 1). This test only proves
     # render_backfill_note() wires them up and escapes the result.
     monkeypatch.setattr(
-        dashboard_html.mr,  # type: ignore[attr-defined]  # mr is dashboard_html's internal metrics_core import, not re-exported under strict's implicit-reexport check
+        dashboard_html.metrics_core_module,  # type: ignore[attr-defined]  # metrics_core_module is dashboard_html's internal metrics_core import, not re-exported under strict's implicit-reexport check
         "describe_backfill_state",
         lambda state, lang: "a <b> note",
     )
