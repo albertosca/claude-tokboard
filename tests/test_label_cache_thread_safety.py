@@ -38,13 +38,15 @@ def test_saving_the_agent_cache_while_a_worker_thread_still_writes_it_never_rais
 ) -> None:
     monkeypatch.setattr(labels_module, "AGENT_LABELS_FILE", str(tmp_path / "agent_labels.json"))
     monkeypatch.setattr(labels_module, "compress_to_label", lambda source, *, lang: "a label")
-    monkeypatch.setattr(labels_module, "warm_summary_source", lambda path, max_turns=4: "some text")
+    monkeypatch.setattr(
+        labels_module, "warm_summary_source", lambda path, maximum_turns=4: "some text"
+    )
 
     cache: mr.LabelCache = {}
     budget = mr.LabelBudget(None)
     records = [
-        {"agent_id": f"agent-{i}", "agent_transcript_path": "/some/path.jsonl"}
-        for i in range(RECORD_COUNT)
+        {"agent_id": f"agent-{index}", "agent_transcript_path": "/some/path.jsonl"}
+        for index in range(RECORD_COUNT)
     ]
     errors: list[BaseException] = []
     stop = threading.Event()
@@ -53,16 +55,16 @@ def test_saving_the_agent_cache_while_a_worker_thread_still_writes_it_never_rais
         for record in records:
             try:
                 mr.get_agent_label(record, cache, budget, lang="pt")
-            except BaseException as exc:
-                errors.append(exc)
+            except BaseException as exception:
+                errors.append(exception)
         stop.set()
 
     def saver() -> None:
         while not stop.is_set():
             try:
                 mr.save_agent_label_cache(cache)
-            except BaseException as exc:
-                errors.append(exc)
+            except BaseException as exception:
+                errors.append(exception)
                 return
 
     original_interval = sys.getswitchinterval()
@@ -86,13 +88,15 @@ def test_saving_the_task_cache_while_a_worker_thread_still_writes_it_never_raise
 ) -> None:
     monkeypatch.setattr(labels_module, "TASK_LABELS_FILE", str(tmp_path / "task_labels.json"))
     monkeypatch.setattr(labels_module, "compress_to_label", lambda source, *, lang: "a label")
-    monkeypatch.setattr(labels_module, "cold_summary_source", lambda path, max_turns=6: "some text")
+    monkeypatch.setattr(
+        labels_module, "cold_summary_source", lambda path, maximum_turns=6: "some text"
+    )
 
     cache: mr.LabelCache = {}
     budget = mr.LabelBudget(None)
     records = [
-        {"session_id": f"session-{i}", "transcript_path": "/some/path.jsonl"}
-        for i in range(RECORD_COUNT)
+        {"session_id": f"session-{index}", "transcript_path": "/some/path.jsonl"}
+        for index in range(RECORD_COUNT)
     ]
     errors: list[BaseException] = []
     stop = threading.Event()
@@ -101,16 +105,16 @@ def test_saving_the_task_cache_while_a_worker_thread_still_writes_it_never_raise
         for record in records:
             try:
                 mr.get_task_label(record, cache, budget, lang="pt")
-            except BaseException as exc:
-                errors.append(exc)
+            except BaseException as exception:
+                errors.append(exception)
         stop.set()
 
     def saver() -> None:
         while not stop.is_set():
             try:
                 mr.save_label_cache(cache)
-            except BaseException as exc:
-                errors.append(exc)
+            except BaseException as exception:
+                errors.append(exception)
                 return
 
     original_interval = sys.getswitchinterval()
