@@ -65,17 +65,17 @@ def _extract_span(html_out: str, css_class: str) -> str:
 # --------------------------------------------------------------------------
 
 
-def _attr(attrs: str, name: str) -> str | None:
-    m = re.search(rf'{re.escape(name)}="([^"]*)"', attrs)
-    return m.group(1) if m else None
+def _attr(attributes: str, name: str) -> str | None:
+    match = re.search(rf'{re.escape(name)}="([^"]*)"', attributes)
+    return match.group(1) if match else None
 
 
-def _attr_names(attrs: str) -> set[str]:
+def _attr_names(attributes: str) -> set[str]:
     """Attribute NAMES present in a tag's attribute string, including
     valueless boolean attributes like `hidden`. Substring-testing the raw
     string instead would flip on any future attribute whose name merely
     contains "hidden"."""
-    return set(re.findall(r'([A-Za-z_:][-A-Za-z0-9_:.]*)(?:="[^"]*")?', attrs))
+    return set(re.findall(r'([A-Za-z_:][-A-Za-z0-9_:.]*)(?:="[^"]*")?', attributes))
 
 
 def _period_block(html_out: str, period_id: str) -> tuple[str, str]:
@@ -85,13 +85,13 @@ def _period_block(html_out: str, period_id: str) -> tuple[str, str]:
     # Scanned as opening tags rather than as `<span...>(.*?)</span>` pairs:
     # the period blocks are nested inside an outer <span>, and a paired
     # regex lets the outer match swallow the first inner one whole.
-    for m in re.finditer(r"<span\b([^>]*)>", html_out):
-        attrs = m.group(1)
-        classes = (_attr(attrs, "class") or "").split()
-        if _attr(attrs, "data-period") == period_id and "group-count" in classes:
+    for match in re.finditer(r"<span\b([^>]*)>", html_out):
+        attributes = match.group(1)
+        classes = (_attr(attributes, "class") or "").split()
+        if _attr(attributes, "data-period") == period_id and "group-count" in classes:
             # No period block contains a nested span, so its content runs
             # to the next closing tag.
-            return attrs, html_out[m.end() : html_out.index("</span>", m.end())]
+            return attributes, html_out[match.end() : html_out.index("</span>", match.end())]
     raise AssertionError(f"no group-count period-block span for period {period_id!r}")
 
 
@@ -100,8 +100,8 @@ def _div_classes(html_out: str, first_class: str) -> list[str]:
     starts with first_class - located by class membership, not by class
     being the div's only attribute."""
     found = []
-    for m in re.finditer(r"<div\b([^>]*)>", html_out):
-        classes = (_attr(m.group(1), "class") or "").split()
+    for match in re.finditer(r"<div\b([^>]*)>", html_out):
+        classes = (_attr(match.group(1), "class") or "").split()
         if classes and classes[0] == first_class:
             found.append(" ".join(classes))
     return found
@@ -132,16 +132,16 @@ def test_render_session_row_pins_own_fields():
 
 def _tag_with_class(html_out: str, css_class: str) -> tuple[str, str]:
     """(attributes, inner text) of the first span carrying css_class."""
-    for m in re.finditer(r"<span\b([^>]*)>([^<]*)", html_out):
-        if css_class in (_attr(m.group(1), "class") or "").split():
-            return m.group(1), m.group(2)
+    for match in re.finditer(r"<span\b([^>]*)>([^<]*)", html_out):
+        if css_class in (_attr(match.group(1), "class") or "").split():
+            return match.group(1), match.group(2)
     raise AssertionError(f"no span with class {css_class!r}")
 
 
 def _output_segment_title(html_out: str) -> str:
-    for m in re.finditer(r"<span\b([^>]*)>", html_out):
-        if "series-2" in (_attr(m.group(1), "class") or "").split():
-            return _attr(m.group(1), "title") or ""
+    for match in re.finditer(r"<span\b([^>]*)>", html_out):
+        if "series-2" in (_attr(match.group(1), "class") or "").split():
+            return _attr(match.group(1), "title") or ""
     raise AssertionError("no output segment")
 
 
@@ -151,9 +151,9 @@ def test_render_session_row_marks_a_floor_output_with_a_prefix_and_a_note(lang):
     out = dashboard_html.render_session_row(
         record, is_active=False, group_colors={}, group_index=0, lang=lang
     )
-    attrs, text = _tag_with_class(out, "tokens-total")
+    attributes, text = _tag_with_class(out, "tokens-total")
     assert text == "≥" + mr.format_tokens(mr.record_token_total(record))
-    assert html.unescape(_attr(attrs, "title") or "") == mr.tn("floor_note", 3, lang)
+    assert html.unescape(_attr(attributes, "title") or "") == mr.tn("floor_note", 3, lang)
     assert _output_segment_title(out).startswith("output · ≥")
 
 
@@ -162,8 +162,8 @@ def test_render_session_row_without_the_flag_shows_no_floor_marker():
         _base_record(), is_active=False, group_colors={}, group_index=0, lang="en"
     )
     assert "≥" not in out
-    attrs, _text = _tag_with_class(out, "tokens-total")
-    assert _attr(attrs, "title") is None
+    attributes, _text = _tag_with_class(out, "tokens-total")
+    assert _attr(attributes, "title") is None
 
 
 def test_render_session_row_subagent_badge_absent_when_count_is_zero():
@@ -360,7 +360,7 @@ def _group(
 
 
 _ALL_NONE_PERIOD_WINDOWS: dict[str, tuple[datetime, datetime] | None] = {
-    p.id: None for p in mr.PERIODS
+    period.id: None for period in mr.PERIODS
 }
 
 
@@ -386,7 +386,7 @@ def test_render_group_header_shows_display_label_and_aggregate_token_total():
     out = dashboard_html.render_group_header(0, group, period_windows, lang="pt")
 
     assert mr.project_display_label("/proj/a", lang="pt") in out
-    expected_total = mr.format_tokens(sum(mr.record_token_total(r) for r in records))
+    expected_total = mr.format_tokens(sum(mr.record_token_total(record) for record in records))
     # _period_block finds the span by the attributes it genuinely carries
     # (data-period + the group-count class), in any order and with any
     # number of other attributes around them - so this test only fails when
@@ -415,8 +415,8 @@ def test_render_group_header_only_default_period_block_is_unhidden():
         # rather than as a substring of the raw tag: the substring form
         # would flip on any future attribute whose name merely contains
         # "hidden" (review M1).
-        attrs, _body = _period_block(out, period.id)
-        names = _attr_names(attrs)
+        attributes, _body = _period_block(out, period.id)
+        names = _attr_names(attributes)
         if period.id == mr.DEFAULT_PERIOD_ID:
             assert "hidden" not in names, f"default period {period.id!r} block is hidden"
         else:
@@ -453,7 +453,7 @@ def test_render_group_header_data_periods_lists_only_periods_with_scoped_session
     ]
     group = _group("/proj/a", records)
     now = datetime.fromisoformat("2026-08-21T10:00:00+00:00")
-    period_windows = {p.id: mr.resolve_period(p.id, now) for p in mr.PERIODS}
+    period_windows = {period.id: mr.resolve_period(period.id, now) for period in mr.PERIODS}
     out = dashboard_html.render_group_header(0, group, period_windows, lang="pt")
     match = re.search(r'data-periods="([^"]*)"', out)
     assert match
@@ -493,10 +493,10 @@ def test_render_detail_panel_renders_subagents_newest_first():
         _subagent("third-agent", "2026-08-20T09:00:00Z", agent_label="middle"),
     ]
     out = dashboard_html.render_detail_panel("sess-1", subagents, is_active=False, lang="pt")
-    newest_pos = out.index("newest")
-    middle_pos = out.index("middle")
-    oldest_pos = out.index("oldest")
-    assert newest_pos < middle_pos < oldest_pos
+    newest_position = out.index("newest")
+    middle_position = out.index("middle")
+    oldest_position = out.index("oldest")
+    assert newest_position < middle_position < oldest_position
 
 
 def test_render_detail_panel_reversing_mutation_would_be_caught():
@@ -528,7 +528,11 @@ def test_render_detail_panel_zebra_stripes_odd_rows_only():
     # class to be the div's only attribute and immediately followed by `>`
     # (review M1). The first subagent-row is the column header, which the
     # zebra pattern deliberately doesn't count.
-    rows = [cls for cls in _div_classes(out, "subagent-row") if "subagent-header" not in cls]
+    rows = [
+        class_string
+        for class_string in _div_classes(out, "subagent-row")
+        if "subagent-header" not in class_string
+    ]
     assert rows == ["subagent-row", "subagent-row subagent-row-odd", "subagent-row"]
 
 
@@ -634,8 +638,8 @@ def test_render_detail_panel_marks_only_the_flagged_subagent_as_a_floor(lang):
     ]
     out = dashboard_html.render_detail_panel("sess-1", subagents, is_active=False, lang=lang)
     flagged_row, complete_row = out.split('<div class="subagent-row')[2:]
-    attrs, text = _tag_with_class(flagged_row, "floor-total")
+    attributes, text = _tag_with_class(flagged_row, "floor-total")
     assert text == "≥" + mr.format_tokens(15)
-    assert html.unescape(_attr(attrs, "title") or "") == mr.tn("floor_note", 1, lang)
+    assert html.unescape(_attr(attributes, "title") or "") == mr.tn("floor_note", 1, lang)
     assert _output_segment_title(flagged_row).startswith("output · ≥")
     assert "≥" not in complete_row

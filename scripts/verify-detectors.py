@@ -43,7 +43,7 @@ Every defect below names the pytest node id that must fail and the harness
 assertion label that must appear in the failure output, and both are
 required. "Any red counts" was the earlier criterion and it could not tell
 "the assertion that exists for this defect caught it" from "something else
-broke": a syntax error in the patched file, or only the MIN_ASSERTIONS
+broke": a syntax error in the patched file, or only the MINIMUM_ASSERTIONS
 ratchet tripping because a section quietly stopped running, would both have
 printed DETECTED while proving nothing. A criterion that cannot distinguish
 success from failure is not a verification.

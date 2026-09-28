@@ -30,13 +30,13 @@ HERE = Path(__file__).resolve().parent
 # The four fixture records added the same day moved it by nothing at all -
 # every section's count is structural, not per-record - which is exactly
 # why this has to be measured rather than reasoned about.
-MIN_ASSERTIONS = 238
+MINIMUM_ASSERTIONS = 238
 
 
 def _fixture_records(home: str) -> list[dict[str, Any]]:
     path = Path(home) / ".claude" / "metrics" / "sessions.jsonl"
-    with path.open() as f:
-        return [json.loads(line) for line in f if line.strip()]
+    with path.open() as sessions_file:
+        return [json.loads(line) for line in sessions_file if line.strip()]
 
 
 def _trend_chip(project_path: str | None) -> str:
@@ -71,7 +71,7 @@ def _expectations(dashboard_page: DashboardPage) -> dict[str, Any]:
     deltas = mr.expand_records_to_daily_deltas(records)
     periods: dict[str, dict[str, Any]] = {}
     for period, data in dashboard_page.expected.items():
-        scoped = [r for r in records if r["session_id"] in data["session_ids"]]
+        scoped = [record for record in records if record["session_id"] in data["session_ids"]]
         totals = mr.compute_token_type_totals(scoped)
         scoped_deltas = mr.filter_deltas_by_window(deltas, mr.resolve_period(period, now))
         # A set of project names catches a chart fed the UNFILTERED records,
@@ -87,29 +87,36 @@ def _expectations(dashboard_page: DashboardPage) -> dict[str, Any]:
             "session_ids": sorted(data["session_ids"]),
             "token_total": data["token_total"],
             "legend": {series: mr.format_tokens(value) for series, value in totals.items()},
-            "trend_projects": sorted({_trend_chip(d.get("project_path")) for d in scoped_deltas}),
+            "trend_projects": sorted(
+                {_trend_chip(delta.get("project_path")) for delta in scoped_deltas}
+            ),
             # Every bar segment the trend chart draws carries its own value
             # in a <title>; they add up to exactly the tokens in the window.
-            "trend_tokens": sum(mr.record_token_total(d) for d in scoped_deltas),
+            "trend_tokens": sum(mr.record_token_total(delta) for delta in scoped_deltas),
             # Panorama is fed whole sessions, so the period's own session
             # ids are all it takes. Projects with no tokens at all are
             # dropped by the chart; the fixture has none.
             "panorama_projects": sorted(
-                {mr.project_display_label(r.get("project_path"), lang="pt") for r in scoped}
+                {
+                    mr.project_display_label(record.get("project_path"), lang="pt")
+                    for record in scoped
+                }
             ),
             "panorama_totals": panorama_totals,
         }
     return {
         "periods": periods,
         "default_period": mr.DEFAULT_PERIOD_ID,
-        "session_tokens": {r["session_id"]: mr.record_token_total(r) for r in records},
+        "session_tokens": {
+            record["session_id"]: mr.record_token_total(record) for record in records
+        },
     }
 
 
 def _drive(dashboard_page: DashboardPage, node: str) -> subprocess.CompletedProcess[str]:
     payload = Path(dashboard_page.home) / "expected.json"
-    with payload.open("w") as f:
-        json.dump(_expectations(dashboard_page), f)
+    with payload.open("w") as payload_file:
+        json.dump(_expectations(dashboard_page), payload_file)
     return subprocess.run(
         [node, str(HERE / "js" / "drive_dashboard.js"), str(payload)],
         env=dict(os.environ, DASHBOARD=dashboard_page.html_path),
@@ -142,7 +149,7 @@ def test_the_harness_reports_which_periods_it_checked(dashboard_page):
     # fixture change could delete assertions without deleting any output.
     total = re.search(r"^TOTAL: (\d+) assertions", result.stdout, re.MULTILINE)
     assert total, f"harness printed no TOTAL line: {result.stdout}"
-    assert int(total.group(1)) >= MIN_ASSERTIONS, (
-        f"the harness made {total.group(1)} assertions, down from {MIN_ASSERTIONS} - "
+    assert int(total.group(1)) >= MINIMUM_ASSERTIONS, (
+        f"the harness made {total.group(1)} assertions, down from {MINIMUM_ASSERTIONS} - "
         f"coverage was removed, not added\n{result.stdout}"
     )
