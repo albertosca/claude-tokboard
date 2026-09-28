@@ -105,7 +105,9 @@ def index_transcripts(projects_dir: str) -> dict[str, str]:
     return index
 
 
-def index_subagent_transcripts(projects_dir: str) -> tuple[dict[str, str], list[str]]:
+def index_subagent_transcripts(
+    projects_dir: str, found: dict[str, list[str]] | None = None
+) -> tuple[dict[str, str], list[str]]:
     """agent_id -> transcript path, for the files index_transcripts excludes.
 
     Subagent transcripts sit one level deeper than session ones, at
@@ -127,23 +129,48 @@ def index_subagent_transcripts(projects_dir: str) -> tuple[dict[str, str], list[
     therefore builds an index that looks populated and never matches - the
     same class of failure as handing over the session index, one level down.
 
-    An agent id found under more than one slug is AMBIGUITY, not a match:
-    nothing here can tell which copy the record was parsed from, and picking
-    the bigger or the first would be a guess dressed as a resolution. Those
-    ids are left out of the index and returned so the run can name them.
+    An agent id found under more than one slug whose copies are
+    BYTE-IDENTICAL is one transcript stored twice - measured 2026-09-28, all
+    93 such ids on disk were (a renamed project directory, a migrated
+    worktree slug) - so the first path in sorted order stands for all of
+    them: which copy is read cannot change a number. Copies that DIFFER are
+    ambiguity, not a match: nothing here can tell which one the record was
+    parsed from, and picking the bigger or the first would be a guess dressed
+    as a resolution. Those ids are left out of the index and returned so the
+    run can name them - and so subagent_transcripts can try the row's own
+    parent session, the one piece of the row's data that tells copies apart.
+
+    `found` is find_subagent_transcripts' result, for a caller that also
+    needs the copies; without it the tree is walked here.
 
     Shared by scripts/backfill-tokens-by-model.py and
     scripts/backfill-token-dedup.py, so both find a subagent's transcript
     the same way.
+    """
+    if found is None:
+        found = find_subagent_transcripts(projects_dir)
+    index: dict[str, str] = {}
+    ambiguous: list[str] = []
+    for agent_id, paths in sorted(found.items()):
+        if len({sha256_of(path) for path in paths}) == 1:
+            index[agent_id] = paths[0]
+        else:
+            ambiguous.append(agent_id)
+    return index, ambiguous
+
+
+def find_subagent_transcripts(projects_dir: str) -> dict[str, list[str]]:
+    """agent_id -> every copy of its transcript on disk, in sorted order.
+
+    See index_subagent_transcripts for the path shape and the `agent-`
+    filename prefix the record's own agent_id does not carry.
     """
     prefix = "agent-"
     found: dict[str, list[str]] = collections.defaultdict(list)
     for path in Path(projects_dir).glob("*/*/subagents/*.jsonl"):
         stem = path.name[: -len(".jsonl")]
         found[stem.removeprefix(prefix)].append(str(path))
-    index = {agent_id: paths[0] for agent_id, paths in found.items() if len(paths) == 1}
-    ambiguous = sorted(agent_id for agent_id, paths in found.items() if len(paths) > 1)
-    return index, ambiguous
+    return {agent_id: sorted(paths) for agent_id, paths in found.items()}
 
 
 def resolve_transcript(
@@ -169,7 +196,24 @@ def resolve_transcript(
     return transcripts.get(unit_id)
 
 
-def subagent_transcripts(records: list[dict[str, Any]], index: dict[str, str]) -> dict[str, str]:
+def resolve_by_parent(record: dict[str, Any], copies: list[str]) -> str | None:
+    """The one copy of an ambiguous subagent transcript that sits under this
+    row's own parent session - <slug>/<session_id>/subagents/ - or None when
+    none or several do. A row that recorded no path resolves to None here as
+    everywhere else: the parent picks between known copies of a transcript
+    the row did record, it does not invent one."""
+    if not record.get("agent_transcript_path"):
+        return None
+    parent = record.get("session_id")
+    matches = [path for path in copies if Path(path).parent.parent.name == parent]
+    return matches[0] if len(matches) == 1 else None
+
+
+def subagent_transcripts(
+    records: list[dict[str, Any]],
+    index: dict[str, str],
+    candidates: dict[str, list[str]] | None = None,
+) -> dict[str, str]:
     """agent_id -> the one transcript every row of that subagent resolves to.
 
     The subagent counterpart of index_transcripts, in the shape
@@ -179,13 +223,21 @@ def subagent_transcripts(records: list[dict[str, Any]], index: dict[str, str]) -
     reports it as having no transcript - when any row fails to resolve, or
     when its rows resolve to different files: nothing here can say which of
     two files a single as-of series was parsed from.
+
+    `candidates` maps an ambiguous agent id (differing copies, see
+    index_subagent_transcripts) to its copies; a row that resolves nowhere
+    else is then tried against them through resolve_by_parent.
     """
+    candidates = candidates or {}
     resolved: dict[str, set[str | None]] = collections.defaultdict(set)
     for record in records:
         agent_id = record.get("agent_id")
         if not agent_id:
             continue
-        resolved[agent_id].add(resolve_transcript(record, index, "agent_transcript_path", agent_id))
+        path = resolve_transcript(record, index, "agent_transcript_path", agent_id)
+        if path is None and agent_id in candidates:
+            path = resolve_by_parent(record, candidates[agent_id])
+        resolved[agent_id].add(path)
     units: dict[str, str] = {}
     for agent_id, paths in resolved.items():
         (only, *others) = paths

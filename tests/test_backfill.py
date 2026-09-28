@@ -914,6 +914,74 @@ def test_subagent_transcripts_drops_a_unit_whose_rows_resolve_to_different_files
     assert mr.subagent_transcripts(records, {}) == {}
 
 
+def _copy(projects: Path, slug: str, parent: str, agent_id: str, body: str) -> str:
+    directory = projects / slug / parent / "subagents"
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / f"agent-{agent_id}.jsonl"
+    path.write_text(body)
+    return str(path)
+
+
+def test_identical_copies_under_two_slugs_are_one_transcript_not_an_ambiguity(tmp_path):
+    # Measured 2026-09-28: all 93 agent ids found under two project slugs
+    # are byte-identical copies (a project directory renamed, a worktree slug
+    # migrated). Which copy is read changes nothing, so refusing them left
+    # 85 correctable rows behind for no reason.
+    projects = tmp_path / "projects"
+    first = _copy(projects, "slug-a", "sess-1", "dup", "same\n")
+    _copy(projects, "slug-b", "sess-1", "dup", "same\n")
+
+    index, ambiguous = mr.index_subagent_transcripts(str(projects))
+
+    assert index == {"dup": first}
+    assert ambiguous == []
+
+
+def test_copies_that_differ_stay_ambiguous(tmp_path):
+    projects = tmp_path / "projects"
+    _copy(projects, "slug-a", "sess-1", "dup", "one\n")
+    _copy(projects, "slug-b", "sess-1", "dup", "one\ntwo\n")
+
+    index, ambiguous = mr.index_subagent_transcripts(str(projects))
+
+    assert index == {}
+    assert ambiguous == ["dup"]
+
+
+def test_differing_copies_are_told_apart_by_the_rows_own_parent_session(tmp_path):
+    # A subagent transcript lives under <slug>/<parent session>/subagents/,
+    # and the row records that parent as its session_id - the row's own data,
+    # not a guess, picks the copy when exactly one sits under its parent.
+    projects = tmp_path / "projects"
+    mine = _copy(projects, "slug-a", "parent", "a1", "one\n")
+    _copy(projects, "slug-b", "other-parent", "a1", "two\n")
+    # a2: both differing copies sit under a directory named for its parent.
+    _copy(projects, "slug-a", "parent", "a2", "one\n")
+    _copy(projects, "slug-b", "parent", "a2", "two\n")
+    found = mr.find_subagent_transcripts(str(projects))
+    index, ambiguous = mr.index_subagent_transcripts(str(projects), found)
+    gone = str(tmp_path / "gone" / "agent-x.jsonl")
+    records = [
+        dict(subagent_record("a1", "x", 1), agent_transcript_path=gone),
+        dict(subagent_record("a1", "y", 2), agent_transcript_path=gone),
+        dict(subagent_record("a2", "x", 1), agent_transcript_path=gone),
+    ]
+    candidates = {agent_id: found[agent_id] for agent_id in ambiguous}
+
+    assert mr.subagent_transcripts(records, index, candidates) == {"a1": mine}
+    # Without the candidates, both stay unresolved, as before.
+    assert mr.subagent_transcripts(records, index) == {}
+
+
+def test_a_row_with_no_recorded_path_is_not_resolved_through_its_parent_either(tmp_path):
+    projects = tmp_path / "projects"
+    mine = _copy(projects, "slug-a", "parent", "a1", "one\n")
+    _copy(projects, "slug-b", "other", "a1", "two\n")
+    records = [dict(subagent_record("a1", "x", 1), agent_transcript_path=None)]
+
+    assert mr.subagent_transcripts(records, {}, {"a1": [mine]}) == {}
+
+
 def test_subagent_transcripts_drops_a_unit_where_one_row_does_not_resolve(tmp_path):
     here = tmp_path / "agent-a1.jsonl"
     here.write_text("")

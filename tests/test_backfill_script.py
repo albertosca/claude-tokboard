@@ -1215,12 +1215,35 @@ def test_main_names_ambiguous_subagent_transcripts(tmp_path, script, monkeypatch
     paths = _subagents_fixture(tmp_path)
     twin = paths["projects"] / "other-project" / "parent" / "subagents"
     twin.mkdir(parents=True)
+    # A copy that DIFFERS (one replay fewer), under a directory named for the
+    # same parent session - so neither the content nor the row's parent can
+    # tell the two apart.
+    _write_transcript(twin / "agent-a2.jsonl", _replayed("2026-08-01T11:00:00", "m2", 50, 4))
+    monkeypatch.setattr("sys.argv", _subagents_argv(paths))
+
+    assert script.main() == 0
+
+    out = capsys.readouterr().out
+    assert (
+        "1 id(s) found under more than one project slug with differing copies, left "
+        "unindexed (a row may still pick its copy by its parent session): ['a2']"
+    ) in out
+    # a2's recorded path is stale and its id is ambiguous: uncorrectable.
+    assert "Lines: 3 read, 1 would change" in out
+
+
+def test_main_corrects_a_subagent_whose_copies_under_two_slugs_are_identical(
+    tmp_path, script, monkeypatch, capsys
+):
+    paths = _subagents_fixture(tmp_path)
+    twin = paths["projects"] / "other-project" / "parent" / "subagents"
+    twin.mkdir(parents=True)
     _write_transcript(twin / "agent-a2.jsonl", _replayed("2026-08-01T11:00:00", "m2", 50, 5))
     monkeypatch.setattr("sys.argv", _subagents_argv(paths))
 
     assert script.main() == 0
 
     out = capsys.readouterr().out
-    assert "1 id(s) found under more than one project slug and left unindexed: ['a2']" in out
-    # a2's recorded path is stale and its id is ambiguous: uncorrectable.
-    assert "Lines: 3 read, 1 would change" in out
+    assert "differing copies" not in out
+    # a2's stale path now resolves to the one transcript both copies are.
+    assert "Lines: 3 read, 2 would change" in out

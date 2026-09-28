@@ -339,9 +339,12 @@ def test_an_agent_id_under_two_project_slugs_is_ambiguity_not_a_match(script, tm
     # Picking the first, or the larger, would be a guess presented as a
     # resolution - and the row would then be "checked" against a file that
     # may not be its own. It is left unindexed and named instead.
+    # Copies that DIFFER: identical ones are one transcript stored twice and
+    # are indexed (see metrics_core.index_subagent_transcripts).
     projects = tmp_path / "projects"
     _subagent_tree(projects, "slug-a", "sess-1", "dup")
-    _subagent_tree(projects, "slug-b", "sess-1", "dup")
+    with Path(_subagent_tree(projects, "slug-b", "sess-1", "dup")).open("a") as f:
+        f.write("\n")
     only_once = _subagent_tree(projects, "slug-a", "sess-1", "unique")
 
     index, ambiguous = script.index_subagent_transcripts(str(projects))
@@ -1031,7 +1034,8 @@ def test_main_names_an_ambiguous_agent_id_instead_of_resolving_it(
     # identical to "the transcript is gone".
     projects = tmp_path / "projects"
     _subagent_tree(projects, "slug-a", "sess-1", "dup")
-    _subagent_tree(projects, "slug-b", "sess-1", "dup")
+    with Path(_subagent_tree(projects, "slug-b", "sess-1", "dup")).open("a") as f:
+        f.write("\n")  # differing copies: identical ones would be indexed
     _metrics_file(
         tmp_path,
         "subagents",

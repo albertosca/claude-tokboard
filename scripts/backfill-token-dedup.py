@@ -110,6 +110,7 @@ from metrics_core.backfill import (
     daily_totals,
     file_kind_problem,
     find_nonmonotonic_sessions,
+    find_subagent_transcripts,
     index_subagent_transcripts,
     index_transcripts,
     plan_corrections_by_formula,
@@ -372,14 +373,17 @@ def main() -> int:
         return 1
 
     if args.kind == "subagents":
-        index, ambiguous = index_subagent_transcripts(args.projects_dir)
+        found = find_subagent_transcripts(args.projects_dir)
+        index, ambiguous = index_subagent_transcripts(args.projects_dir, found)
         print(f"indexed {len(index)} subagent transcripts under {args.projects_dir}")
         if ambiguous:
             print(
-                f"  {len(ambiguous)} id(s) found under more than one project slug and "
-                f"left unindexed: {ambiguous[:5]}"
+                f"  {len(ambiguous)} id(s) found under more than one project slug with "
+                f"differing copies, left unindexed (a row may still pick its copy by "
+                f"its parent session): {ambiguous[:5]}"
             )
-        transcripts = subagent_transcripts(records, index)
+        candidates = {agent_id: found[agent_id] for agent_id in ambiguous}
+        transcripts = subagent_transcripts(records, index, candidates)
     else:
         transcripts = index_transcripts(args.projects_dir)
         print(f"indexed {len(transcripts)} session transcripts under {args.projects_dir}")
