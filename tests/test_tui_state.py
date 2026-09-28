@@ -71,7 +71,7 @@ from textual.widgets import Footer, TabbedContent, Tree  # noqa: E402
 import dashboard_tui as tui  # noqa: E402
 
 
-def isolate_tui_from_the_real_filesystem(mp: pytest.MonkeyPatch, home: Path) -> None:
+def isolate_tui_from_the_real_filesystem(monkeypatch: pytest.MonkeyPatch, home: Path) -> None:
     """Point every path dashboard_tui can reach at a throwaway HOME.
 
     The subprocess this file replaced got isolation for free by passing
@@ -91,40 +91,42 @@ def isolate_tui_from_the_real_filesystem(mp: pytest.MonkeyPatch, home: Path) -> 
     """
     metrics = home / ".claude" / "metrics"
     metrics.mkdir(parents=True, exist_ok=True)
-    mp.setenv("HOME", str(home))
-    mp.setattr(mr, "METRICS_FILE", str(metrics / "sessions.jsonl"))
-    mp.setattr(mr, "SUBAGENTS_FILE", str(metrics / "subagents.jsonl"))
-    mp.setattr(labels_module, "TASK_LABELS_FILE", str(metrics / "task_labels.json"))
-    mp.setattr(labels_module, "AGENT_LABELS_FILE", str(metrics / "agent_labels.json"))
-    mp.setattr(backfill_module, "BACKFILL_STATE_FILE", str(metrics / "backfill_state.json"))
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setattr(mr, "METRICS_FILE", str(metrics / "sessions.jsonl"))
+    monkeypatch.setattr(mr, "SUBAGENTS_FILE", str(metrics / "subagents.jsonl"))
+    monkeypatch.setattr(labels_module, "TASK_LABELS_FILE", str(metrics / "task_labels.json"))
+    monkeypatch.setattr(labels_module, "AGENT_LABELS_FILE", str(metrics / "agent_labels.json"))
+    monkeypatch.setattr(
+        backfill_module, "BACKFILL_STATE_FILE", str(metrics / "backfill_state.json")
+    )
     # Same reasoning, added 2026-09-21 with the declared project roots: the
     # reader's REAL ~/.claude/metrics/config.json would otherwise rename
     # projects underneath every test that builds its own HOME.
-    mp.setattr(paths_module, "CONFIG_FILE", str(metrics / "config.json"))
+    monkeypatch.setattr(paths_module, "CONFIG_FILE", str(metrics / "config.json"))
 
     # The language is pinned twice, both ways a run can resolve it, so the
     # suite never depends on the locale of the machine running it: config
     # first (the real mechanism), and the locale variables too, for the
     # tests that write their own config.json without a "language".
     (metrics / "config.json").write_text(json.dumps({"language": "pt"}))
-    mp.setenv("LC_ALL", "pt_BR.UTF-8")
-    mp.setenv("LC_MESSAGES", "")
-    mp.setenv("LANG", "")
+    monkeypatch.setenv("LC_ALL", "pt_BR.UTF-8")
+    monkeypatch.setenv("LC_MESSAGES", "")
+    monkeypatch.setenv("LANG", "")
 
     # --label-budget 0 must never reach a real `claude -p` call. Failing
     # loudly here - the same mechanism tests/test_dashboard_html_page.py
     # uses - turns an expensive, network-touching false green into a hard
     # failure.
-    def fail(*args: Any, **kwargs: Any) -> Any:
+    def fail(*arguments: Any, **keyword_arguments: Any) -> Any:
         raise AssertionError("real subprocess.run must never be called in tests")
 
-    mp.setattr(subprocess, "run", fail)
+    monkeypatch.setattr(subprocess, "run", fail)
 
 
-def seeded_tui_home(mp: pytest.MonkeyPatch, home: Path) -> Path:
+def seeded_tui_home(monkeypatch: pytest.MonkeyPatch, home: Path) -> Path:
     """An isolated HOME carrying the same committed eight-record fixture
     the rest of the suite measures."""
-    isolate_tui_from_the_real_filesystem(mp, home)
+    isolate_tui_from_the_real_filesystem(monkeypatch, home)
     build_fixture(str(home), datetime.now().astimezone())
     return home
 
@@ -165,11 +167,11 @@ async def _drive_both_cases() -> dict[str, Any]:
                     from Sessões, since that is also where a fresh,
                     un-recomposed TabbedContent already defaults to).
     """
-    args = tui.build_arg_parser().parse_args(["--label-budget", "0"])
+    arguments = tui.build_arg_parser().parse_args(["--label-budget", "0"])
 
     results: dict[str, Any] = {}
     async with tui.MetricsTUIApp(
-        mr, tui.load_data(args, metrics_core_module=mr), arguments=args
+        mr, tui.load_data(arguments, metrics_core_module=mr), arguments=arguments
     ).run_test(size=(140, 45)) as pilot:
         app = pilot.app
         await pilot.pause()
@@ -180,7 +182,7 @@ async def _drive_both_cases() -> dict[str, Any]:
         results["sessions_case"] = {"active_before": before["active"], **after}
 
     async with tui.MetricsTUIApp(
-        mr, tui.load_data(args, metrics_core_module=mr), arguments=args
+        mr, tui.load_data(arguments, metrics_core_module=mr), arguments=arguments
     ).run_test(size=(140, 45)) as pilot:
         app = pilot.app
         await pilot.pause()
@@ -196,7 +198,7 @@ async def _drive_both_cases() -> dict[str, Any]:
 
 
 @pytest.fixture(scope="session")
-def state_after_p(tmp_path_factory: pytest.TempPathFactory) -> Any:
+def state_after_period_press(tmp_path_factory: pytest.TempPathFactory) -> Any:
     """Drives the app against a throwaway HOME seeded with the committed
     fixture, so this measures the fixture and never the user's real data.
 
@@ -205,17 +207,17 @@ def state_after_p(tmp_path_factory: pytest.TempPathFactory) -> Any:
     and every assertion below reads the same captured report, exactly as
     they did when one subprocess produced one JSON document.
     """
-    mp = pytest.MonkeyPatch()
+    monkeypatch = pytest.MonkeyPatch()
     try:
-        seeded_tui_home(mp, tmp_path_factory.mktemp("tui-state-home"))
+        seeded_tui_home(monkeypatch, tmp_path_factory.mktemp("tui-state-home"))
         return asyncio.run(_drive_both_cases())
     finally:
-        mp.undo()
+        monkeypatch.undo()
 
 
 @pytest.mark.parametrize("case", ["sessions_case", "panorama_case"])
-def test_active_tab_survives_a_period_cycle(state_after_p, case):
-    result = state_after_p[case]
+def test_active_tab_survives_a_period_cycle(state_after_period_press, case):
+    result = state_after_period_press[case]
     assert result["active"] == result["active_before"], (
         f"[{case}] pressing 'p' changed the active tab from "
         f"{result['active_before']!r} to {result['active']!r} - a period "
@@ -224,8 +226,8 @@ def test_active_tab_survives_a_period_cycle(state_after_p, case):
 
 
 @pytest.mark.parametrize("case", ["sessions_case", "panorama_case"])
-def test_focus_is_not_dropped_after_a_period_cycle(state_after_p, case):
-    result = state_after_p[case]
+def test_focus_is_not_dropped_after_a_period_cycle(state_after_period_press, case):
+    result = state_after_period_press[case]
     assert result["focused_type"] is not None, (
         f"[{case}] app.focused is None after 'p' - the Footer has nothing "
         "focused to show bindings for, so it renders blank until the user "
@@ -234,8 +236,8 @@ def test_focus_is_not_dropped_after_a_period_cycle(state_after_p, case):
 
 
 @pytest.mark.parametrize("case", ["sessions_case", "panorama_case"])
-def test_focused_widget_lives_in_the_active_pane(state_after_p, case):
-    result = state_after_p[case]
+def test_focused_widget_lives_in_the_active_pane(state_after_period_press, case):
+    result = state_after_period_press[case]
     assert result["focused_inside_active_pane"], (
         f"[{case}] focus landed on a {result['focused_type']} that is not a "
         f"descendant of the active pane ({result['active']!r}) - it must be "
@@ -244,8 +246,8 @@ def test_focused_widget_lives_in_the_active_pane(state_after_p, case):
 
 
 @pytest.mark.parametrize("case", ["sessions_case", "panorama_case"])
-def test_footer_is_not_blank_after_a_period_cycle(state_after_p, case):
-    result = state_after_p[case]
+def test_footer_is_not_blank_after_a_period_cycle(state_after_period_press, case):
+    result = state_after_period_press[case]
     assert result["footer_keys"] > 0, (
         f"[{case}] the Footer rendered 0 FooterKey children after 'p' - "
         "this is the exact symptom reported by hand: shortcuts vanish "
@@ -253,12 +255,12 @@ def test_footer_is_not_blank_after_a_period_cycle(state_after_p, case):
     )
 
 
-def test_sessions_case_restores_the_tree(state_after_p):
-    assert state_after_p["sessions_case"]["focused_type"] == "Tree"
+def test_sessions_case_restores_the_tree(state_after_period_press):
+    assert state_after_period_press["sessions_case"]["focused_type"] == "Tree"
 
 
-def test_panorama_case_restores_the_trend_chart(state_after_p):
-    assert state_after_p["panorama_case"]["focused_type"] == "TrendChart"
+def test_panorama_case_restores_the_trend_chart(state_after_period_press):
+    assert state_after_period_press["panorama_case"]["focused_type"] == "TrendChart"
 
 
 def test_tree_holds_focus_immediately_after_mount(monkeypatch, tmp_path):
@@ -272,11 +274,11 @@ def test_tree_holds_focus_immediately_after_mount(monkeypatch, tmp_path):
     call is real and user-facing: at startup the arrow keys would drive the
     tab bar instead of the session list."""
     seeded_tui_home(monkeypatch, tmp_path)
-    args = tui.build_arg_parser().parse_args(["--label-budget", "0"])
+    arguments = tui.build_arg_parser().parse_args(["--label-budget", "0"])
 
     async def _focused_type_at_mount() -> str:
         async with tui.MetricsTUIApp(
-            mr, tui.load_data(args, metrics_core_module=mr), arguments=args
+            mr, tui.load_data(arguments, metrics_core_module=mr), arguments=arguments
         ).run_test(size=(140, 45)) as pilot:
             await pilot.pause()
             return type(pilot.app.focused).__name__
@@ -304,22 +306,24 @@ def test_tree_holds_focus_immediately_after_mount(monkeypatch, tmp_path):
 def _absent_for(app: Any, widget_type: type, lookups: int, calls: list[int]) -> Any:
     real_query_one = app.query_one
 
-    def query_one(selector: Any, *args: Any, **kwargs: Any) -> Any:
+    def query_one(selector: Any, *arguments: Any, **keyword_arguments: Any) -> Any:
         if selector is widget_type:
             calls.append(1)
             if len(calls) <= lookups:
                 raise NoMatches(f"No nodes match {widget_type.__name__} (test: not mounted yet)")
-        return real_query_one(selector, *args, **kwargs)
+        return real_query_one(selector, *arguments, **keyword_arguments)
 
     return query_one
 
 
 def test_focus_restore_waits_for_a_tree_that_is_not_mounted_yet(monkeypatch, tmp_path):
     seeded_tui_home(monkeypatch, tmp_path)
-    args = tui.build_arg_parser().parse_args(["--label-budget", "0"])
+    arguments = tui.build_arg_parser().parse_args(["--label-budget", "0"])
 
     async def drive() -> tuple[str, int]:
-        app = tui.MetricsTUIApp(mr, tui.load_data(args, metrics_core_module=mr), arguments=args)
+        app = tui.MetricsTUIApp(
+            mr, tui.load_data(arguments, metrics_core_module=mr), arguments=arguments
+        )
         async with app.run_test(size=(140, 45)) as pilot:
             await pilot.pause()
             assert app.active_tab_id == "tab-sessions"
@@ -341,10 +345,12 @@ def test_focus_restore_gives_up_quietly_when_the_tree_never_appears(monkeypatch,
     # Focus is a nicety: a Tree that never shows up must cost a bounded
     # number of retries and no exception, never a crash.
     seeded_tui_home(monkeypatch, tmp_path)
-    args = tui.build_arg_parser().parse_args(["--label-budget", "0"])
+    arguments = tui.build_arg_parser().parse_args(["--label-budget", "0"])
 
     async def drive() -> int:
-        app = tui.MetricsTUIApp(mr, tui.load_data(args, metrics_core_module=mr), arguments=args)
+        app = tui.MetricsTUIApp(
+            mr, tui.load_data(arguments, metrics_core_module=mr), arguments=arguments
+        )
         async with app.run_test(size=(140, 45)) as pilot:
             await pilot.pause()
             calls: list[int] = []
@@ -375,15 +381,15 @@ def test_the_app_titles_itself_after_the_product_not_its_class(tmp_path, monkeyp
 # legend rows at once.
 
 
-async def _mode_and_legends_after_p(presses_of_t: int) -> dict[str, Any]:
-    args = tui.build_arg_parser().parse_args(["--label-budget", "0"])
+async def _mode_and_legends_after_p(mode_toggle_presses: int) -> dict[str, Any]:
+    arguments = tui.build_arg_parser().parse_args(["--label-budget", "0"])
     async with tui.MetricsTUIApp(
-        mr, tui.load_data(args, metrics_core_module=mr), arguments=args
+        mr, tui.load_data(arguments, metrics_core_module=mr), arguments=arguments
     ).run_test(size=(140, 45)) as pilot:
         app = pilot.app
         await pilot.pause()
         await pilot.press("g")
-        for _ in range(presses_of_t):
+        for _ in range(mode_toggle_presses):
             await pilot.press("t")
         await pilot.pause()
         before = app.query_one(tui.TrendChart).mode
@@ -399,7 +405,7 @@ async def _mode_and_legends_after_p(presses_of_t: int) -> dict[str, Any]:
 
 
 @pytest.mark.parametrize(
-    ("presses_of_t", "mode", "quota", "composition", "projects"),
+    ("mode_toggle_presses", "mode", "quota", "composition", "projects"),
     [
         (1, "tokens", True, True, False),
         (2, "model", False, False, False),
@@ -413,14 +419,14 @@ async def _mode_and_legends_after_p(presses_of_t: int) -> dict[str, Any]:
 def test_the_chart_keeps_its_slicing_and_its_legend_across_a_period_change(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    presses_of_t: int,
+    mode_toggle_presses: int,
     mode: str,
     quota: bool,
     composition: bool,
     projects: bool,
 ) -> None:
     seeded_tui_home(monkeypatch, tmp_path)
-    result = asyncio.run(_mode_and_legends_after_p(presses_of_t))
+    result = asyncio.run(_mode_and_legends_after_p(mode_toggle_presses))
     assert result["before"] == mode, "the setup did not reach the mode under test"
     assert result["after"] == mode
     assert (result["quota"], result["composition"], result["projects"]) == (
