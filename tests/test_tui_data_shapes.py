@@ -132,7 +132,7 @@ def test_limit_keeps_only_the_tail_of_the_session_list(monkeypatch, tmp_path):
         [_session(f"s{i}", day=i + 1) for i in range(1, 5)],  # s1..s4, day 2..5
     )
     args = tui.build_arg_parser().parse_args(["--label-budget", "0", "--limit", "2"])
-    base = tui.load_base_data(args, mr=mr)
+    base = tui.load_base_data(args, metrics_core_module=mr)
     assert [r["session_id"] for r in base["records"]] == ["s3", "s4"], (
         "--limit 2 must keep the two MOST RECENT (last, in load order) "
         "sessions, not the first two or any other pair"
@@ -145,7 +145,7 @@ def test_no_limit_keeps_every_session(monkeypatch, tmp_path):
     isolate_tui_from_the_real_filesystem(monkeypatch, tmp_path)
     _write_sessions(tmp_path, [_session(f"s{i}", day=i + 1) for i in range(1, 5)])
     args = tui.build_arg_parser().parse_args(["--label-budget", "0"])
-    base = tui.load_base_data(args, mr=mr)
+    base = tui.load_base_data(args, metrics_core_module=mr)
     assert [r["session_id"] for r in base["records"]] == ["s1", "s2", "s3", "s4"]
 
 
@@ -194,7 +194,7 @@ def test_subagent_with_no_agent_id_is_skipped_without_crashing(monkeypatch, tmp_
 
     monkeypatch.setattr(mr, "get_agent_label", spy)
     args = tui.build_arg_parser().parse_args(["--label-budget", "0"])
-    base = tui.load_base_data(args, mr=mr)  # must not raise
+    base = tui.load_base_data(args, metrics_core_module=mr)  # must not raise
     assert len(calls) == 1, (
         f"expected exactly one label lookup (for the real agent_id) - got "
         f"{len(calls)}; the agent_id-less record must never reach "
@@ -235,7 +235,7 @@ def test_session_with_no_session_id_is_skipped_without_crashing(monkeypatch, tmp
 
     monkeypatch.setattr(mr, "get_task_label", spy)
     args = tui.build_arg_parser().parse_args(["--label-budget", "0"])
-    base = tui.load_base_data(args, mr=mr)  # must not raise
+    base = tui.load_base_data(args, metrics_core_module=mr)  # must not raise
     assert len(calls) == 1, (
         f"expected exactly one label lookup (for the real session_id) - "
         f"got {len(calls)}; the session_id-less record must never reach "
@@ -288,7 +288,7 @@ def test_the_resolved_language_reaches_get_task_label(monkeypatch, tmp_path):
 
     monkeypatch.setattr(mr, "get_task_label", spy)
     args = tui.build_arg_parser().parse_args(["--label-budget", "5"])
-    tui.load_base_data(args, mr=mr)
+    tui.load_base_data(args, metrics_core_module=mr)
     assert captured_langs == ["en"], (
         "get_task_label must be called with the resolved language ('en' "
         f"here), not a hardcoded default - got {captured_langs}"
@@ -320,7 +320,7 @@ def test_load_base_data_reads_the_config_file_exactly_once(monkeypatch, tmp_path
     monkeypatch.setattr(mr, "load_config", spy)
     monkeypatch.setattr(paths_module, "load_config", spy)
     args = tui.build_arg_parser().parse_args(["--label-budget", "0"])
-    tui.load_base_data(args, mr=mr)
+    tui.load_base_data(args, metrics_core_module=mr)
     assert len(calls) == 1, f"load_config must be read exactly once per run - got {calls}"
 
 
@@ -1051,7 +1051,7 @@ def test_the_whole_dashboard_survives_every_narrow_width(monkeypatch, tmp_path):
 
     async def drive() -> dict[str, list[tuple[tuple[int, int], int, str]]]:
         shown: dict[str, list[tuple[tuple[int, int], int, str]]] = {}
-        app = tui.MetricsTUIApp(mr, tui.load_data(args, mr=mr), args=args)
+        app = tui.MetricsTUIApp(mr, tui.load_data(args, metrics_core_module=mr), arguments=args)
         async with app.run_test(size=(80, 40)) as pilot:
             seen: dict[tuple[int, int], tuple[int, str]] = {}
 
@@ -1168,7 +1168,7 @@ def test_a_model_keeps_its_colour_in_periods_that_rank_it_differently(monkeypatc
     isolate_tui_from_the_real_filesystem(monkeypatch, tmp_path)
     _write_sessions(tmp_path, _RANKINGS_DIFFER)
     args = tui.build_arg_parser().parse_args(["--label-budget", "0"])
-    base = tui.load_base_data(args, mr=mr)
+    base = tui.load_base_data(args, metrics_core_module=mr)
     everything = tui.apply_period(base, "tudo", mr)
     recent = tui.apply_period(base, "15-dias", mr)
     # The premise: the two periods really do rank the models differently.
@@ -1186,7 +1186,7 @@ def test_the_dashboard_hands_its_chart_the_slots_settled_over_the_whole_history(
     args = tui.build_arg_parser().parse_args(["--label-budget", "0"])
 
     async def drive() -> list[dict[str, int | None] | None]:
-        app = tui.MetricsTUIApp(mr, tui.load_data(args, mr=mr), args=args)
+        app = tui.MetricsTUIApp(mr, tui.load_data(args, metrics_core_module=mr), arguments=args)
         seen = []
         async with app.run_test(size=(120, 40)) as pilot:
             await pilot.pause()

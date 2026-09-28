@@ -40,7 +40,9 @@ def import_metrics_report() -> ModuleType:
     return metrics_core
 
 
-def load_base_data(args: argparse.Namespace, mr: ModuleType | None = None) -> dict[str, Any]:
+def load_base_data(
+    arguments: argparse.Namespace, metrics_core_module: ModuleType | None = None
+) -> dict[str, Any]:
     """The expensive half of the load: everything that does NOT depend on
     the period.
 
@@ -58,7 +60,7 @@ def load_base_data(args: argparse.Namespace, mr: ModuleType | None = None) -> di
     had to be killed. See tests/test_tui_responsiveness.py for the
     regression test that keeps that work out of the keypress path.
     """
-    mr = mr or import_metrics_report()
+    metrics_core_module = metrics_core_module or import_metrics_report()
 
     # Dedupe + normalize the same way dashboard_html.py's main() does
     # before ANYTHING else touches records (2026-07-21) - the Stop hook
@@ -69,30 +71,34 @@ def load_base_data(args: argparse.Namespace, mr: ModuleType | None = None) -> di
     # cwds into "sem projeto" - see that function's docstring in
     # dashboard_html.py for the fan-out safeguard that keeps it from
     # collapsing unrelated projects into a shared container directory.
-    records = mr.load_records(mr.METRICS_FILE)
-    # Read once (backlog #11: this used to also call mr.load_project_roots(),
+    records = metrics_core_module.load_records(metrics_core_module.METRICS_FILE)
+    # Read once (backlog #11: this used to also call metrics_core_module.load_project_roots(),
     # a second read of the same file) and derive everything the config can
     # give from this one dict.
-    config = mr.load_config()
+    config = metrics_core_module.load_config()
     # Declared in ~/.claude/metrics/config.json; empty when there is no
     # config, which leaves normalize_project_paths exactly as it was.
-    project_roots = mr.project_roots_from(config)
+    project_roots = metrics_core_module.project_roots_from(config)
     # Config first, then the machine's locale, then English - see
     # resolve_language's own docstring. Resolved once, here (the expensive,
     # once-per-launch half of the load), and carried in the returned dict so
     # apply_period can copy it into every re-windowed view without
     # re-resolving it on each "p" press.
-    lang = mr.resolve_language(config, os.environ)
+    lang = metrics_core_module.resolve_language(config, os.environ)
     # Captured before dedupe_sessions discards every snapshot but one per
     # session_id - expand_records_to_daily_deltas needs the FULL raw
     # history to correctly spread a long-running session's token growth
     # across the days it actually happened (2026-08-06 fix), instead of
     # dumping it all onto the session's fixed start day.
-    raw_session_records = mr.normalize_project_paths(list(records), project_roots)
-    raw_session_records = mr.filter_records(raw_session_records, tag=args.tag, project=args.project)
-    records = mr.dedupe_sessions(records)
-    records = mr.normalize_project_paths(records, project_roots)
-    records = mr.filter_records(records, tag=args.tag, project=args.project)
+    raw_session_records = metrics_core_module.normalize_project_paths(list(records), project_roots)
+    raw_session_records = metrics_core_module.filter_records(
+        raw_session_records, tag=arguments.tag, project=arguments.project
+    )
+    records = metrics_core_module.dedupe_sessions(records)
+    records = metrics_core_module.normalize_project_paths(records, project_roots)
+    records = metrics_core_module.filter_records(
+        records, tag=arguments.tag, project=arguments.project
+    )
     all_time_records = records
 
     # The period is the single authority on time (2026-08-13). This used to
@@ -105,9 +111,9 @@ def load_base_data(args: argparse.Namespace, mr: ModuleType | None = None) -> di
     # daily_chart_records was captured before the cap. --days stays as an
     # explicit user override, and --all is still accepted (it now names what
     # already happens by default) so existing invocations keep working.
-    effective_days = args.days
+    effective_days = arguments.days
 
-    records = mr.filter_by_days(records, effective_days)
+    records = metrics_core_module.filter_by_days(records, effective_days)
     chart_records = records
     # No -n cap on the session list (2026-07-21, mirrors dashboard_html.py's
     # --html branch): a Textual Tree already scrolls natively, so there's no
@@ -115,8 +121,8 @@ def load_base_data(args: argparse.Namespace, mr: ModuleType | None = None) -> di
     # solving here - only the plain terminal-table mode in dashboard_html.py
     # still defaults to -n=20. --limit/-n is kept as a CLI flag for anyone
     # who wants to bound it explicitly, but it's no longer applied by default.
-    if args.limit is not None:
-        records = records[-args.limit :]
+    if arguments.limit is not None:
+        records = records[-arguments.limit :]
 
     # Parallelized labeling, same pattern as dashboard_html.py's --html
     # branch. subagent_records is already deduped by agent_id above the
@@ -131,18 +137,18 @@ def load_base_data(args: argparse.Namespace, mr: ModuleType | None = None) -> di
     # chart below, so their raw cwds reached the legend unchanged. Run over
     # the subagent stream on its own rather than over a merged list, the
     # same way the raw/deduped session streams are normalized separately.
-    raw_subagent_records = mr.normalize_project_paths(
-        mr.load_records(mr.SUBAGENTS_FILE), project_roots
+    raw_subagent_records = metrics_core_module.normalize_project_paths(
+        metrics_core_module.load_records(metrics_core_module.SUBAGENTS_FILE), project_roots
     )
-    subagent_records = mr.dedupe_subagents(raw_subagent_records)
+    subagent_records = metrics_core_module.dedupe_subagents(raw_subagent_records)
     # See expand_records_to_daily_deltas's docstring: used ONLY by the
     # trend chart, so every other view (composition legend, project
     # rankings, per-row totals) keeps using the regular deduped/folded
     # records untouched.
-    daily_chart_records = mr.expand_records_to_daily_deltas(
+    daily_chart_records = metrics_core_module.expand_records_to_daily_deltas(
         raw_session_records
-    ) + mr.expand_records_to_daily_deltas(raw_subagent_records)
-    agent_label_cache = mr.load_agent_label_cache()
+    ) + metrics_core_module.expand_records_to_daily_deltas(raw_subagent_records)
+    agent_label_cache = metrics_core_module.load_agent_label_cache()
     unique_agents: dict[str, dict[str, Any]] = {}
     for subagent in subagent_records:
         key = subagent.get("agent_id")
@@ -201,13 +207,15 @@ def load_base_data(args: argparse.Namespace, mr: ModuleType | None = None) -> di
     # so a later run can pick them up, each load re-reads their transcripts
     # (~1.2s). That is unchanged by this split, and no longer on the
     # keypress path.
-    label_budget = mr.LabelBudget(None if args.label_budget < 0 else args.label_budget)
+    label_budget = metrics_core_module.LabelBudget(
+        None if arguments.label_budget < 0 else arguments.label_budget
+    )
     agent_keys = list(unique_agents.keys())
     with ThreadPoolExecutor(max_workers=1) as executor:
         agent_labels = list(
             executor.map(
-                lambda k: mr.get_agent_label(
-                    unique_agents[k], agent_label_cache, label_budget, lang=lang
+                lambda agent_key: metrics_core_module.get_agent_label(
+                    unique_agents[agent_key], agent_label_cache, label_budget, lang=lang
                 ),
                 agent_keys,
             )
@@ -215,17 +223,17 @@ def load_base_data(args: argparse.Namespace, mr: ModuleType | None = None) -> di
     label_by_agent_id = dict(zip(agent_keys, agent_labels, strict=True))
     for subagent in subagent_records:
         subagent["agent_label"] = label_by_agent_id.get(subagent.get("agent_id"))
-    mr.save_agent_label_cache(agent_label_cache)
-    subagents_by_session = mr.group_subagents_by_session(subagent_records)
+    metrics_core_module.save_agent_label_cache(agent_label_cache)
+    subagents_by_session = metrics_core_module.group_subagents_by_session(subagent_records)
     # Mutates the same dict objects all_time_records/chart_records/records
     # already share (none of the load/dedupe/filter steps above copy the
     # records, only filter the list) - so every aggregate view downstream
     # (composition legend, trend chart, project totals) picks up subagent
     # tokens automatically. See fold_subagent_tokens_into_sessions's own
     # docstring for why this was missing (2026-08-05).
-    mr.fold_subagent_tokens_into_sessions(all_time_records, subagent_records)
+    metrics_core_module.fold_subagent_tokens_into_sessions(all_time_records, subagent_records)
 
-    label_cache = mr.load_label_cache()
+    label_cache = metrics_core_module.load_label_cache()
     unique_sessions: dict[str, dict[str, Any]] = {}
     for record in records:
         key = record.get("session_id")
@@ -243,8 +251,8 @@ def load_base_data(args: argparse.Namespace, mr: ModuleType | None = None) -> di
     with ThreadPoolExecutor(max_workers=1) as executor:
         task_labels = list(
             executor.map(
-                lambda k: mr.get_task_label(
-                    unique_sessions[k], label_cache, label_budget, lang=lang
+                lambda session_key: metrics_core_module.get_task_label(
+                    unique_sessions[session_key], label_cache, label_budget, lang=lang
                 ),
                 session_keys,
             )
@@ -252,15 +260,15 @@ def load_base_data(args: argparse.Namespace, mr: ModuleType | None = None) -> di
     label_by_session_id = dict(zip(session_keys, task_labels, strict=True))
     for record in records:
         record["task_label"] = label_by_session_id.get(record.get("session_id"))
-    mr.save_label_cache(label_cache)
+    metrics_core_module.save_label_cache(label_cache)
 
-    project_first_seen = mr.compute_project_first_seen(all_time_records)
-    project_last_seen = mr.compute_project_last_seen(all_time_records)
-    open_projects = mr.get_open_projects()
+    project_first_seen = metrics_core_module.compute_project_first_seen(all_time_records)
+    project_last_seen = metrics_core_module.compute_project_last_seen(all_time_records)
+    open_projects = metrics_core_module.get_open_projects()
     # Over the whole history, not per period, so a model keeps its colour
     # whichever period is on screen - see assign_model_slots.
-    model_slots = mr.assign_model_slots(
-        mr.compute_model_totals(daily_chart_records)[0], len(PANE_COLORS)
+    model_slots = metrics_core_module.assign_model_slots(
+        metrics_core_module.compute_model_totals(daily_chart_records)[0], len(PANE_COLORS)
     )
 
     return {
@@ -277,7 +285,10 @@ def load_base_data(args: argparse.Namespace, mr: ModuleType | None = None) -> di
 
 
 def apply_period(
-    base: dict[str, Any], period_id: str, mr: ModuleType, now: datetime | None = None
+    base: dict[str, Any],
+    period_id: str,
+    metrics_core_module: ModuleType,
+    now: datetime | None = None,
 ) -> dict[str, Any]:
     """The cheap half: narrows already-loaded data to one period's window.
 
@@ -298,11 +309,15 @@ def apply_period(
     it was launched.
     """
     render_now = now or datetime.now().astimezone()
-    window = mr.resolve_period(period_id, render_now)
+    window = metrics_core_module.resolve_period(period_id, render_now)
     return {
-        "records": mr.filter_sessions_by_window(base["records"], window),
-        "chart_records": mr.filter_sessions_by_window(base["chart_records"], window),
-        "daily_chart_records": mr.filter_deltas_by_window(base["daily_chart_records"], window),
+        "records": metrics_core_module.filter_sessions_by_window(base["records"], window),
+        "chart_records": metrics_core_module.filter_sessions_by_window(
+            base["chart_records"], window
+        ),
+        "daily_chart_records": metrics_core_module.filter_deltas_by_window(
+            base["daily_chart_records"], window
+        ),
         "subagents_by_session": base["subagents_by_session"],
         "project_first_seen": base["project_first_seen"],
         "project_last_seen": base["project_last_seen"],
@@ -320,7 +335,9 @@ def apply_period(
     }
 
 
-def load_data(args: argparse.Namespace, mr: ModuleType | None = None) -> dict[str, Any]:
+def load_data(
+    arguments: argparse.Namespace, metrics_core_module: ModuleType | None = None
+) -> dict[str, Any]:
     """Loads and windows in one call, at the default period.
 
     Kept for callers that just want data for one period (main(), the
@@ -328,20 +345,24 @@ def load_data(args: argparse.Namespace, mr: ModuleType | None = None) -> dict[st
     must call load_base_data once and apply_period per period instead;
     calling this in a loop is precisely the defect it was split to fix.
     """
-    mr = mr or import_metrics_report()
-    return apply_period(load_base_data(args, mr=mr), mr.DEFAULT_PERIOD_ID, mr)
+    metrics_core_module = metrics_core_module or import_metrics_report()
+    return apply_period(
+        load_base_data(arguments, metrics_core_module=metrics_core_module),
+        metrics_core_module.DEFAULT_PERIOD_ID,
+        metrics_core_module,
+    )
 
 
 def build_session_tree(
     records: list[dict[str, Any]],
     subagents_by_session: dict[str, list[dict[str, Any]]],
-    mr: ModuleType,
+    metrics_core_module: ModuleType,
     *,
     lang: str,
 ) -> Tree[Any]:
-    group_colors = mr.assign_group_colors(records)
-    groups = mr.build_project_groups(records, group_colors)
-    tree: Tree[Any] = Tree(mr.t("tab.sessions", lang))
+    group_colors = metrics_core_module.assign_group_colors(records)
+    groups = metrics_core_module.build_project_groups(records, group_colors)
+    tree: Tree[Any] = Tree(metrics_core_module.t("tab.sessions", lang))
     tree.show_root = False
     for group in groups:
         project_path = group["project"]
@@ -350,27 +371,35 @@ def build_session_tree(
         # any input/output tokens (aborted before the first turn, etc.) is
         # dead weight in the tree. A group whose every session is zero-token
         # is skipped entirely rather than left as an empty, expandable node.
-        visible_records = [r for r in group["records"] if mr.record_token_total(r) > 0]
+        visible_records = [
+            record
+            for record in group["records"]
+            if metrics_core_module.record_token_total(record) > 0
+        ]
         if not visible_records:
             continue
-        label = mr.project_display_label(project_path, lang=lang)
-        total_tokens = sum(mr.record_token_total(r) for r in visible_records)
+        label = metrics_core_module.project_display_label(project_path, lang=lang)
+        total_tokens = sum(
+            metrics_core_module.record_token_total(record) for record in visible_records
+        )
         group_node = tree.root.add(
-            f"{label} ({mr.tn('sessions', len(visible_records), lang)} · "
-            f"{mr.format_tokens(total_tokens)} tokens)",
+            f"{label} ({metrics_core_module.tn('sessions', len(visible_records), lang)} · "
+            f"{metrics_core_module.format_tokens(total_tokens)} tokens)",
             expand=False,
         )
         for record in visible_records:
             session_id = record.get("session_id") or ""
-            date_str = mr.format_date(record.get("timestamp_start"), lang=lang)
+            date_text = metrics_core_module.format_date(record.get("timestamp_start"), lang=lang)
             task_label = record.get("task_label") or "-"
-            tokens = mr.format_tokens(mr.record_token_total(record))
+            tokens = metrics_core_module.format_tokens(
+                metrics_core_module.record_token_total(record)
+            )
             # A floor gets a "≥" inside the same right-aligned column; the
             # detail panel carries the note that says why.
-            if mr.incomplete_usage_messages(record):
+            if metrics_core_module.incomplete_usage_messages(record):
                 tokens = "≥" + tokens
             duration = record.get("duration_seconds")
-            duration_str = f"{duration:.0f}s" if duration is not None else "-"
+            duration_text = f"{duration:.0f}s" if duration is not None else "-"
             # Subagent count badge (2026-07-21, ported from
             # dashboard_html.py's render_session_row/subagent_badge) - lets
             # you tell which sessions dispatched subagents right in the
@@ -379,21 +408,25 @@ def build_session_tree(
             # filter render_html applies to its own badge.
             session_subagents = subagents_by_session.get(session_id, [])
             visible_subagent_count = sum(
-                1 for s in session_subagents if mr.record_token_total(s) > 0
+                1
+                for subagent in session_subagents
+                if metrics_core_module.record_token_total(subagent) > 0
             )
             subagent_badge = f" 🤖{visible_subagent_count}" if visible_subagent_count else ""
             row = (
-                f"{session_id[:12]:<14}{date_str:<14}{task_label[:28]:<30}"
-                f"{tokens:>8}   {duration_str:>7}{subagent_badge}"
+                f"{session_id[:12]:<14}{date_text:<14}{task_label[:28]:<30}"
+                f"{tokens:>8}   {duration_text:>7}{subagent_badge}"
             )
             group_node.add_leaf(row, data={"session_id": session_id})
     return tree
 
 
 class SessionDetailPanel(VerticalScroll):
-    def __init__(self, mr: ModuleType, *, lang: str, **kwargs: Any) -> None:
-        super().__init__(**kwargs)
-        self.mr = mr
+    def __init__(
+        self, metrics_core_module: ModuleType, *, lang: str, **keyword_arguments: Any
+    ) -> None:
+        super().__init__(**keyword_arguments)
+        self.metrics_core_module = metrics_core_module
         self.lang = lang
         self._body = Static("")
 
@@ -411,33 +444,41 @@ class SessionDetailPanel(VerticalScroll):
         positive, the one note line saying why its figures carry a "≥"."""
         lines = [f"[bold]{session_id}[/bold]", ""]
         if not subagents:
-            lines.append(f"[dim]{self.mr.t('detail.no_subagents', self.lang)}[/dim]")
+            lines.append(
+                f"[dim]{self.metrics_core_module.t('detail.no_subagents', self.lang)}[/dim]"
+            )
         else:
-            lines.append(
-                f"[bold]{self.mr.t('detail.subagents_title', self.lang, n=len(subagents))}[/bold]"
+            subagents_title = self.metrics_core_module.t(
+                "detail.subagents_title", self.lang, n=len(subagents)
             )
+            lines.append(f"[bold]{subagents_title}[/bold]")
             lines.append(
-                f"{self.mr.t('col.task', self.lang):<40}{'tokens':>12}"
-                f"{'tools':>8}{self.mr.t('col.duration', self.lang):>10}"
+                f"{self.metrics_core_module.t('col.task', self.lang):<40}{'tokens':>12}"
+                f"{'tools':>8}{self.metrics_core_module.t('col.duration', self.lang):>10}"
             )
-            for i, subagent in enumerate(subagents):
+            for row_index, subagent in enumerate(subagents):
                 agent_type = subagent.get("agent_type") or "-"
                 agent_label = subagent.get("agent_label") or "-"
-                in_tok = self.mr.format_tokens(subagent.get("input_tokens", 0))
-                out_tok = self.mr.format_tokens(subagent.get("output_tokens", 0))
-                if self.mr.incomplete_usage_messages(subagent):
-                    out_tok = "≥" + out_tok
+                input_tokens_text = self.metrics_core_module.format_tokens(
+                    subagent.get("input_tokens", 0)
+                )
+                output_tokens_text = self.metrics_core_module.format_tokens(
+                    subagent.get("output_tokens", 0)
+                )
+                if self.metrics_core_module.incomplete_usage_messages(subagent):
+                    output_tokens_text = "≥" + output_tokens_text
                 duration = subagent.get("duration_seconds")
-                duration_str = f"{duration:.0f}s" if duration is not None else "-"
+                duration_text = f"{duration:.0f}s" if duration is not None else "-"
                 task = f"{agent_type} — {agent_label}"[:38]
-                style = "on #202020" if i % 2 == 1 else ""
+                style = "on #202020" if row_index % 2 == 1 else ""
                 row = (
-                    f"{task:<40}{in_tok}/{out_tok:<8}"
-                    f"{subagent.get('tool_call_count', 0):>8}{duration_str:>10}"
+                    f"{task:<40}{input_tokens_text}/{output_tokens_text:<8}"
+                    f"{subagent.get('tool_call_count', 0):>8}{duration_text:>10}"
                 )
                 lines.append(f"[{style}]{row}[/{style}]" if style else row)
         if incomplete_usage:
-            lines.append(f"[dim]{self.mr.tn('floor_note', incomplete_usage, self.lang)}[/dim]")
+            floor_note = self.metrics_core_module.tn("floor_note", incomplete_usage, self.lang)
+            lines.append(f"[dim]{floor_note}[/dim]")
         self._body.update("\n".join(lines))
 
 
@@ -449,19 +490,26 @@ class QuotaSummary(Static):
     math (its width would grow to whatever this line's own text needs)
     and make a click on this line get misread as a click on a chip."""
 
-    def __init__(self, totals: dict[str, int], mr: ModuleType, *, lang: str, **kwargs: Any) -> None:
-        super().__init__(**kwargs)
+    def __init__(
+        self,
+        totals: dict[str, int],
+        metrics_core_module: ModuleType,
+        *,
+        lang: str,
+        **keyword_arguments: Any,
+    ) -> None:
+        super().__init__(**keyword_arguments)
         self.totals = totals
-        self.mr = mr
+        self.metrics_core_module = metrics_core_module
         self.lang = lang
 
     def render(self) -> str:
-        quota_input, quota_output = self.mr.compute_quota_totals(self.totals)
-        line: str = self.mr.t(
+        quota_input, quota_output = self.metrics_core_module.compute_quota_totals(self.totals)
+        line: str = self.metrics_core_module.t(
             "quota_line",
             self.lang,
-            input=self.mr.format_tokens(quota_input),
-            output=self.mr.format_tokens(quota_output),
+            input=self.metrics_core_module.format_tokens(quota_input),
+            output=self.metrics_core_module.format_tokens(quota_output),
         )
         return line
 
@@ -481,17 +529,24 @@ class CompositionLegend(Static):
         ("series-4", "cache creation"),
     ]
 
-    def __init__(self, totals: dict[str, int], mr: ModuleType, *, lang: str, **kwargs: Any) -> None:
-        super().__init__(**kwargs)
+    def __init__(
+        self,
+        totals: dict[str, int],
+        metrics_core_module: ModuleType,
+        *,
+        lang: str,
+        **keyword_arguments: Any,
+    ) -> None:
+        super().__init__(**keyword_arguments)
         self.totals = totals
-        self.mr = mr
+        self.metrics_core_module = metrics_core_module
         self.lang = lang
 
     def render(self) -> str:
         chips = []
         for series, name in self.SERIES:
             total = self.totals.get(series, 0)
-            formatted = self.mr.format_tokens(total)
+            formatted = self.metrics_core_module.format_tokens(total)
             is_highlighted = self.highlighted is not None and series in self.highlighted
             style = "bold reverse" if is_highlighted else ""
             chip = f"[{style}]{name} · {formatted}[/{style}]" if style else f"{name} · {formatted}"
@@ -499,9 +554,9 @@ class CompositionLegend(Static):
         return "   ".join(chips)
 
     def on_click(self, event: Any) -> None:
-        x = event.x
+        click_position = event.x
         chip_width = self.size.width // 4 if self.size.width else 0
-        index = min(x // max(chip_width, 1), 3) if chip_width else 0
+        index = min(click_position // max(chip_width, 1), 3) if chip_width else 0
         series = self.SERIES[index][0]
         current: set[str] = self.highlighted or set()
         if event.shift:
@@ -514,7 +569,7 @@ class CompositionLegend(Static):
         self.post_message(self.Highlight(self.highlighted))
 
 
-PANE_MAX_PROJECTS = 7
+PANE_MAXIMUM_PROJECTS = 7
 # A plotext colour: a name, or an (r, g, b) tuple drawn as-is.
 PlotColor = str | tuple[int, int, int]
 # Five names and two RGB tuples, not seven names (2026-09-23). plotext
@@ -538,35 +593,40 @@ PANE_OTHER_KEY = "__outros__"
 
 
 def compute_pane_projects(
-    mr: ModuleType, chart_records: list[dict[str, Any]]
+    metrics_core_module: ModuleType, chart_records: list[dict[str, Any]]
 ) -> tuple[list[str | None], bool]:
     """Rank projects by total tokens in chart_records, grouped by color_group_key.
 
     Returns (top_keys, has_other): top_keys is the ordered list of the
-    PANE_MAX_PROJECTS highest-token project keys; has_other is True when
+    PANE_MAXIMUM_PROJECTS highest-token project keys; has_other is True when
     there are more distinct projects than that, meaning callers should
     add one more "outros" bucket for everything not in top_keys.
     """
     totals: dict[str | None, int] = {}
-    for r in chart_records:
-        key = mr.color_group_key(r.get("project_path"))
-        totals[key] = totals.get(key, 0) + mr.record_token_total(r)
-    ordered = sorted(totals.keys(), key=lambda k: totals[k], reverse=True)
-    top_keys = ordered[:PANE_MAX_PROJECTS]
-    has_other = len(ordered) > PANE_MAX_PROJECTS
+    for record in chart_records:
+        key = metrics_core_module.color_group_key(record.get("project_path"))
+        totals[key] = totals.get(key, 0) + metrics_core_module.record_token_total(record)
+    ordered = sorted(totals.keys(), key=lambda sort_key: totals[sort_key], reverse=True)
+    top_keys = ordered[:PANE_MAXIMUM_PROJECTS]
+    has_other = len(ordered) > PANE_MAXIMUM_PROJECTS
     return top_keys, has_other
 
 
-def pane_series_label(mr: ModuleType, key: str | None, *, lang: str) -> str:
+def pane_series_label(metrics_core_module: ModuleType, key: str | None, *, lang: str) -> str:
     if key == PANE_OTHER_KEY:
-        others: str = mr.t("others", lang)
+        others: str = metrics_core_module.t("others", lang)
         return others
-    label: str = mr.project_display_label(key, lang=lang)
+    label: str = metrics_core_module.project_display_label(key, lang=lang)
     return label
 
 
 def partial_marker(
-    mr: ModuleType, granularity: str, pct: int, canvas_width: int | None, *, lang: str
+    metrics_core_module: ModuleType,
+    granularity: str,
+    pct: int,
+    canvas_width: int | None,
+    *,
+    lang: str,
 ) -> str | None:
     """The in-progress marker for the chart's last bucket, in the longest
     form that fits under a canvas this many cells wide.
@@ -579,8 +639,8 @@ def partial_marker(
     them, and gets nothing rather than a label plotext would drop anyway.
     """
     forms: list[str] = [
-        mr.t(f"partial_bar.{granularity}", lang, pct=pct),
-        mr.t("partial_bar.short", lang, pct=pct),
+        metrics_core_module.t(f"partial_bar.{granularity}", lang, pct=pct),
+        metrics_core_module.t("partial_bar.short", lang, pct=pct),
         f"{pct}%",
     ]
     if canvas_width is None:
@@ -621,12 +681,17 @@ def draw_stacked_bars(
     _bar_width_on). None, before the widget is laid out, draws plotext's
     default width.
     """
-    xs = list(range(1, len(xlabels) + 1))
-    bar_width = BAR_WIDTH if canvas_width is None else _bar_width_on(canvas_width, len(xs))
+    bar_positions = list(range(1, len(xlabels) + 1))
+    bar_width = (
+        BAR_WIDTH if canvas_width is None else _bar_width_on(canvas_width, len(bar_positions))
+    )
     cumulative: list[list[int]] = []
-    running = [0] * len(xs)
+    running = [0] * len(bar_positions)
     for series in series_lists:
-        running = [a + b for a, b in zip(running, series, strict=True)]
+        running = [
+            total_so_far + next_value
+            for total_so_far, next_value in zip(running, series, strict=True)
+        ]
         cumulative.append(running)
     # An invisible, unlabelled layer of zero-height bars at EVERY position,
     # drawn first. plotext takes the x range from the bars actually drawn,
@@ -635,19 +700,29 @@ def draw_stacked_bars(
     # in-progress label with it), and a window with no tokens at all drew
     # a bare frame. A zero bar only paints its base cell with the
     # background, and every real layer drawn after it paints over that.
-    plt.bar(xs, [0] * len(xs), label=None, color=None, width=_bar_width_for(xs, bar_width))
-    for i in reversed(range(len(series_lists))):
-        shown = [j for j, value in enumerate(series_lists[i]) if value > 0]
+    plt.bar(
+        bar_positions,
+        [0] * len(bar_positions),
+        label=None,
+        color=None,
+        width=_bar_width_for(bar_positions, bar_width),
+    )
+    for series_index in reversed(range(len(series_lists))):
+        shown = [
+            position_index
+            for position_index, value in enumerate(series_lists[series_index])
+            if value > 0
+        ]
         if shown:
-            positions = [xs[j] for j in shown]
+            positions = [bar_positions[position_index] for position_index in shown]
             plt.bar(
                 positions,
-                [cumulative[i][j] for j in shown],
-                label=series_labels[i],
-                color=colors[i],
+                [cumulative[series_index][position_index] for position_index in shown],
+                label=series_labels[series_index],
+                color=colors[series_index],
                 width=_bar_width_for(positions, bar_width),
             )
-    plt.xticks(xs, xlabels)
+    plt.xticks(bar_positions, xlabels)
 
 
 # plotext's own default bar width (plotext/_default.py: bar_width = 4 / 5),
@@ -727,16 +802,16 @@ class TrendChart(PlotextPlot):
 
     def __init__(
         self,
-        mr: ModuleType,
+        metrics_core_module: ModuleType,
         chart_records: list[dict[str, Any]],
         mode: str = "pane",
         *,
         lang: str,
         model_slots: dict[str, int | None] | None = None,
-        **kwargs: Any,
+        **keyword_arguments: Any,
     ) -> None:
-        super().__init__(**kwargs)
-        self.mr = mr
+        super().__init__(**keyword_arguments)
+        self.metrics_core_module = metrics_core_module
         self.chart_records = chart_records
         self.mode = mode
         self.lang = lang
@@ -786,7 +861,7 @@ class TrendChart(PlotextPlot):
             self._draw_chart(self._now)
         if self._too_narrow:
             return Text(
-                self.mr.t("chart_too_narrow", self.lang),
+                self.metrics_core_module.t("chart_too_narrow", self.lang),
                 style="dim",
                 no_wrap=True,
                 overflow="ellipsis",
@@ -804,7 +879,7 @@ class TrendChart(PlotextPlot):
         # for month, "YYYY" for year, not always "YYYY-MM-DD"), so the
         # tick label must use that granularity's own parse/tick format
         # instead of a hardcoded [5:] MM-DD slice.
-        granularity, days = self.mr.aggregate_by_day(self.chart_records)
+        granularity, days = self.metrics_core_module.aggregate_by_day(self.chart_records)
         self.plt.clear_data()
         # clear_data keeps labels, and the in-progress marker below must not
         # outlive the bucket it describes: a chart left open past the end
@@ -813,43 +888,54 @@ class TrendChart(PlotextPlot):
         self.plt.xlabel(None)
         if len(days) < 2:
             return
-        parse_fmt = self.mr.GRANULARITY_CONFIG[granularity]["parse_fmt"]
+        parse_format = self.metrics_core_module.GRANULARITY_CONFIG[granularity]["parse_fmt"]
         labels = [
-            self.mr.tick_label(granularity, datetime.strptime(d["day"], parse_fmt), self.lang)
-            for d in days
+            self.metrics_core_module.tick_label(
+                granularity, datetime.strptime(day["day"], parse_format), self.lang
+            )
+            for day in days
         ]
         # The last bucket is always a fraction of a full one while it's
         # still running (backlog, 2026-09-02: "the newest bar always reads
         # as a decline") - said in words rather than greyed out like
         # dashboard_html.py's SVG rects are: each series is drawn in one
         # colour across every bucket (see draw_stacked_bars).
-        partial_frac = self.mr.partial_bucket_fraction(
+        partial_frac = self.metrics_core_module.partial_bucket_fraction(
             granularity, days[-1]["day"], now or datetime.now().astimezone()
         )
         color: Sequence[PlotColor]
         if self.mode == "pane":
-            top_keys, has_other = compute_pane_projects(self.mr, self.chart_records)
+            top_keys, has_other = compute_pane_projects(
+                self.metrics_core_module, self.chart_records
+            )
             series_keys = list(top_keys) + ([PANE_OTHER_KEY] if has_other else [])
             self.pane_series_keys = series_keys
-            series_data: dict[str | None, list[int]] = {k: [] for k in series_keys}
-            for d in days:
+            series_data: dict[str | None, list[int]] = {
+                series_key: [] for series_key in series_keys
+            }
+            for day in days:
                 day_totals = dict.fromkeys(series_keys, 0)
-                for r in d["records"]:
-                    r_key = self.mr.color_group_key(r.get("project_path"))
-                    bucket = r_key if r_key in top_keys else PANE_OTHER_KEY
-                    day_totals[bucket] += self.mr.record_token_total(r)
-                for k in series_keys:
-                    series_data[k].append(day_totals[k])
-            series_lists = [series_data[k] for k in series_keys]
-            series_labels = [pane_series_label(self.mr, k, lang=self.lang) for k in series_keys]
+                for record in day["records"]:
+                    record_key = self.metrics_core_module.color_group_key(
+                        record.get("project_path")
+                    )
+                    bucket = record_key if record_key in top_keys else PANE_OTHER_KEY
+                    day_totals[bucket] += self.metrics_core_module.record_token_total(record)
+                for series_key in series_keys:
+                    series_data[series_key].append(day_totals[series_key])
+            series_lists = [series_data[series_key] for series_key in series_keys]
+            series_labels = [
+                pane_series_label(self.metrics_core_module, series_key, lang=self.lang)
+                for series_key in series_keys
+            ]
             palette = [
-                PANE_COLORS[i] if i < len(PANE_COLORS) else PANE_OTHER_COLOR
-                for i in range(len(series_keys))
+                PANE_COLORS[palette_index] if palette_index < len(PANE_COLORS) else PANE_OTHER_COLOR
+                for palette_index in range(len(series_keys))
             ]
             if self.project_highlighted:
                 color = [
-                    palette[i] if key in self.project_highlighted else "gray"
-                    for i, key in enumerate(series_keys)
+                    palette[palette_index] if key in self.project_highlighted else "gray"
+                    for palette_index, key in enumerate(series_keys)
                 ]
             else:
                 color = palette
@@ -859,23 +945,27 @@ class TrendChart(PlotextPlot):
             # day, so a model's colour means the same thing across the whole
             # chart instead of shifting with each day's cast.
             all_models: dict[str, int] = {}
-            for d in days:
-                for model, amount in self.mr.compute_model_totals(d["records"])[0].items():
+            for day in days:
+                for model, amount in self.metrics_core_module.compute_model_totals(day["records"])[
+                    0
+                ].items():
                     all_models[model] = all_models.get(model, 0) + amount
-            model_keys = sorted(all_models, key=lambda m: -all_models[m])
+            model_keys = sorted(all_models, key=lambda model: -all_models[model])
             per_day: list[dict[str, int]] = []
             unattributed: list[int] = []
-            for d in days:
-                by_model, remainder = self.mr.compute_model_totals(d["records"])
+            for day in days:
+                by_model, remainder = self.metrics_core_module.compute_model_totals(day["records"])
                 per_day.append(by_model)
                 unattributed.append(remainder)
             # The unattributed band sits LAST so the models stay adjacent to
             # one another, and carries the "other" colour it shares with the
             # pane mode's overflow bucket - both mean "everything else".
-            series_lists = [[day.get(m, 0) for day in per_day] for m in model_keys]
+            series_lists = [[day.get(model, 0) for day in per_day] for model in model_keys]
             series_lists.append(unattributed)
-            series_labels = [self.mr.model_display_label(m) for m in model_keys]
-            series_labels.append(self.mr.t("no_model", self.lang))
+            series_labels = [
+                self.metrics_core_module.model_display_label(model) for model in model_keys
+            ]
+            series_labels.append(self.metrics_core_module.t("no_model", self.lang))
             # By the model's own slot, not its rank here: ranked, a model
             # changed colour whenever another outspent it in the period on
             # screen (backlog 2026-09-24 #6). The legend still lists them by
@@ -883,43 +973,48 @@ class TrendChart(PlotextPlot):
             slots = (
                 self.model_slots
                 if self.model_slots is not None
-                else self.mr.assign_model_slots(model_keys, len(PANE_COLORS))
+                else self.metrics_core_module.assign_model_slots(model_keys, len(PANE_COLORS))
             )
             color = [
-                PANE_OTHER_COLOR if (slot := slots.get(m)) is None else PANE_COLORS[slot]
-                for m in model_keys
+                PANE_OTHER_COLOR if (slot := slots.get(model)) is None else PANE_COLORS[slot]
+                for model in model_keys
             ]
             color.append(PANE_OTHER_COLOR)
             title = "chart_title.model"
         else:
-            input_totals = [sum(r.get("input_tokens", 0) or 0 for r in d["records"]) for d in days]
+            input_totals = [
+                sum(record.get("input_tokens", 0) or 0 for record in day["records"]) for day in days
+            ]
             output_totals = [
-                sum(r.get("output_tokens", 0) or 0 for r in d["records"]) for d in days
+                sum(record.get("output_tokens", 0) or 0 for record in day["records"])
+                for day in days
             ]
             cache_read_totals = [
-                sum(r.get("cache_read_tokens", 0) or 0 for r in d["records"]) for d in days
+                sum(record.get("cache_read_tokens", 0) or 0 for record in day["records"])
+                for day in days
             ]
             cache_creation_totals = [
-                sum(r.get("cache_creation_tokens", 0) or 0 for r in d["records"]) for d in days
+                sum(record.get("cache_creation_tokens", 0) or 0 for record in day["records"])
+                for day in days
             ]
             if self.highlighted:
                 color = [
-                    self.SERIES_COLORS[i] if key in self.highlighted else "gray"
-                    for i, key in enumerate(self.SERIES_KEYS)
+                    self.SERIES_COLORS[series_index] if key in self.highlighted else "gray"
+                    for series_index, key in enumerate(self.SERIES_KEYS)
                 ]
             else:
                 color = self.SERIES_COLORS
             series_lists = [input_totals, output_totals, cache_read_totals, cache_creation_totals]
             series_labels = ["input", "output", "cache read", "cache creation"]
             title = "chart_title.tokens"
-        max_total = max((sum(day) for day in zip(*series_lists, strict=True)), default=0)
+        maximum_total = max((sum(day) for day in zip(*series_lists, strict=True)), default=0)
         # plotext's default y-axis ticks are raw, unformatted floats (e.g.
         # "1591684.7") - unreadable next to token counts everywhere else in
         # this dashboard already using k/M/B/T suffixes. Overriding with
         # explicit ticks at even fractions of the tallest bar keeps the
         # scale meaningful while reusing format_tokens for the labels.
-        tick_values = [max_total * frac for frac in (0, 0.25, 0.5, 0.75, 1.0)]
-        tick_labels = [self.mr.format_tokens(v) for v in tick_values]
+        tick_values = [maximum_total * frac for frac in (0, 0.25, 0.5, 0.75, 1.0)]
+        tick_labels = [self.metrics_core_module.format_tokens(value) for value in tick_values]
         # The canvas is what is left of the widget once plotext has drawn
         # the widest y tick label and the two vertical frame lines beside
         # the plot (plotext/_build.py: width_canvas = width - yaxes -
@@ -941,7 +1036,7 @@ class TrendChart(PlotextPlot):
         draw_stacked_bars(
             self.plt, labels, series_lists, series_labels, color, canvas_width=canvas_width
         )
-        self.plt.title(self.mr.t(title, self.lang))
+        self.plt.title(self.metrics_core_module.t(title, self.lang))
         self.plt.yticks(tick_values, tick_labels)
         # On a line of its own under the axis, not appended to the last
         # tick label as it once was: plotext drops any tick label that
@@ -951,7 +1046,11 @@ class TrendChart(PlotextPlot):
         # at 25 of the 141 widths from 60 to 200 columns, none under 163.
         if partial_frac is not None:
             marker = partial_marker(
-                self.mr, granularity, round(partial_frac * 100), canvas_width, lang=self.lang
+                self.metrics_core_module,
+                granularity,
+                round(partial_frac * 100),
+                canvas_width,
+                lang=self.lang,
             )
             if marker is not None:
                 self.plt.xlabel(marker)
@@ -966,24 +1065,29 @@ class ProjectLegend(Static):
             super().__init__()
 
     def __init__(
-        self, mr: ModuleType, chart_records: list[dict[str, Any]], *, lang: str, **kwargs: Any
+        self,
+        metrics_core_module: ModuleType,
+        chart_records: list[dict[str, Any]],
+        *,
+        lang: str,
+        **keyword_arguments: Any,
     ) -> None:
-        super().__init__(**kwargs)
-        self.mr = mr
+        super().__init__(**keyword_arguments)
+        self.metrics_core_module = metrics_core_module
         self.chart_records = chart_records
         self.lang = lang
 
     def _series_keys(self) -> list[str | None]:
-        top_keys, has_other = compute_pane_projects(self.mr, self.chart_records)
+        top_keys, has_other = compute_pane_projects(self.metrics_core_module, self.chart_records)
         return list(top_keys) + ([PANE_OTHER_KEY] if has_other else [])
 
     def render(self) -> str:
         series_keys = self._series_keys()
         if not series_keys:
-            return f"[dim]{self.mr.t('no_data', self.lang)}[/dim]"
+            return f"[dim]{self.metrics_core_module.t('no_data', self.lang)}[/dim]"
         chips = []
         for key in series_keys:
-            label = pane_series_label(self.mr, key, lang=self.lang)
+            label = pane_series_label(self.metrics_core_module, key, lang=self.lang)
             is_highlighted = self.highlighted is not None and key in self.highlighted
             style = "bold reverse" if is_highlighted else ""
             chip = f"[{style}]{label}[/{style}]" if style else label
@@ -1013,17 +1117,17 @@ class ProjectRankingList(Static):
 
     def __init__(
         self,
-        mr: ModuleType,
+        metrics_core_module: ModuleType,
         chart_records: list[dict[str, Any]],
         project_first_seen: dict[str, str],
         project_last_seen: dict[str, str],
         open_projects: set[str],
         *,
         lang: str,
-        **kwargs: Any,
+        **keyword_arguments: Any,
     ) -> None:
-        super().__init__(**kwargs)
-        self.mr = mr
+        super().__init__(**keyword_arguments)
+        self.metrics_core_module = metrics_core_module
         self.chart_records = chart_records
         self.project_first_seen = project_first_seen
         self.project_last_seen = project_last_seen
@@ -1034,45 +1138,52 @@ class ProjectRankingList(Static):
         self.expanded = not self.expanded
 
     def render(self) -> str:
-        ordered, totals, max_total = self.mr.compute_project_totals(
+        ordered, totals, maximum_total = self.metrics_core_module.compute_project_totals(
             self.chart_records, self.project_last_seen
         )
         # Omit zero-token projects (2026-07-21, ported from
         # dashboard_html.py's render_project_totals_chart) - a project with
         # nothing to show is just dead weight in this ranking.
-        ordered = [p for p in ordered if totals.get(p, 0) > 0]
+        ordered = [project for project in ordered if totals.get(project, 0) > 0]
         if not ordered:
-            return f"[dim]{self.mr.t('no_data', self.lang)}[/dim]"
+            return f"[dim]{self.metrics_core_module.t('no_data', self.lang)}[/dim]"
 
-        max_total = max_total or 1
+        maximum_total = maximum_total or 1
         visible = ordered[:10]
         hidden = ordered[10:]
         shown = visible + (hidden if self.expanded else [])
 
-        lines = [f"[bold]{self.mr.t('project_totals_title', self.lang)}[/bold]", ""]
+        lines = [
+            f"[bold]{self.metrics_core_module.t('project_totals_title', self.lang)}[/bold]",
+            "",
+        ]
         for project in shown:
             total = totals[project]
-            label = self.mr.project_display_label(project, lang=self.lang)
-            bar_len = int((total / max_total) * 30)
+            label = self.metrics_core_module.project_display_label(project, lang=self.lang)
+            bar_length = int((total / maximum_total) * 30)
             is_open = project in self.open_projects
             bar_char = "█" if is_open else "▓"
-            days_running = self.mr.project_days_running(
+            days_running = self.metrics_core_module.project_days_running(
                 self.project_first_seen, project, lang=self.lang
             )
-            formatted_total = self.mr.format_tokens(total)
-            lines.append(f"{label[:24]:<26}{bar_char * bar_len:<32}{formatted_total}{days_running}")
+            formatted_total = self.metrics_core_module.format_tokens(total)
+            lines.append(
+                f"{label[:24]:<26}{bar_char * bar_length:<32}{formatted_total}{days_running}"
+            )
 
         if hidden:
             toggle_label = (
-                self.mr.t("fewer", self.lang)
+                self.metrics_core_module.t("fewer", self.lang)
                 if self.expanded
-                else f"▸ {self.mr.tn('past_projects', len(hidden), self.lang)}"
+                else f"▸ {self.metrics_core_module.tn('past_projects', len(hidden), self.lang)}"
             )
             lines.append("")
             lines.append(f"[dim]{toggle_label}[/dim]")
 
         lines.append("")
-        lines.append(f"[dim]{self.mr.t('legend.open_session_tui', self.lang)}[/dim]")
+        lines.append(
+            f"[dim]{self.metrics_core_module.t('legend.open_session_tui', self.lang)}[/dim]"
+        )
         return "\n".join(lines)
 
 
@@ -1167,19 +1278,23 @@ class MetricsTUIApp(App[None]):
         ("p", "cycle_period", "key.cycle_period"),
     )
 
-    # `args` is required, not an args=None default (2026-08-13): the app
+    # `arguments` is required, not an arguments=None default (2026-08-13): the app
     # hands it straight to load_data on every period cycle, so a None here
     # does not fail at construction - it raises AttributeError deep inside
     # load_data the first time someone presses "p".
     def __init__(
-        self, mr: ModuleType, data: dict[str, Any], args: argparse.Namespace, **kwargs: Any
+        self,
+        metrics_core_module: ModuleType,
+        data: dict[str, Any],
+        arguments: argparse.Namespace,
+        **keyword_arguments: Any,
     ) -> None:
-        super().__init__(**kwargs)
-        self.mr = mr
+        super().__init__(**keyword_arguments)
+        self.metrics_core_module = metrics_core_module
         self.data = data
-        self.args = args
+        self.arguments = arguments
         # Read eagerly, not lazily inside action_cycle_period, for the same
-        # reason `args` is required above: a data dict built by hand without
+        # reason `arguments` is required above: a data dict built by hand without
         # a "base" should fail loudly at construction, where the mistake is,
         # instead of raising on the first "p" press in front of the user.
         self.base = data["base"]
@@ -1195,48 +1310,60 @@ class MetricsTUIApp(App[None]):
         self.active_tab_id = "tab-sessions"
         self.chart_mode = "pane"
         for key, action, message in self._KEYS:
-            self.bind(key, action, description=self.mr.t(message, self.data["lang"]))
+            self.bind(
+                key, action, description=self.metrics_core_module.t(message, self.data["lang"])
+            )
 
     def compose(self) -> ComposeResult:
         lang = self.data["lang"]
-        note = self.mr.describe_backfill_state(self.mr.load_backfill_state(), lang=lang)
+        note = self.metrics_core_module.describe_backfill_state(
+            self.metrics_core_module.load_backfill_state(), lang=lang
+        )
         backfill_note = Static(note, classes="backfill-note")
         backfill_note.tooltip = note
         yield backfill_note
         with TabbedContent(initial=self.active_tab_id):
-            with TabPane(self.mr.t("tab.sessions", lang), id="tab-sessions"), Horizontal():
+            with (
+                TabPane(self.metrics_core_module.t("tab.sessions", lang), id="tab-sessions"),
+                Horizontal(),
+            ):
                 yield build_session_tree(
-                    self.data["records"], self.data["subagents_by_session"], self.mr, lang=lang
+                    self.data["records"],
+                    self.data["subagents_by_session"],
+                    self.metrics_core_module,
+                    lang=lang,
                 )
-                yield SessionDetailPanel(self.mr, lang=lang)
-            with TabPane(self.mr.t("tab.panorama", lang), id="tab-panorama"):
-                totals = self.mr.compute_token_type_totals(self.data["records"])
+                yield SessionDetailPanel(self.metrics_core_module, lang=lang)
+            with TabPane(self.metrics_core_module.t("tab.panorama", lang), id="tab-panorama"):
+                totals = self.metrics_core_module.compute_token_type_totals(self.data["records"])
                 # Visibility is set here, as each legend is built, rather than
                 # fixed up afterwards: "p" recomposes every widget, and a fix-up
                 # queued behind the recompose could leave one frame with all
                 # three legends showing (2026-09-23 review).
                 shown = legend_visibility(self.chart_mode)
-                quota = QuotaSummary(totals, self.mr, lang=lang)
+                quota = QuotaSummary(totals, self.metrics_core_module, lang=lang)
                 quota.display = shown["quota"]
                 yield quota
-                composition = CompositionLegend(totals, self.mr, lang=lang)
+                composition = CompositionLegend(totals, self.metrics_core_module, lang=lang)
                 composition.display = shown["composition"]
                 yield composition
-                projects = ProjectLegend(self.mr, self.data["chart_records"], lang=lang)
+                projects = ProjectLegend(
+                    self.metrics_core_module, self.data["chart_records"], lang=lang
+                )
                 projects.display = shown["projects"]
                 yield projects
                 # In the mode the reader last picked, not the default: "p"
                 # recomposes every widget, and a fresh chart would silently
                 # drop the slicing they chose (2026-09-22).
                 yield TrendChart(
-                    self.mr,
+                    self.metrics_core_module,
                     self.data["daily_chart_records"],
                     mode=self.chart_mode,
                     lang=lang,
                     model_slots=self.data["model_slots"],
                 )
                 yield ProjectRankingList(
-                    self.mr,
+                    self.metrics_core_module,
                     self.data["chart_records"],
                     self.data["project_first_seen"],
                     self.data["project_last_seen"],
@@ -1264,7 +1391,7 @@ class MetricsTUIApp(App[None]):
         # stands for - so the panel explains exactly what the row shows.
         incomplete = next(
             (
-                self.mr.incomplete_usage_messages(record)
+                self.metrics_core_module.incomplete_usage_messages(record)
                 for record in self.data["records"]
                 if record.get("session_id") == session_id
             ),
@@ -1307,8 +1434,8 @@ class MetricsTUIApp(App[None]):
         self.query_one(TrendChart).set_project_highlight(event.projects)
 
     def action_cycle_period(self) -> None:
-        ids = [p.id for p in self.mr.PERIODS]
-        current = self.data.get("period_id", self.mr.DEFAULT_PERIOD_ID)
+        ids = [period.id for period in self.metrics_core_module.PERIODS]
+        current = self.data.get("period_id", self.metrics_core_module.DEFAULT_PERIOD_ID)
         next_id = ids[(ids.index(current) + 1) % len(ids)]
         # Focus is dropped before the rebuild for the same reason
         # action_toggle_tab does it: a focused widget inside a pane being
@@ -1319,7 +1446,7 @@ class MetricsTUIApp(App[None]):
         # subagent tokens, all of which produce the same answer for every
         # period, and all of which run on the event loop - blocking the
         # whole UI for seconds per press (2026-08-17).
-        self.data = apply_period(self.base, next_id, self.mr)
+        self.data = apply_period(self.base, next_id, self.metrics_core_module)
         self.refresh(recompose=True)
         # Restore focus once the recompose above has actually swapped in the
         # new widgets, not before (2026-08-18). Found by hand: after "p" the
@@ -1344,7 +1471,13 @@ class MetricsTUIApp(App[None]):
         # not the one about to be torn down.
         self.call_next(self._restore_focus_after_period_cycle)
         lang = self.data["lang"]
-        self.notify(self.mr.t("notify.period", lang, name=self.mr.period_label(next_id, lang=lang)))
+        self.notify(
+            self.metrics_core_module.t(
+                "notify.period",
+                lang,
+                name=self.metrics_core_module.period_label(next_id, lang=lang),
+            )
+        )
 
     def _restore_focus_after_period_cycle(
         self, attempts_left: int = FOCUS_RESTORE_ATTEMPTS
@@ -1372,10 +1505,10 @@ class MetricsTUIApp(App[None]):
 
 
 def main() -> None:
-    args = build_arg_parser().parse_args()
-    mr = import_metrics_report()
-    data = load_data(args, mr=mr)
-    app = MetricsTUIApp(mr, data, args=args)
+    arguments = build_arg_parser().parse_args()
+    metrics_core_module = import_metrics_report()
+    data = load_data(arguments, metrics_core_module=metrics_core_module)
+    app = MetricsTUIApp(metrics_core_module, data, arguments=arguments)
     app.run()
 
 

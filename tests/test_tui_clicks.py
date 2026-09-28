@@ -158,9 +158,9 @@ async def _open_panorama(pilot: Any) -> Any:
 
 async def _drive_composition_legend_clicks() -> dict[str, Any]:
     args = tui.build_arg_parser().parse_args(["--label-budget", "0"])
-    async with tui.MetricsTUIApp(mr, tui.load_data(args, mr=mr), args=args).run_test(
-        size=(140, 45)
-    ) as pilot:
+    async with tui.MetricsTUIApp(
+        mr, tui.load_data(args, metrics_core_module=mr), arguments=args
+    ).run_test(size=(140, 45)) as pilot:
         chart = await _open_panorama(pilot)
         await pilot.press("t")  # tokens mode: CompositionLegend is the visible legend
         await pilot.pause()
@@ -233,9 +233,9 @@ async def _drive_composition_legend_clicks() -> dict[str, Any]:
 
 async def _drive_project_legend_clicks() -> dict[str, Any]:
     args = tui.build_arg_parser().parse_args(["--label-budget", "0"])
-    async with tui.MetricsTUIApp(mr, tui.load_data(args, mr=mr), args=args).run_test(
-        size=(140, 45)
-    ) as pilot:
+    async with tui.MetricsTUIApp(
+        mr, tui.load_data(args, metrics_core_module=mr), arguments=args
+    ).run_test(size=(140, 45)) as pilot:
         chart = await _open_panorama(pilot)  # pane mode is the default: ProjectLegend is visible
         app = pilot.app
         legend = app.query_one(tui.ProjectLegend)
@@ -301,9 +301,9 @@ async def _drive_project_legend_clicks() -> dict[str, Any]:
 
 async def _drive_tree_selection() -> dict[str, Any]:
     args = tui.build_arg_parser().parse_args(["--label-budget", "0"])
-    async with tui.MetricsTUIApp(mr, tui.load_data(args, mr=mr), args=args).run_test(
-        size=(140, 45)
-    ) as pilot:
+    async with tui.MetricsTUIApp(
+        mr, tui.load_data(args, metrics_core_module=mr), arguments=args
+    ).run_test(size=(140, 45)) as pilot:
         app = pilot.app
         await pilot.pause()
         tree = app.query_one(Tree)

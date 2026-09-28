@@ -106,9 +106,9 @@ async def _drive_mode_toggle() -> dict[str, Any]:
     the round trip restores the original render byte-for-byte, and the
     toggle is a three-state cycle rather than a longer one."""
     args = tui.build_arg_parser().parse_args(["--label-budget", "0"])
-    async with tui.MetricsTUIApp(mr, tui.load_data(args, mr=mr), args=args).run_test(
-        size=(140, 45)
-    ) as pilot:
+    async with tui.MetricsTUIApp(
+        mr, tui.load_data(args, metrics_core_module=mr), arguments=args
+    ).run_test(size=(140, 45)) as pilot:
         chart = await _open_panorama(pilot)
         app = pilot.app
 
@@ -169,9 +169,9 @@ async def _drive_highlighting() -> dict[str, Any]:
     the OTHER mode is active - the two `if self.mode == ...` guards on
     TrendChart itself (473-475, 478-480 in the pre-task line numbering)."""
     args = tui.build_arg_parser().parse_args(["--label-budget", "0"])
-    async with tui.MetricsTUIApp(mr, tui.load_data(args, mr=mr), args=args).run_test(
-        size=(140, 45)
-    ) as pilot:
+    async with tui.MetricsTUIApp(
+        mr, tui.load_data(args, metrics_core_module=mr), arguments=args
+    ).run_test(size=(140, 45)) as pilot:
         chart = await _open_panorama(pilot)
         assert chart.mode == "pane"
 

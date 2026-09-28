@@ -52,7 +52,7 @@ def _strip(svg: str) -> str:
 
 async def _english_screens() -> dict[str, Any]:
     args = tui.build_arg_parser().parse_args(["--label-budget", "0"])
-    app = tui.MetricsTUIApp(mr, tui.load_data(args, mr=mr), args=args)
+    app = tui.MetricsTUIApp(mr, tui.load_data(args, metrics_core_module=mr), arguments=args)
     # notifications=True: run_test() disables the Toast rack by default
     # (Textual 8.2.8's own default, verified 2026-09-23) - without this the
     # notify() call after "p" still records a Notification internally but
@@ -133,5 +133,5 @@ def test_language_falls_back_to_the_pinned_locale_not_the_real_machines_locale(
     home = seeded_tui_home(monkeypatch, tmp_path)
     (home / ".claude" / "metrics" / "config.json").write_text(json.dumps({}))
     args = tui.build_arg_parser().parse_args(["--label-budget", "0"])
-    data = tui.load_data(args, mr=mr)
+    data = tui.load_data(args, metrics_core_module=mr)
     assert data["lang"] == "pt"

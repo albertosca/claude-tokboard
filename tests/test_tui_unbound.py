@@ -8,12 +8,12 @@ nothing in the suite ever ran the module as a script:
 
   main()                          only ever called by running the file
                                    directly - every other test constructs
-                                   MetricsTUIApp itself and passes mr=
-                                   explicitly.
-  import_metrics_report()         the `mr or import_metrics_report()`
+                                   MetricsTUIApp itself and passes
+                                   metrics_core_module= explicitly.
+  import_metrics_report()         the `metrics_core_module or import_metrics_report()`
                                    fallback exists for exactly the same
                                    reason - every test so far always
-                                   supplies mr=mr.
+                                   supplies metrics_core_module=mr.
   action_toggle_more_projects     bound to "m", never pressed.
   the reverse tab switch          action_toggle_tab's `else:` branch -
                                    every existing test presses "g" once
@@ -54,9 +54,9 @@ the user's real ~/.claude/metrics.
 
 WHY THIS PROVES import_metrics_report() TOO, NOT JUST main()
 
-main() calls `mr = import_metrics_report()` directly and passes the
-result into load_data(args, mr=mr) - so a test that captures the
-constructed app and asserts `app.mr is metrics_core` (the top-level
+main() calls `metrics_core_module = import_metrics_report()` directly and passes the
+result into load_data(args, metrics_core_module=mr) - so a test that captures the
+constructed app and asserts `app.metrics_core_module is metrics_core` (the top-level
 import in THIS file, which is the exact same singleton) proves
 import_metrics_report actually imported the real metrics_core module
 and returned it, not a mock or a fabricated stand-in. A canary run
@@ -160,16 +160,16 @@ def test_main_builds_the_real_app_from_argv_and_the_real_metrics_core(
     # The real metrics_core singleton, not a mock or an unrelated module -
     # this is what proves import_metrics_report() actually imported it,
     # rather than main() having been changed to skip that call entirely.
-    assert app.mr is mr
-    # args honoured all the way through: --project reached load_data's own
+    assert app.metrics_core_module is mr
+    # arguments honoured all the way through: --project reached load_data's own
     # filter_records call (the fixture's "long-1" session is the only one
     # under /projects/alpha - a wrong or ignored --project would either
     # return every project or none), and --label-budget 0 reached it too
     # (proven indirectly: no `claude -p` subprocess call happened, or
     # isolate_tui_from_the_real_filesystem's patched subprocess.run would
     # have raised).
-    assert app.args.project == "/projects/alpha"
-    assert app.args.label_budget == 0
+    assert app.arguments.project == "/projects/alpha"
+    assert app.arguments.label_budget == 0
     records = app.data["records"]
     assert len(records) > 0, "the --project filter dropped every record"
     assert {r["session_id"] for r in records} == {"long-1"}
@@ -203,9 +203,9 @@ async def _drive_toggle_more_projects(
     # fixed 2026-09-23, see tests/test_real_metrics_isolation.py.
     seeded_tui_home(monkeypatch, home)
     args = tui.build_arg_parser().parse_args(["--label-budget", "0"])
-    async with tui.MetricsTUIApp(mr, tui.load_data(args, mr=mr), args=args).run_test(
-        size=(140, 45)
-    ) as pilot:
+    async with tui.MetricsTUIApp(
+        mr, tui.load_data(args, metrics_core_module=mr), arguments=args
+    ).run_test(size=(140, 45)) as pilot:
         app = pilot.app
         await pilot.pause()
         await pilot.press("g")  # into Panorama, where ProjectRankingList lives
@@ -248,9 +248,9 @@ async def _drive_g_twice(monkeypatch: pytest.MonkeyPatch, home: Path) -> dict[st
     # until 2026-09-23.
     seeded_tui_home(monkeypatch, home)
     args = tui.build_arg_parser().parse_args(["--label-budget", "0"])
-    async with tui.MetricsTUIApp(mr, tui.load_data(args, mr=mr), args=args).run_test(
-        size=(140, 45)
-    ) as pilot:
+    async with tui.MetricsTUIApp(
+        mr, tui.load_data(args, metrics_core_module=mr), arguments=args
+    ).run_test(size=(140, 45)) as pilot:
         # pilot.app types as the generic App[None] base, which knows
         # nothing about MetricsTUIApp's own active_tab_id attribute - cast
         # to the concrete subclass rather than widen the real type with a

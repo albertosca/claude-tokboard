@@ -215,8 +215,8 @@ async def _drive_period_cycle() -> dict[str, Any]:
                    answer.
     """
     args = tui.build_arg_parser().parse_args(["--label-budget", "0"])
-    data = tui.load_data(args, mr=mr)
-    app = tui.MetricsTUIApp(mr, data, args=args)
+    data = tui.load_data(args, metrics_core_module=mr)
+    app = tui.MetricsTUIApp(mr, data, arguments=args)
 
     presses: list[float] = []
     press_cpu: list[float] = []

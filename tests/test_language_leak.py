@@ -437,7 +437,7 @@ def _tui_screens(home: Path, lang: str) -> list[str]:
 
     async def _drive() -> list[str]:
         args = tui.build_arg_parser().parse_args(["--label-budget", "0"])
-        app = tui.MetricsTUIApp(mr, tui.load_data(args, mr=mr), args=args)
+        app = tui.MetricsTUIApp(mr, tui.load_data(args, metrics_core_module=mr), arguments=args)
         screens = []
         # notifications=True: run_test() disables the Toast rack by default
         # (Textual 8.2.8), which would otherwise hide the "p" notification
@@ -522,7 +522,7 @@ def _panorama_with_no_data(home: Path, lang: str) -> str:
 
     async def _drive() -> str:
         args = tui.build_arg_parser().parse_args(["--label-budget", "0"])
-        app = tui.MetricsTUIApp(mr, tui.load_data(args, mr=mr), args=args)
+        app = tui.MetricsTUIApp(mr, tui.load_data(args, metrics_core_module=mr), arguments=args)
         async with app.run_test(size=(140, 45)) as pilot:
             await pilot.pause()
             await pilot.press("g")

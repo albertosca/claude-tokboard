@@ -58,7 +58,7 @@ def _opened(
     args = tui.build_arg_parser().parse_args(["--label-budget", "0"])
 
     async def drive() -> dict[str, Any]:
-        app = tui.MetricsTUIApp(mr, tui.load_data(args, mr=mr), args=args)
+        app = tui.MetricsTUIApp(mr, tui.load_data(args, metrics_core_module=mr), arguments=args)
         async with app.run_test(size=(width, 30), tooltips=True) as pilot:
             await pilot.pause()
             note = app.query(".backfill-note").first(Static)

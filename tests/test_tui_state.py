@@ -168,9 +168,9 @@ async def _drive_both_cases() -> dict[str, Any]:
     args = tui.build_arg_parser().parse_args(["--label-budget", "0"])
 
     results: dict[str, Any] = {}
-    async with tui.MetricsTUIApp(mr, tui.load_data(args, mr=mr), args=args).run_test(
-        size=(140, 45)
-    ) as pilot:
+    async with tui.MetricsTUIApp(
+        mr, tui.load_data(args, metrics_core_module=mr), arguments=args
+    ).run_test(size=(140, 45)) as pilot:
         app = pilot.app
         await pilot.pause()
         before = _state(app)
@@ -179,9 +179,9 @@ async def _drive_both_cases() -> dict[str, Any]:
         after = _state(app)
         results["sessions_case"] = {"active_before": before["active"], **after}
 
-    async with tui.MetricsTUIApp(mr, tui.load_data(args, mr=mr), args=args).run_test(
-        size=(140, 45)
-    ) as pilot:
+    async with tui.MetricsTUIApp(
+        mr, tui.load_data(args, metrics_core_module=mr), arguments=args
+    ).run_test(size=(140, 45)) as pilot:
         app = pilot.app
         await pilot.pause()
         await pilot.press("g")
@@ -275,9 +275,9 @@ def test_tree_holds_focus_immediately_after_mount(monkeypatch, tmp_path):
     args = tui.build_arg_parser().parse_args(["--label-budget", "0"])
 
     async def _focused_type_at_mount() -> str:
-        async with tui.MetricsTUIApp(mr, tui.load_data(args, mr=mr), args=args).run_test(
-            size=(140, 45)
-        ) as pilot:
+        async with tui.MetricsTUIApp(
+            mr, tui.load_data(args, metrics_core_module=mr), arguments=args
+        ).run_test(size=(140, 45)) as pilot:
             await pilot.pause()
             return type(pilot.app.focused).__name__
 
@@ -319,7 +319,7 @@ def test_focus_restore_waits_for_a_tree_that_is_not_mounted_yet(monkeypatch, tmp
     args = tui.build_arg_parser().parse_args(["--label-budget", "0"])
 
     async def drive() -> tuple[str, int]:
-        app = tui.MetricsTUIApp(mr, tui.load_data(args, mr=mr), args=args)
+        app = tui.MetricsTUIApp(mr, tui.load_data(args, metrics_core_module=mr), arguments=args)
         async with app.run_test(size=(140, 45)) as pilot:
             await pilot.pause()
             assert app.active_tab_id == "tab-sessions"
@@ -344,7 +344,7 @@ def test_focus_restore_gives_up_quietly_when_the_tree_never_appears(monkeypatch,
     args = tui.build_arg_parser().parse_args(["--label-budget", "0"])
 
     async def drive() -> int:
-        app = tui.MetricsTUIApp(mr, tui.load_data(args, mr=mr), args=args)
+        app = tui.MetricsTUIApp(mr, tui.load_data(args, metrics_core_module=mr), arguments=args)
         async with app.run_test(size=(140, 45)) as pilot:
             await pilot.pause()
             calls: list[int] = []
@@ -377,9 +377,9 @@ def test_the_app_titles_itself_after_the_product_not_its_class(tmp_path, monkeyp
 
 async def _mode_and_legends_after_p(presses_of_t: int) -> dict[str, Any]:
     args = tui.build_arg_parser().parse_args(["--label-budget", "0"])
-    async with tui.MetricsTUIApp(mr, tui.load_data(args, mr=mr), args=args).run_test(
-        size=(140, 45)
-    ) as pilot:
+    async with tui.MetricsTUIApp(
+        mr, tui.load_data(args, metrics_core_module=mr), arguments=args
+    ).run_test(size=(140, 45)) as pilot:
         app = pilot.app
         await pilot.pause()
         await pilot.press("g")

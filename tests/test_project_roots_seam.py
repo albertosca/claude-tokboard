@@ -70,7 +70,7 @@ def _labels(data: Any) -> set[str]:
 
 def _load() -> Any:
     args = tui.build_arg_parser().parse_args(["--label-budget", "0"])
-    return tui.load_data(args, mr=mr)
+    return tui.load_data(args, metrics_core_module=mr)
 
 
 def test_without_a_config_both_streams_keep_their_raw_subdirectory_names(seeded: Path) -> None:
