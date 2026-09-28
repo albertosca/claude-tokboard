@@ -84,23 +84,23 @@ import dashboard_tui as tui  # noqa: E402
 def _write_sessions(home: Path, records: list[dict[str, Any]]) -> None:
     import json
 
-    metrics_dir = home / ".claude" / "metrics"
-    metrics_dir.mkdir(parents=True, exist_ok=True)
-    with (metrics_dir / "sessions.jsonl").open("w") as f:
+    metrics_directory = home / ".claude" / "metrics"
+    metrics_directory.mkdir(parents=True, exist_ok=True)
+    with (metrics_directory / "sessions.jsonl").open("w") as sessions_file:
         for record in records:
-            f.write(json.dumps(record) + "\n")
-    (metrics_dir / "subagents.jsonl").touch()
+            sessions_file.write(json.dumps(record) + "\n")
+    (metrics_directory / "subagents.jsonl").touch()
 
 
 def _write_subagents(home: Path, records: list[dict[str, Any]]) -> None:
     import json
 
-    metrics_dir = home / ".claude" / "metrics"
-    metrics_dir.mkdir(parents=True, exist_ok=True)
-    (metrics_dir / "sessions.jsonl").touch()
-    with (metrics_dir / "subagents.jsonl").open("w") as f:
+    metrics_directory = home / ".claude" / "metrics"
+    metrics_directory.mkdir(parents=True, exist_ok=True)
+    (metrics_directory / "sessions.jsonl").touch()
+    with (metrics_directory / "subagents.jsonl").open("w") as subagents_file:
         for record in records:
-            f.write(json.dumps(record) + "\n")
+            subagents_file.write(json.dumps(record) + "\n")
 
 
 def _session(session_id: str, day: int, tokens: int = 1) -> dict[str, Any]:
@@ -122,18 +122,18 @@ def _session(session_id: str, day: int, tokens: int = 1) -> dict[str, Any]:
 
 
 def test_limit_keeps_only_the_tail_of_the_session_list(monkeypatch, tmp_path):
-    """`records[-args.limit:]` is a slice, not a filter - it must keep the
+    """`records[-arguments.limit:]` is a slice, not a filter - it must keep the
     LAST n sessions in load order, not merely n of them (a bug that picked
     the first n, or an arbitrary n, would pass a test that only checks the
     count)."""
     isolate_tui_from_the_real_filesystem(monkeypatch, tmp_path)
     _write_sessions(
         tmp_path,
-        [_session(f"s{i}", day=i + 1) for i in range(1, 5)],  # s1..s4, day 2..5
+        [_session(f"s{index}", day=index + 1) for index in range(1, 5)],  # s1..s4, day 2..5
     )
-    args = tui.build_arg_parser().parse_args(["--label-budget", "0", "--limit", "2"])
-    base = tui.load_base_data(args, metrics_core_module=mr)
-    assert [r["session_id"] for r in base["records"]] == ["s3", "s4"], (
+    arguments = tui.build_arg_parser().parse_args(["--label-budget", "0", "--limit", "2"])
+    base = tui.load_base_data(arguments, metrics_core_module=mr)
+    assert [record["session_id"] for record in base["records"]] == ["s3", "s4"], (
         "--limit 2 must keep the two MOST RECENT (last, in load order) "
         "sessions, not the first two or any other pair"
     )
@@ -143,10 +143,10 @@ def test_no_limit_keeps_every_session(monkeypatch, tmp_path):
     """The default (no --limit) branch, for contrast - unbounded stays
     unbounded, per the comment above the flag's definition."""
     isolate_tui_from_the_real_filesystem(monkeypatch, tmp_path)
-    _write_sessions(tmp_path, [_session(f"s{i}", day=i + 1) for i in range(1, 5)])
-    args = tui.build_arg_parser().parse_args(["--label-budget", "0"])
-    base = tui.load_base_data(args, metrics_core_module=mr)
-    assert [r["session_id"] for r in base["records"]] == ["s1", "s2", "s3", "s4"]
+    _write_sessions(tmp_path, [_session(f"s{index}", day=index + 1) for index in range(1, 5)])
+    arguments = tui.build_arg_parser().parse_args(["--label-budget", "0"])
+    base = tui.load_base_data(arguments, metrics_core_module=mr)
+    assert [record["session_id"] for record in base["records"]] == ["s1", "s2", "s3", "s4"]
 
 
 # ---------------------------------------------------------------------------
@@ -193,8 +193,8 @@ def test_subagent_with_no_agent_id_is_skipped_without_crashing(monkeypatch, tmp_
         return original(record, cache, budget, lang=lang)
 
     monkeypatch.setattr(mr, "get_agent_label", spy)
-    args = tui.build_arg_parser().parse_args(["--label-budget", "0"])
-    base = tui.load_base_data(args, metrics_core_module=mr)  # must not raise
+    arguments = tui.build_arg_parser().parse_args(["--label-budget", "0"])
+    base = tui.load_base_data(arguments, metrics_core_module=mr)  # must not raise
     assert len(calls) == 1, (
         f"expected exactly one label lookup (for the real agent_id) - got "
         f"{len(calls)}; the agent_id-less record must never reach "
@@ -206,7 +206,7 @@ def test_subagent_with_no_agent_id_is_skipped_without_crashing(monkeypatch, tmp_
     # label, which is the observable consequence of being skipped above.
     grouped = base["subagents_by_session"]["s1"]
     assert len(grouped) == 2
-    labelless = [s for s in grouped if s.get("agent_id") is None]
+    labelless = [subagent for subagent in grouped if subagent.get("agent_id") is None]
     assert len(labelless) == 1
     assert labelless[0]["agent_label"] is None
 
@@ -234,8 +234,8 @@ def test_session_with_no_session_id_is_skipped_without_crashing(monkeypatch, tmp
         return original(record, cache, budget, lang=lang)
 
     monkeypatch.setattr(mr, "get_task_label", spy)
-    args = tui.build_arg_parser().parse_args(["--label-budget", "0"])
-    base = tui.load_base_data(args, metrics_core_module=mr)  # must not raise
+    arguments = tui.build_arg_parser().parse_args(["--label-budget", "0"])
+    base = tui.load_base_data(arguments, metrics_core_module=mr)  # must not raise
     assert len(calls) == 1, (
         f"expected exactly one label lookup (for the real session_id) - "
         f"got {len(calls)}; the session_id-less record must never reach "
@@ -245,7 +245,7 @@ def test_session_with_no_session_id_is_skipped_without_crashing(monkeypatch, tmp
     # Both records still flow through to the record list itself - only
     # task-label resolution skips the malformed one.
     assert len(base["records"]) == 2
-    malformed_out = next(r for r in base["records"] if r.get("session_id") is None)
+    malformed_out = next(record for record in base["records"] if record.get("session_id") is None)
     assert malformed_out["task_label"] is None
 
 
@@ -287,8 +287,8 @@ def test_the_resolved_language_reaches_get_task_label(monkeypatch, tmp_path):
         return original(record, cache, budget, lang=lang)
 
     monkeypatch.setattr(mr, "get_task_label", spy)
-    args = tui.build_arg_parser().parse_args(["--label-budget", "5"])
-    tui.load_base_data(args, metrics_core_module=mr)
+    arguments = tui.build_arg_parser().parse_args(["--label-budget", "5"])
+    tui.load_base_data(arguments, metrics_core_module=mr)
     assert captured_langs == ["en"], (
         "get_task_label must be called with the resolved language ('en' "
         f"here), not a hardcoded default - got {captured_langs}"
@@ -319,8 +319,8 @@ def test_load_base_data_reads_the_config_file_exactly_once(monkeypatch, tmp_path
 
     monkeypatch.setattr(mr, "load_config", spy)
     monkeypatch.setattr(paths_module, "load_config", spy)
-    args = tui.build_arg_parser().parse_args(["--label-budget", "0"])
-    tui.load_base_data(args, metrics_core_module=mr)
+    arguments = tui.build_arg_parser().parse_args(["--label-budget", "0"])
+    tui.load_base_data(arguments, metrics_core_module=mr)
     assert len(calls) == 1, f"load_config must be read exactly once per run - got {calls}"
 
 
@@ -482,7 +482,9 @@ def _shown_with_now(
     return asyncio.run(drive())
 
 
-_THIRTY_AUGUST_DAYS = [_august_session(f"s{d}", day=d, tokens=100 * d) for d in range(1, 31)]
+_THIRTY_AUGUST_DAYS = [
+    _august_session(f"s{day}", day=day, tokens=100 * day) for day in range(1, 31)
+]
 
 
 @pytest.mark.parametrize("lang", ["en", "pt"])
@@ -714,10 +716,10 @@ def test_a_series_that_skips_days_keeps_its_bars_the_width_of_everyone_elses():
     # its colour across days 2 and 3, where it has nothing. Found in review
     # (2026-09-23): every render test before this one had two buckets,
     # where a skipped day cannot happen.
-    def day(sid: str, n: int, tokens: int, project: str) -> dict[str, Any]:
-        return _august_session(sid, day=n, tokens=tokens) | {"project_path": project}
+    def day(sid: str, day_number: int, tokens: int, project: str) -> dict[str, Any]:
+        return _august_session(sid, day=day_number, tokens=tokens) | {"project_path": project}
 
-    records = [day(f"b{n}", n, 100, "/p/big") for n in (1, 2, 3, 4)] + [
+    records = [day(f"b{day_number}", day_number, 100, "/p/big") for day_number in (1, 2, 3, 4)] + [
         day("s1", 1, 40, "/p/small"),
         day("s4", 4, 40, "/p/small"),
     ]
@@ -763,7 +765,7 @@ def _tick_row_and_marker(text: str) -> list[str]:
     """The x tick labels - the row right under the axis - followed by the
     in-progress marker's words when the chart has one, on the row below."""
     lines = text.splitlines()
-    axis = next(i for i, line in enumerate(lines) if "└" in line)
+    axis = next(index for index, line in enumerate(lines) if "└" in line)
     return " ".join(lines[axis + 1 :]).split()
 
 
@@ -781,7 +783,7 @@ def test_a_zero_token_bucket_at_the_end_keeps_its_date_and_its_in_progress_label
     # today's, the " · 25%" in-progress label went with it. Found by the
     # 2026-09-23 re-review. The percentage has since moved to a line of
     # its own under the ticks (2026-09-25); the date must still be there.
-    records = [_august_session(f"s{d}", day=d, tokens=100) for d in (1, 5, 10)]
+    records = [_august_session(f"s{day}", day=day, tokens=100) for day in (1, 5, 10)]
     records.append(_august_session("s12", day=12, tokens=0))
     labels = _axis_labels(records, datetime(2026, 8, 12, 6, 0).astimezone())
     assert labels[-8:] == ["12/08", *mr.t("partial_bar.day", "pt", pct=25).split()], labels
@@ -789,7 +791,7 @@ def test_a_zero_token_bucket_at_the_end_keeps_its_date_and_its_in_progress_label
 
 def test_a_zero_token_bucket_at_the_start_keeps_its_date():
     records = [_august_session("s1", day=1, tokens=0)]
-    records += [_august_session(f"s{d}", day=d, tokens=100) for d in (5, 10, 12)]
+    records += [_august_session(f"s{day}", day=day, tokens=100) for day in (5, 10, 12)]
     labels = _axis_labels(records, datetime(2026, 8, 30).astimezone())
     assert labels[0] == "01/08", labels
 
@@ -816,13 +818,13 @@ def _mounted_axis_labels(records: list[dict[str, Any]], now: datetime) -> list[s
 
 
 def test_a_mounted_chart_keeps_a_zero_token_bucket_at_either_edge():
-    end = [_august_session(f"s{d}", day=d, tokens=100) for d in (1, 5, 10)]
+    end = [_august_session(f"s{day}", day=day, tokens=100) for day in (1, 5, 10)]
     end.append(_august_session("s12", day=12, tokens=0))
     labels = _mounted_axis_labels(end, datetime(2026, 8, 12, 6, 0).astimezone())
     assert labels[-8:] == ["12/08", *mr.t("partial_bar.day", "pt", pct=25).split()], labels
 
     start = [_august_session("s1", day=1, tokens=0)]
-    start += [_august_session(f"s{d}", day=d, tokens=100) for d in (5, 10, 12)]
+    start += [_august_session(f"s{day}", day=day, tokens=100) for day in (5, 10, 12)]
     labels = _mounted_axis_labels(start, datetime(2026, 8, 30).astimezone())
     assert labels[0] == "01/08", labels
 
@@ -841,9 +843,9 @@ def test_a_mounted_chart_keeps_a_zero_token_bucket_at_either_edge():
 
 def _alternating_days(days: int) -> list[dict[str, Any]]:
     return [
-        _august_session(f"s{d}", day=d, tokens=100)
-        | {"project_path": "/p/odd" if d % 2 else "/p/even"}
-        for d in range(1, days + 1)
+        _august_session(f"s{day}", day=day, tokens=100)
+        | {"project_path": "/p/odd" if day % 2 else "/p/even"}
+        for day in range(1, days + 1)
     ]
 
 
@@ -865,7 +867,7 @@ def _assert_each_day_is_its_own_bar(raw: str, days: int) -> None:
                 runs.append(set())
             runs[-1].add(colour)
         previous = char or previous
-    assert runs == [{odd} if d % 2 else {even} for d in range(1, days + 1)], runs
+    assert runs == [{odd} if day % 2 else {even} for day in range(1, days + 1)], runs
 
 
 def _built_at(records: list[dict[str, Any]], sizes: list[tuple[int, int]]) -> list[str]:
@@ -910,10 +912,10 @@ def _day_spans(plot_width: int, days: int) -> list[set[int]]:
     shows one of them - so each day is drawn by itself, with the same
     invisible layer holding the axis still, and the spans are compared."""
     spans = []
-    for k in range(days):
+    for target_day in range(days):
         plt = PlotextPlot().plt
         plt.plotsize(plot_width, 8)
-        heights = [[1 if day == k else 0 for day in range(days)]]
+        heights = [[1 if day == target_day else 0 for day in range(days)]]
         # One-character y labels, so the canvas is the plot less the label
         # and the two frame lines: plot_width - 3.
         tui.draw_stacked_bars(
@@ -925,13 +927,15 @@ def _day_spans(plot_width: int, days: int) -> list[set[int]]:
         # passed above assumes it drew at plot_width.
         assert {len(line) for line in lines} == {plot_width}, "plot drawn narrower than asked"
         zero = next(line for line in lines if line.lstrip().startswith("0┤"))
-        spans.append({col for col, char in enumerate(zero) if char == "█"})
+        spans.append({column for column, char in enumerate(zero) if char == "█"})
     return spans
 
 
 def test_bars_keep_a_blank_cell_between_them_when_there_is_room():
     spans = _day_spans(40, 10)
-    assert all(max(a) + 1 < min(b) for a, b in pairwise(spans)), spans
+    assert all(
+        max(first_span) + 1 < min(second_span) for first_span, second_span in pairwise(spans)
+    ), spans
     # And the gap is made by narrowing a bar only as far as it needs: a
     # one-cell bar also leaves gaps, and is what a width of 0 draws
     # (2026-09-23 mutation sweep: _bar_width_on returning 0 passed here).
@@ -959,7 +963,9 @@ def test_bars_are_one_cell_wide_and_apart_when_there_is_no_room_for_a_gap():
     # enough for each day to have a cell of its own.
     spans = _day_spans(18, 10)
     assert all(len(span) == 1 for span in spans), spans
-    assert all(max(a) < min(b) for a, b in pairwise(spans)), spans
+    assert all(max(first_span) < min(second_span) for first_span, second_span in pairwise(spans)), (
+        spans
+    )
 
 
 def test_bars_are_one_cell_wide_when_days_outnumber_cells():
@@ -1046,12 +1052,14 @@ def test_the_whole_dashboard_survives_every_narrow_width(monkeypatch, tmp_path):
     # with plotext's ValueError on the zero-cell canvas one column below
     # the switch - the column this sample exists to keep.
     seeded_tui_home(monkeypatch, tmp_path)
-    args = tui.build_arg_parser().parse_args(["--label-budget", "0"])
+    arguments = tui.build_arg_parser().parse_args(["--label-budget", "0"])
     heights = [(80, height) for height in (1, 3, 5)]
 
     async def drive() -> dict[str, list[tuple[tuple[int, int], int, str]]]:
         shown: dict[str, list[tuple[tuple[int, int], int, str]]] = {}
-        app = tui.MetricsTUIApp(mr, tui.load_data(args, metrics_core_module=mr), arguments=args)
+        app = tui.MetricsTUIApp(
+            mr, tui.load_data(arguments, metrics_core_module=mr), arguments=arguments
+        )
         async with app.run_test(size=(80, 40)) as pilot:
             seen: dict[tuple[int, int], tuple[int, str]] = {}
 
@@ -1167,8 +1175,8 @@ def _model_colours(data: dict[str, Any]) -> dict[str, str]:
 def test_a_model_keeps_its_colour_in_periods_that_rank_it_differently(monkeypatch, tmp_path):
     isolate_tui_from_the_real_filesystem(monkeypatch, tmp_path)
     _write_sessions(tmp_path, _RANKINGS_DIFFER)
-    args = tui.build_arg_parser().parse_args(["--label-budget", "0"])
-    base = tui.load_base_data(args, metrics_core_module=mr)
+    arguments = tui.build_arg_parser().parse_args(["--label-budget", "0"])
+    base = tui.load_base_data(arguments, metrics_core_module=mr)
     everything = tui.apply_period(base, "tudo", mr)
     recent = tui.apply_period(base, "15-dias", mr)
     # The premise: the two periods really do rank the models differently.
@@ -1183,10 +1191,12 @@ def test_the_dashboard_hands_its_chart_the_slots_settled_over_the_whole_history(
 ):
     isolate_tui_from_the_real_filesystem(monkeypatch, tmp_path)
     _write_sessions(tmp_path, _RANKINGS_DIFFER)
-    args = tui.build_arg_parser().parse_args(["--label-budget", "0"])
+    arguments = tui.build_arg_parser().parse_args(["--label-budget", "0"])
 
     async def drive() -> list[dict[str, int | None] | None]:
-        app = tui.MetricsTUIApp(mr, tui.load_data(args, metrics_core_module=mr), arguments=args)
+        app = tui.MetricsTUIApp(
+            mr, tui.load_data(arguments, metrics_core_module=mr), arguments=arguments
+        )
         seen = []
         async with app.run_test(size=(120, 40)) as pilot:
             await pilot.pause()
@@ -1204,10 +1214,10 @@ def test_a_model_past_the_last_colour_is_drawn_in_the_other_colour():
     # Eight models, seven colours: the one left without a slot shares the
     # "other" colour with the unattributed band rather than reusing a
     # model's colour.
-    models = [f"model-{i}" for i in range(8)]
+    models = [f"model-{index}" for index in range(8)]
     records = [
-        _model_session(f"s{i}", 1 + i % 2, {model: _m(input_tokens=100)}, total=200)
-        for i, model in enumerate(models)
+        _model_session(f"s{index}", 1 + index % 2, {model: _m(input_tokens=100)}, total=200)
+        for index, model in enumerate(models)
     ]
     chart = tui.TrendChart(mr, records, mode="model", lang="pt")
     chart.render_chart(now=datetime(2026, 8, 12, 0, 0).astimezone())
