@@ -8,12 +8,12 @@ import metrics_core as mr
 
 def write_transcript(path: Path, entries: list[tuple[str, str | None, dict[str, int]]]) -> None:
     """entries: list of (timestamp, message_id_or_None, usage_dict)."""
-    with path.open("w") as f:
+    with path.open("w") as transcript_file:
         for timestamp, message_id, usage in entries:
             message: dict[str, Any] = {"usage": usage}
             if message_id is not None:
                 message["id"] = message_id
-            f.write(
+            transcript_file.write(
                 json.dumps(
                     {
                         "type": "assistant",
@@ -118,21 +118,21 @@ def test_sha256_of_hashes_the_whole_file_with_sha256(tmp_path):
 
 
 def test_index_transcripts_a_size_tie_does_not_replace_the_first_file_seen(tmp_path):
-    projects_dir = tmp_path / "projects"
-    slug_a = projects_dir / "proj-a"
-    slug_b = projects_dir / "proj-b"
-    slug_a.mkdir(parents=True)
-    slug_b.mkdir(parents=True)
-    (slug_a / "s1.jsonl").write_text("x" * 10)
-    (slug_b / "s1.jsonl").write_text("y" * 10)  # same size, same session id
+    projects_directory = tmp_path / "projects"
+    first_slug = projects_directory / "proj-a"
+    second_slug = projects_directory / "proj-b"
+    first_slug.mkdir(parents=True)
+    second_slug.mkdir(parents=True)
+    (first_slug / "s1.jsonl").write_text("x" * 10)
+    (second_slug / "s1.jsonl").write_text("y" * 10)  # same size, same session id
 
     # Path.glob's iteration order is a filesystem detail, not something this
     # test should assume - so it is discovered independently rather than
     # guessed. Whichever file glob visits FIRST is the one a correct `>`
     # comparison must keep: the same-size second file must lose the tie.
-    first_visited = str(next(Path(projects_dir).glob("*/*.jsonl")))
+    first_visited = str(next(Path(projects_directory).glob("*/*.jsonl")))
 
-    index = mr.index_transcripts(str(projects_dir))
+    index = mr.index_transcripts(str(projects_directory))
     assert index["s1"] == first_visited
 
 
@@ -141,11 +141,11 @@ def test_index_transcripts_a_size_tie_does_not_replace_the_first_file_seen(tmp_p
 
 def test_scan_transcript_skips_blank_malformed_and_non_assistant_lines(tmp_path):
     path = tmp_path / "t.jsonl"
-    with path.open("w") as f:
-        f.write("\n")  # blank line
-        f.write("not json at all\n")  # malformed JSON
-        f.write(json.dumps({"type": "user", "timestamp": "x", "message": {}}) + "\n")
-        f.write(
+    with path.open("w") as transcript_file:
+        transcript_file.write("\n")  # blank line
+        transcript_file.write("not json at all\n")  # malformed JSON
+        transcript_file.write(json.dumps({"type": "user", "timestamp": "x", "message": {}}) + "\n")
+        transcript_file.write(
             json.dumps(
                 {
                     "type": "assistant",
@@ -1030,15 +1030,15 @@ def test_daily_totals_returns_exactly_the_last_n_days_when_days_truncates():
     # 08-03, [-4:] keeps 08-02.
     records = [
         {
-            "session_id": f"s{n}",  # one snapshot each, so each delta is its own total
+            "session_id": f"s{day}",  # one snapshot each, so each delta is its own total
             "duration_seconds": 0,
-            "timestamp_end": f"2026-08-0{n}T10:00:00",
-            "input_tokens": n,
+            "timestamp_end": f"2026-08-0{day}T10:00:00",
+            "input_tokens": day,
             "output_tokens": 0,
             "cache_read_tokens": 0,
             "cache_creation_tokens": 0,
         }
-        for n in range(1, 6)
+        for day in range(1, 6)
     ]
 
     assert mr.daily_totals(records, days=3) == [
