@@ -37,7 +37,7 @@ from textual_plotext import PlotextPlot  # noqa: E402
 
 import dashboard_tui as tui  # noqa: E402
 
-MIN_DELTA_E = 20.0
+MINIMUM_COLOR_DISTANCE = 20.0
 
 
 class _Bars(PlotextPlot):
@@ -69,7 +69,7 @@ async def _bar_fill(color: Any) -> str:
         svg = app.export_screenshot()
     styles = dict(re.findall(r"\.([\w-]+) \{ fill: (#[0-9a-f]{6}) \}", svg))
     bar_classes = set(re.findall(r'<text class="([\w-]+)"[^>]*>\u2588+</text>', svg))
-    fills: set[str] = {styles[c] for c in bar_classes}
+    fills: set[str] = {styles[class_name] for class_name in bar_classes}
     assert len(fills) == 1, f"{color!r}: bar glyphs rendered in {sorted(fills)}, not one fill"
     return fills.pop()
 
@@ -84,23 +84,43 @@ def rendered_colors(colors: list[Any]) -> list[str]:
 
 
 def _lab(hex_rgb: str) -> tuple[float, float, float]:
-    def linear(c: float) -> float:
-        return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+    def linear(channel_value: float) -> float:
+        return (
+            channel_value / 12.92
+            if channel_value <= 0.04045
+            else ((channel_value + 0.055) / 1.055) ** 2.4
+        )
 
-    r, g, b = (linear(int(hex_rgb[i : i + 2], 16) / 255) for i in (1, 3, 5))
-    x = (0.4124 * r + 0.3576 * g + 0.1805 * b) / 0.95047
-    y = 0.2126 * r + 0.7152 * g + 0.0722 * b
-    z = (0.0193 * r + 0.1192 * g + 0.9505 * b) / 1.08883
+    red, green, blue = (linear(int(hex_rgb[offset : offset + 2], 16) / 255) for offset in (1, 3, 5))
+    # CIE XYZ tristimulus values, D65 white point - traditionally called X, Y, Z
+    # in that order; named by position here since a bare X/Y/Z is too short.
+    first_component = (0.4124 * red + 0.3576 * green + 0.1805 * blue) / 0.95047
+    second_component = 0.2126 * red + 0.7152 * green + 0.0722 * blue
+    third_component = (0.0193 * red + 0.1192 * green + 0.9505 * blue) / 1.08883
 
-    def f(t: float) -> float:
-        return t ** (1 / 3) if t > 0.008856 else 7.787 * t + 16 / 116
+    def f(value: float) -> float:
+        return value ** (1 / 3) if value > 0.008856 else 7.787 * value + 16 / 116
 
-    fx, fy, fz = f(x), f(y), f(z)
-    return 116 * fy - 16, 500 * (fx - fy), 200 * (fy - fz)
+    transformed_first, transformed_second, transformed_third = (
+        f(first_component),
+        f(second_component),
+        f(third_component),
+    )
+    return (
+        116 * transformed_second - 16,
+        500 * (transformed_first - transformed_second),
+        200 * (transformed_second - transformed_third),
+    )
 
 
-def delta_e(a: str, b: str) -> float:
-    return float(sum((p - q) ** 2 for p, q in zip(_lab(a), _lab(b), strict=True)) ** 0.5)
+def delta_e(first_color: str, second_color: str) -> float:
+    return float(
+        sum(
+            (first_value - second_value) ** 2
+            for first_value, second_value in zip(_lab(first_color), _lab(second_color), strict=True)
+        )
+        ** 0.5
+    )
 
 
 def test_delta_e_measures_what_it_claims() -> None:
@@ -115,8 +135,12 @@ def test_every_project_colour_is_distinct_on_screen() -> None:
     palette = [*tui.PANE_COLORS, tui.PANE_OTHER_COLOR]
     shown = rendered_colors(palette)
     too_close = [
-        (palette[i], palette[j], round(delta_e(a, b), 1))
-        for (i, a), (j, b) in itertools.combinations(enumerate(shown), 2)
-        if delta_e(a, b) < MIN_DELTA_E
+        (palette[first_index], palette[second_index], round(delta_e(first_color, second_color), 1))
+        for (first_index, first_color), (second_index, second_color) in itertools.combinations(
+            enumerate(shown), 2
+        )
+        if delta_e(first_color, second_color) < MINIMUM_COLOR_DISTANCE
     ]
-    assert not too_close, f"series that render alike (delta E < {MIN_DELTA_E}): {too_close}"
+    assert not too_close, (
+        f"series that render alike (delta E < {MINIMUM_COLOR_DISTANCE}): {too_close}"
+    )
