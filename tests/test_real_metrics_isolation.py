@@ -56,8 +56,8 @@ def _assert_guard_hit_and_clear_it() -> None:
     defeat, not just the exception type - then clear it, or the autouse
     _fail_loudly_on_swallowed_guard_hits fixture in conftest.py fails this
     otherwise-passing test at teardown."""
-    assert conftest.REAL_CLAUDE_DIR_WRITE_HITS
-    conftest.REAL_CLAUDE_DIR_WRITE_HITS.clear()
+    assert conftest.REAL_CLAUDE_DIRECTORY_WRITE_HITS
+    conftest.REAL_CLAUDE_DIRECTORY_WRITE_HITS.clear()
 
 
 # Captured once, at collection time - before any fixture in this session
