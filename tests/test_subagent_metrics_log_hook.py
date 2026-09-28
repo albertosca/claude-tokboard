@@ -50,9 +50,9 @@ def _isolate_metrics(
 ) -> Path:
     """Redirect METRICS_DIRECTORY/METRICS_FILE to a throwaway location under
     tmp_path. Must be called by every test that can reach append_record."""
-    metrics_dir = tmp_path / "metrics"
-    metrics_file = metrics_dir / "subagents.jsonl"
-    monkeypatch.setattr(script, "METRICS_DIRECTORY", metrics_dir)
+    metrics_directory = tmp_path / "metrics"
+    metrics_file = metrics_directory / "subagents.jsonl"
+    monkeypatch.setattr(script, "METRICS_DIRECTORY", metrics_directory)
     monkeypatch.setattr(script, "METRICS_FILE", metrics_file)
     return metrics_file
 
@@ -652,7 +652,7 @@ def test_parse_transcript_counts_unfinalised_subagent_messages(script, tmp_path)
         {"id": "m2", "stop_reason": "end_turn", "usage": {"output_tokens": 80}},
     ]
     path.write_text(
-        "".join(json.dumps({"type": "assistant", "message": m}) + "\n" for m in entries)
+        "".join(json.dumps({"type": "assistant", "message": entry}) + "\n" for entry in entries)
     )
 
     assert script.parse_transcript(str(path))["incomplete_usage_messages"] == 1

@@ -63,14 +63,14 @@ def seeded(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 def _labels(data: Any) -> set[str]:
     """Every project name the chart's own records would put in a legend."""
     return {
-        mr.project_display_label(mr.color_group_key(r.get("project_path")), lang="pt")
-        for r in data["daily_chart_records"]
+        mr.project_display_label(mr.color_group_key(record.get("project_path")), lang="pt")
+        for record in data["daily_chart_records"]
     }
 
 
 def _load() -> Any:
-    args = tui.build_arg_parser().parse_args(["--label-budget", "0"])
-    return tui.load_data(args, metrics_core_module=mr)
+    arguments = tui.build_arg_parser().parse_args(["--label-budget", "0"])
+    return tui.load_data(arguments, metrics_core_module=mr)
 
 
 def test_without_a_config_both_streams_keep_their_raw_subdirectory_names(seeded: Path) -> None:

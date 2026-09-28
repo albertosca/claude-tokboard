@@ -54,9 +54,9 @@ def test_tree_row_prefixes_a_floor_total_and_keeps_its_column() -> None:
     assert len(flagged) == len(plain)
 
 
-def _panel_lines(subagents: list[dict[str, Any]], lang: str, **kwargs: Any) -> list[str]:
+def _panel_lines(subagents: list[dict[str, Any]], lang: str, **keyword_arguments: Any) -> list[str]:
     panel = tui.SessionDetailPanel(mr, lang=lang)
-    panel.show_session("sess", subagents, **kwargs)
+    panel.show_session("sess", subagents, **keyword_arguments)
     return str(panel._body.render()).split("\n")
 
 

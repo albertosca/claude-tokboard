@@ -55,10 +55,12 @@ def _opened(
     metrics = home / ".claude" / "metrics"
     (metrics / "config.json").write_text(json.dumps({"language": lang}))
     (metrics / "backfill_state.json").write_text(json.dumps(STATE))
-    args = tui.build_arg_parser().parse_args(["--label-budget", "0"])
+    arguments = tui.build_arg_parser().parse_args(["--label-budget", "0"])
 
     async def drive() -> dict[str, Any]:
-        app = tui.MetricsTUIApp(mr, tui.load_data(args, metrics_core_module=mr), arguments=args)
+        app = tui.MetricsTUIApp(
+            mr, tui.load_data(arguments, metrics_core_module=mr), arguments=arguments
+        )
         async with app.run_test(size=(width, 30), tooltips=True) as pilot:
             await pilot.pause()
             note = app.query(".backfill-note").first(Static)

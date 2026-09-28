@@ -62,7 +62,7 @@ def test_unknown_period_is_rejected():
 
 
 def test_every_period_has_a_label_in_both_languages():
-    assert [p.id for p in mr.PERIODS] == [
+    assert [period.id for period in mr.PERIODS] == [
         "ontem",
         "desde-segunda",
         "15-dias",

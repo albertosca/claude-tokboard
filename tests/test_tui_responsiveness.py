@@ -171,7 +171,7 @@ import dashboard_tui as tui  # noqa: E402
 # measured under contention, 6x the uncontended mean - see WHY CPU TIME in
 # the module docstring. CPU time, not wall time: load stretches the second
 # and barely moves the first.
-MAX_PRESS_CPU_SECONDS = 0.4
+MAXIMUM_PRESS_CPU_SECONDS = 0.4
 
 # Audit events that mean the event loop's thread waited on something
 # outside the process during a press. Measured 2026-09-23: the five presses
@@ -214,9 +214,9 @@ async def _drive_period_cycle() -> dict[str, Any]:
                    files during the presses. Zero is the only correct
                    answer.
     """
-    args = tui.build_arg_parser().parse_args(["--label-budget", "0"])
-    data = tui.load_data(args, metrics_core_module=mr)
-    app = tui.MetricsTUIApp(mr, data, arguments=args)
+    arguments = tui.build_arg_parser().parse_args(["--label-budget", "0"])
+    data = tui.load_data(arguments, metrics_core_module=mr)
+    app = tui.MetricsTUIApp(mr, data, arguments=arguments)
 
     presses: list[float] = []
     press_cpu: list[float] = []
@@ -270,12 +270,12 @@ def cycle_timings(tmp_path_factory: pytest.TempPathFactory) -> Any:
     fixture, so this measures the fixture and never the real
     ~/.claude/metrics. See seeded_tui_home for why setenv("HOME") alone
     would not be enough now that this runs in-process."""
-    mp = pytest.MonkeyPatch()
+    monkeypatch = pytest.MonkeyPatch()
     try:
-        seeded_tui_home(mp, tmp_path_factory.mktemp("tui-latency-home"))
+        seeded_tui_home(monkeypatch, tmp_path_factory.mktemp("tui-latency-home"))
         return asyncio.run(_drive_period_cycle())
     finally:
-        mp.undo()
+        monkeypatch.undo()
 
 
 def test_the_period_actually_cycles(cycle_timings):
@@ -308,11 +308,11 @@ def test_cycling_the_period_never_re_reads_the_data(cycle_timings):
 
 def test_every_press_stays_responsive(cycle_timings):
     heaviest = max(cycle_timings["press_cpu"])
-    assert heaviest < MAX_PRESS_CPU_SECONDS, (
+    assert heaviest < MAXIMUM_PRESS_CPU_SECONDS, (
         f"the heaviest 'p' press burned {heaviest:.2f}s of CPU on the event loop "
-        f"(ceiling {MAX_PRESS_CPU_SECONDS}s). CPU per press: "
-        f"{[round(p, 3) for p in cycle_timings['press_cpu']]}; wall per press, "
-        f"for context only: {[round(p, 3) for p in cycle_timings['presses']]}"
+        f"(ceiling {MAXIMUM_PRESS_CPU_SECONDS}s). CPU per press: "
+        f"{[round(cpu, 3) for cpu in cycle_timings['press_cpu']]}; wall per press, "
+        f"for context only: {[round(seconds, 3) for seconds in cycle_timings['presses']]}"
     )
 
 
