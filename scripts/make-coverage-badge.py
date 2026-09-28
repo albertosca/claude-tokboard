@@ -111,8 +111,8 @@ def render_svg(percent: float) -> str:
     value_width = _text_width(value_text) + pad
     total_width = label_width + value_width
 
-    label_x = label_width / 2
-    value_x = label_width + value_width / 2
+    label_horizontal_position = label_width / 2
+    value_horizontal_position = label_width + value_width / 2
 
     aria_label = f"{LABEL_TEXT}: {value_text}"
     font = "Verdana,Geneva,DejaVu Sans,sans-serif"
@@ -131,8 +131,8 @@ def render_svg(percent: float) -> str:
     <rect width="{total_width}" height="20" fill="url(#s)"/>
   </g>
   <g fill="#fff" text-anchor="middle" font-family="{font}" font-size="11">
-    <text x="{label_x}" y="14">{LABEL_TEXT}</text>
-    <text x="{value_x}" y="14">{value_text}</text>
+    <text x="{label_horizontal_position}" y="14">{LABEL_TEXT}</text>
+    <text x="{value_horizontal_position}" y="14">{value_text}</text>
   </g>
 </svg>
 """

@@ -86,14 +86,14 @@ def check_hook(
             "cwd": str(home_path),
             transcript_key: str(transcript_path),
         }
-        env = dict(os.environ)
-        env["HOME"] = home
+        environment = dict(os.environ)
+        environment["HOME"] = home
         result = subprocess.run(
             [python_executable, str(hook_path)],
             input=json.dumps(hook_input),
             capture_output=True,
             text=True,
-            env=env,
+            env=environment,
         )
         if result.returncode != 0:
             return (

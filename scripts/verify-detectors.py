@@ -76,24 +76,24 @@ def sha256(path: Path) -> str:
 
 
 def clear_pycache() -> None:
-    for cache_dir in REPO_ROOT.rglob("__pycache__"):
+    for cache_directory in REPO_ROOT.rglob("__pycache__"):
         # Skip decisions are relative to REPO_ROOT, not its absolute parts:
         # this project's own convention puts worktrees under
         # .claude/worktrees/<name>/, so REPO_ROOT itself may contain
         # ".claude" while still being the root we are meant to clean. Only
         # a NESTED .claude/ subtree below REPO_ROOT is unrelated scratch.
-        if ".claude" in cache_dir.relative_to(REPO_ROOT).parts:
+        if ".claude" in cache_directory.relative_to(REPO_ROOT).parts:
             continue  # leave any nested worktree scratch alone
-        shutil.rmtree(cache_dir, ignore_errors=True)
+        shutil.rmtree(cache_directory, ignore_errors=True)
 
 
 def run_suite() -> subprocess.CompletedProcess[str]:
-    env = dict(os.environ, PYTHONPATH="lib:tests")
+    environment = dict(os.environ, PYTHONPATH="lib:tests")
     # Defensive, not expected to trigger here: a rendering test that
     # SKIPS instead of running would also leave the suite green on an
     # injected defect, which is the same false-green shape as a patch
     # that matched nothing. Force the real check to run.
-    env.pop("METRICS_SKIP_JS_TESTS", None)
+    environment.pop("METRICS_SKIP_JS_TESTS", None)
     # -vv, not -v: pytest truncates a long assertion message under -v, and
     # the harness's own FAIL lines - the evidence this script now requires
     # to call a defect DETECTED - travel inside exactly such a message.
@@ -101,7 +101,7 @@ def run_suite() -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [sys.executable, "-m", "pytest", "tests/", "-vv"],
         cwd=REPO_ROOT,
-        env=env,
+        env=environment,
         capture_output=True,
         text=True,
         timeout=300,
@@ -136,7 +136,11 @@ class Defect:
         self.expected_labels = expected_labels
 
     def missing_evidence(self, caught: list[str], output: str) -> list[str]:
-        missing = [f"expected failing test {t}" for t in self.expected_tests if t not in caught]
+        missing = [
+            f"expected failing test {test_name}"
+            for test_name in self.expected_tests
+            if test_name not in caught
+        ]
         # The harness's stdout reaches here only through the assertion
         # message of the test that failed, and pytest prefixes those lines
         # ("E   FAIL ..."), so this looks for the label anywhere on a line
@@ -213,9 +217,9 @@ def restore(target: Path, backup: Path, original_hash: str) -> bool:
     original."""
     shutil.copy2(backup, target)
     clear_pycache()
-    ok = sha256(target) == original_hash
+    matches_original = sha256(target) == original_hash
     backup.unlink()
-    return ok
+    return matches_original
 
 
 def main() -> int:
@@ -243,10 +247,10 @@ def main() -> int:
 
         try:
             patched_text = defect.patch(defect.target.read_text())
-        except RuntimeError as exc:
-            print(f"INJECTION FAILED: {exc}", file=sys.stderr)
+        except RuntimeError as injection_error:
+            print(f"INJECTION FAILED: {injection_error}", file=sys.stderr)
             backup_path.unlink()
-            results.append((defect, "INJECTION FAILED", [], str(exc)))
+            results.append((defect, "INJECTION FAILED", [], str(injection_error)))
             overall_ok = False
             continue
 
@@ -315,12 +319,12 @@ def main() -> int:
 
     print("\n" + "=" * 70)
     print("SUMMARY")
-    for defect, status, caught, err in results:
+    for defect, status, caught, error in results:
         print(f"  {defect.name}: {status}")
-        for t in caught:
-            print(f"    - {t}")
-        if err:
-            print(f"    error: {err}")
+        for caught_test in caught:
+            print(f"    - {caught_test}")
+        if error:
+            print(f"    error: {error}")
 
     if not overall_ok:
         print(
