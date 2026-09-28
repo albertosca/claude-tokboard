@@ -83,13 +83,13 @@ _VOID_TAGS = {
 
 
 class _Node:
-    def __init__(self, tag: str, attrs: dict[str, str | None]) -> None:
+    def __init__(self, tag: str, attributes: dict[str, str | None]) -> None:
         self.tag = tag
-        self.attrs = attrs
+        self.attributes = attributes
         self.children: list[Any] = []
 
     def text(self) -> str:
-        return "".join(c if isinstance(c, str) else c.text() for c in self.children)
+        return "".join(child if isinstance(child, str) else child.text() for child in self.children)
 
     def find_all(self, tag: str | None = None, css_class: str | None = None) -> list["_Node"]:
         results: list[_Node] = []
@@ -97,7 +97,7 @@ class _Node:
             if isinstance(child, str):
                 continue
             matches_tag = tag is None or child.tag == tag
-            classes = (child.attrs.get("class") or "").split()
+            classes = (child.attributes.get("class") or "").split()
             matches_class = css_class is None or css_class in classes
             if matches_tag and matches_class:
                 results.append(child)
@@ -105,7 +105,7 @@ class _Node:
         return results
 
     def has_attr(self, name: str) -> bool:
-        return name in self.attrs
+        return name in self.attributes
 
 
 class _TreeBuilder(HTMLParser):
@@ -114,8 +114,8 @@ class _TreeBuilder(HTMLParser):
         self.root = _Node("[root]", {})
         self._stack = [self.root]
 
-    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        node = _Node(tag, dict(attrs))
+    def handle_starttag(self, tag: str, attributes: list[tuple[str, str | None]]) -> None:
+        node = _Node(tag, dict(attributes))
         self._stack[-1].children.append(node)
         if tag not in _VOID_TAGS:
             self._stack.append(node)
@@ -228,13 +228,13 @@ def test_render_html_default_highlight_opens_with_every_series_and_project_color
     # render_html itself passes to it, not inferred from reading the
     # comment at 940-948.
     group_colors = dashboard_html.build_group_colors(chart_records, [])
-    kwargs = _empty_render_html_kwargs()
-    kwargs["chart_records"] = chart_records
-    out = dashboard_html.render_html(**kwargs, lang="pt")
+    keyword_arguments = _empty_render_html_kwargs()
+    keyword_arguments["chart_records"] = chart_records
+    out = dashboard_html.render_html(**keyword_arguments, lang="pt")
 
     body_tags = parse_html(out).find_all("body")
     assert len(body_tags) == 1
-    highlight = body_tags[0].attrs.get("data-highlight")
+    highlight = body_tags[0].attributes.get("data-highlight")
     assert highlight is not None
     tokens = set(highlight.split(" "))
     expected = {"series-1", "series-2", "series-3", "series-4"} | set(group_colors.values())
@@ -273,14 +273,14 @@ def test_render_html_gives_a_model_one_colour_in_periods_that_rank_it_differentl
 
     old = {"claude-opus-4-8": 2000, "claude-sonnet-4-5": 10, "model-0": 5, "model-1": 5}
     new = {"claude-opus-4-8": 10, "claude-sonnet-4-5": 1000, "model-1": 5}
-    kwargs = _empty_render_html_kwargs()
-    kwargs["daily_chart_records"] = [
+    keyword_arguments = _empty_render_html_kwargs()
+    keyword_arguments["daily_chart_records"] = [
         day("2026-08-01", old),
         day("2026-08-02", old),
         day("2026-08-17", new),
         day("2026-08-18", new),
     ]
-    legends = _model_legends_by_period(dashboard_html.render_html(**kwargs, lang="pt"))
+    legends = _model_legends_by_period(dashboard_html.render_html(**keyword_arguments, lang="pt"))
     everything, recent = legends["tudo"], legends["15-dias"]
     # The premise: the two periods list (so rank) the models differently.
     assert list(everything)[:2] == ["opus-4-8", "sonnet-4-5"]
@@ -314,14 +314,20 @@ def test_render_html_marks_exactly_one_default_period_active_per_block_family(
         return f"TREND::{period_id}"
 
     def fake_panorama(
-        records: Any, pfs: Any, pls: Any, op: Any, period_id: str, *, lang: str
+        records: Any,
+        project_first_seen: Any,
+        project_last_seen: Any,
+        open_projects: Any,
+        period_id: str,
+        *,
+        lang: str,
     ) -> str:
         return f"PANORAMA::{period_id}"
 
     def fake_legend(totals: Any, *, lang: str) -> str:
-        idx = len(call_order)
-        call_order.append(idx)
-        return f"LEGEND::{mr.PERIODS[idx].id}"
+        call_index = len(call_order)
+        call_order.append(call_index)
+        return f"LEGEND::{mr.PERIODS[call_index].id}"
 
     monkeypatch.setattr(dashboard_html, "render_trend_chart", fake_trend)
     monkeypatch.setattr(dashboard_html, "render_project_totals_chart", fake_panorama)
@@ -336,11 +342,11 @@ def test_render_html_marks_exactly_one_default_period_active_per_block_family(
     by_family: dict[str, dict[str, _Node]] = {"TREND": {}, "PANORAMA": {}, "LEGEND": {}}
     for block in blocks:
         family, _, period_id = block.text().partition("::")
-        assert period_id == block.attrs.get("data-period")
+        assert period_id == block.attributes.get("data-period")
         by_family[family][period_id] = block
 
     for family, period_map in by_family.items():
-        assert set(period_map) == {p.id for p in mr.PERIODS}
+        assert set(period_map) == {period.id for period in mr.PERIODS}
         active_ids = [pid for pid, block in period_map.items() if not block.has_attr("hidden")]
         assert active_ids == [mr.DEFAULT_PERIOD_ID], (
             f"{family}: expected only the default active, got {active_ids}"
@@ -355,12 +361,12 @@ def test_period_block_locator_survives_attribute_reordering_and_an_added_attribu
     # a docstring (Task 3's exact defect).
     reordered = '<div data-period="tudo" hidden class="period-block">x</div>'
     node = parse_html(reordered).find_all("div", "period-block")[0]
-    assert node.attrs.get("data-period") == "tudo"
+    assert node.attributes.get("data-period") == "tudo"
     assert node.has_attr("hidden")
 
     with_extra_attribute = '<div class="period-block" id="whatever" data-period="tudo">y</div>'
     node2 = parse_html(with_extra_attribute).find_all("div", "period-block")[0]
-    assert node2.attrs.get("data-period") == "tudo"
+    assert node2.attributes.get("data-period") == "tudo"
     assert not node2.has_attr("hidden")
 
     multi_class = '<div class="group-count period-block" data-period="tudo">z</div>'
@@ -375,23 +381,36 @@ def test_render_html_omits_a_group_whose_every_session_is_zero_token() -> None:
     # a header either.
     zero_record = _session_record("zero1", "/work/proj-a", tokens=0)
     live_record = _session_record("live1", "/work/proj-b", tokens=100)
-    kwargs = _empty_render_html_kwargs()
-    kwargs["records"] = [zero_record, live_record]
-    out = dashboard_html.render_html(**kwargs, lang="pt")
+    keyword_arguments = _empty_render_html_kwargs()
+    keyword_arguments["records"] = [zero_record, live_record]
+    out = dashboard_html.render_html(**keyword_arguments, lang="pt")
     assert 'id="row-zero1"' not in out
     assert 'id="row-live1"' in out
 
 
 def test_render_html_numbers_a_task_label_only_when_shared_by_two_or_more_sessions() -> None:
-    r1 = _session_record("dup1", "/work/proj-a", tokens=10, task_label="same label")
-    r2 = _session_record("dup2", "/work/proj-a", tokens=10, task_label="same label")
-    r3 = _session_record("uniq1", "/work/proj-a", tokens=10, task_label="different label")
-    r4 = _session_record("nolabel1", "/work/proj-a", tokens=10)  # no task_label key at all
-    kwargs = _empty_render_html_kwargs()
-    kwargs["records"] = [r1, r2, r3, r4]
-    out = dashboard_html.render_html(**kwargs, lang="pt")
+    first_duplicate_record = _session_record(
+        "dup1", "/work/proj-a", tokens=10, task_label="same label"
+    )
+    second_duplicate_record = _session_record(
+        "dup2", "/work/proj-a", tokens=10, task_label="same label"
+    )
+    unique_record = _session_record(
+        "uniq1", "/work/proj-a", tokens=10, task_label="different label"
+    )
+    unlabeled_record = _session_record(
+        "nolabel1", "/work/proj-a", tokens=10
+    )  # no task_label key at all
+    keyword_arguments = _empty_render_html_kwargs()
+    keyword_arguments["records"] = [
+        first_duplicate_record,
+        second_duplicate_record,
+        unique_record,
+        unlabeled_record,
+    ]
+    out = dashboard_html.render_html(**keyword_arguments, lang="pt")
 
-    label_spans = [n.text() for n in parse_html(out).find_all("span", "label-col")]
+    label_spans = [node.text() for node in parse_html(out).find_all("span", "label-col")]
     assert label_spans.count("same label (1)") == 1
     assert label_spans.count("same label (2)") == 1
     assert "different label" in label_spans
@@ -412,23 +431,23 @@ def test_render_html_computes_each_records_own_period_membership_and_passes_it_t
     real_row = dashboard_html.render_session_row
     real_panel = dashboard_html.render_detail_panel
 
-    def spy_row(*args: Any, **kwargs: Any) -> str:
-        captured["row_period_ids"] = kwargs.get("period_ids")
-        return real_row(*args, **kwargs)
+    def spy_row(*arguments: Any, **keyword_arguments: Any) -> str:
+        captured["row_period_ids"] = keyword_arguments.get("period_ids")
+        return real_row(*arguments, **keyword_arguments)
 
-    def spy_panel(*args: Any, **kwargs: Any) -> str:
-        captured["panel_period_ids"] = kwargs.get("period_ids")
-        return real_panel(*args, **kwargs)
+    def spy_panel(*arguments: Any, **keyword_arguments: Any) -> str:
+        captured["panel_period_ids"] = keyword_arguments.get("period_ids")
+        return real_panel(*arguments, **keyword_arguments)
 
     monkeypatch.setattr(dashboard_html, "render_session_row", spy_row)
     monkeypatch.setattr(dashboard_html, "render_detail_panel", spy_panel)
     record = _session_record(
         "mid-age", "/work/proj-a", tokens=10, timestamp_start="2026-08-10T10:00:00Z"
     )
-    kwargs = _empty_render_html_kwargs()
-    kwargs["records"] = [record]
-    kwargs["period_windows"] = _period_windows(_now())
-    dashboard_html.render_html(**kwargs, lang="pt")
+    keyword_arguments = _empty_render_html_kwargs()
+    keyword_arguments["records"] = [record]
+    keyword_arguments["period_windows"] = _period_windows(_now())
+    dashboard_html.render_html(**keyword_arguments, lang="pt")
 
     assert captured["row_period_ids"] == ("15-dias", "mes", "tudo")
     assert captured["panel_period_ids"] == ("15-dias", "mes", "tudo")
@@ -443,15 +462,15 @@ def test_render_html_counts_only_nonzero_token_subagents_and_defaults_to_no_suba
             {"agent_id": "a2", "input_tokens": 5},  # counted
         ]
     }
-    kwargs = _empty_render_html_kwargs()
-    kwargs["records"] = [with_subagents, without_subagents]
-    kwargs["subagents_by_session"] = subagents_by_session
-    out = dashboard_html.render_html(**kwargs, lang="pt")
+    keyword_arguments = _empty_render_html_kwargs()
+    keyword_arguments["records"] = [with_subagents, without_subagents]
+    keyword_arguments["subagents_by_session"] = subagents_by_session
+    out = dashboard_html.render_html(**keyword_arguments, lang="pt")
 
     rows = {
-        n.attrs.get("id"): n
-        for n in parse_html(out).find_all("div", "session-row")
-        if n.attrs.get("id")
+        node.attributes.get("id"): node
+        for node in parse_html(out).find_all("div", "session-row")
+        if node.attributes.get("id")
     }
     badge_with = rows["row-has-subs"].find_all("span", "subagent-col")[0].text()
     badge_without = rows["row-no-subs"].find_all("span", "subagent-col")[0].text()
@@ -467,7 +486,7 @@ def test_render_html_counts_only_nonzero_token_subagents_and_defaults_to_no_suba
 
 def _write_jsonl(path: Path, records: list[dict[str, Any]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    body = "\n".join(json.dumps(r) for r in records)
+    body = "\n".join(json.dumps(record) for record in records)
     path.write_text(body + "\n" if records else "")
 
 
@@ -530,7 +549,7 @@ def forbid_real_label_subprocess(monkeypatch: pytest.MonkeyPatch) -> None:
     `claude -p` call into a hard test failure instead of an expensive,
     network-touching false green."""
 
-    def fail(*args: Any, **kwargs: Any) -> Any:
+    def fail(*arguments: Any, **keyword_arguments: Any) -> Any:
         raise AssertionError("real subprocess.run must never be called in tests")
 
     monkeypatch.setattr(subprocess, "run", fail)
@@ -726,7 +745,7 @@ def test_main_all_flag_is_a_backward_compatible_no_op(
     isolate_main_from_the_real_filesystem: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    # args.all is parsed but never read anywhere in main() (confirmed by
+    # arguments.all is parsed but never read anywhere in main() (confirmed by
     # grepping the module) - its own help text says it "names what already
     # happens by default". Pin that as the real property: identical output
     # with or without the flag, not "narrows what's rendered" (it doesn't).
@@ -749,9 +768,9 @@ def test_main_tag_filter_narrows_records_rendered(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     home = isolate_main_from_the_real_filesystem
-    r1 = _session_record("keepme", "/work/proj-a", tokens=10, tag="alpha")
-    r2 = _session_record("dropme", "/work/proj-a", tokens=10, tag="beta")
-    _write_jsonl(home / ".claude" / "metrics" / "sessions.jsonl", [r1, r2])
+    keep_record = _session_record("keepme", "/work/proj-a", tokens=10, tag="alpha")
+    drop_record = _session_record("dropme", "/work/proj-a", tokens=10, tag="beta")
+    _write_jsonl(home / ".claude" / "metrics" / "sessions.jsonl", [keep_record, drop_record])
     _run_main(monkeypatch, ["--tag", "alpha"])
     out = capsys.readouterr().out
     assert "keepme" in out
@@ -764,9 +783,9 @@ def test_main_project_filter_narrows_records_rendered(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     home = isolate_main_from_the_real_filesystem
-    r1 = _session_record("keepme", "/work/proj-a", tokens=10)
-    r2 = _session_record("dropme", "/work/proj-b", tokens=10)
-    _write_jsonl(home / ".claude" / "metrics" / "sessions.jsonl", [r1, r2])
+    keep_record = _session_record("keepme", "/work/proj-a", tokens=10)
+    drop_record = _session_record("dropme", "/work/proj-b", tokens=10)
+    _write_jsonl(home / ".claude" / "metrics" / "sessions.jsonl", [keep_record, drop_record])
     _run_main(monkeypatch, ["--project", "/work/proj-a"])
     out = capsys.readouterr().out
     assert "keepme" in out
@@ -801,7 +820,7 @@ def test_main_limit_slices_the_tail_not_the_head_of_the_record_list(
     isolate_main_from_the_real_filesystem: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    # Pins the one `[:N]` slice bound in this task's scope: `records[-args.
+    # Pins the one `[:N]` slice bound in this task's scope: `records[-arguments.
     # limit:]` at line 1042, only reachable in plain (non --html) mode.
     # session_ids are written in file order sA..sE, which survives dedupe/
     # normalize/filter unchanged (verified: dedupe_by_key preserves
@@ -850,17 +869,18 @@ def test_main_saves_label_caches_at_exactly_the_save_every_boundary(
 
     def save_calls_for_batch(batch_size: int) -> tuple[int, int]:
         records = [
-            _session_record(f"many-s{i}", "/work/proj-a", tokens=1) for i in range(batch_size)
+            _session_record(f"many-s{index}", "/work/proj-a", tokens=1)
+            for index in range(batch_size)
         ]
         _write_jsonl(home / ".claude" / "metrics" / "sessions.jsonl", records)
         subagents = [
             {
-                "session_id": f"many-s{i}",
-                "agent_id": f"many-a{i}",
+                "session_id": f"many-s{index}",
+                "agent_id": f"many-a{index}",
                 "input_tokens": 1,
                 "duration_seconds": 1,
             }
-            for i in range(batch_size)
+            for index in range(batch_size)
         ]
         _write_jsonl(home / ".claude" / "metrics" / "subagents.jsonl", subagents)
 
@@ -897,8 +917,8 @@ def test_main_html_mode_is_unbounded_by_limit(
     isolate_main_from_the_real_filesystem: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    # Found by the unnamed-mutation sweep: `if not args.html: records =
-    # records[-args.limit:]` at line 1041-1042 was completely unguarded by
+    # Found by the unnamed-mutation sweep: `if not arguments.html: records =
+    # records[-arguments.limit:]` at line 1041-1042 was completely unguarded by
     # any test in this file before this one - defeating the `not` (always
     # slicing, even under --html) survived the whole suite. The module's
     # own comment at 1038-1040 documents this as deliberate ("the --html
@@ -906,7 +926,7 @@ def test_main_html_mode_is_unbounded_by_limit(
     # 2401)") - pin it directly instead of only relying on the plain-mode
     # slice-bound test above to imply it by omission.
     home = isolate_main_from_the_real_filesystem
-    records = [_session_record(f"htmlrow{i}", "/work/proj-a", tokens=10) for i in range(5)]
+    records = [_session_record(f"htmlrow{index}", "/work/proj-a", tokens=10) for index in range(5)]
     _write_jsonl(home / ".claude" / "metrics" / "sessions.jsonl", records)
     _run_main(monkeypatch, ["--html", "--label-budget", "0", "-n", "2"])
     out_path = Path(capsys.readouterr().out.strip())
@@ -948,23 +968,24 @@ def test_main_saves_label_caches_periodically_during_a_large_batch(
     isolate_main_from_the_real_filesystem: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    # SAVE_EVERY == 10 inside main(): `if i % SAVE_EVERY == 0` is only
+    # SAVE_EVERY == 10 inside main(): `if completed_count % SAVE_EVERY == 0`
+    # is only
     # reachable with >=10 distinct keys in a single run - every other test
     # in this file uses a handful of records and never trips it, leaving
     # that branch's True side unexercised in both the agent-label and
     # session-label loops. 12 distinct sessions/agents guarantees at least
     # one periodic save in each, with headroom past the boundary.
     home = isolate_main_from_the_real_filesystem
-    records = [_session_record(f"many-s{i}", "/work/proj-a", tokens=1) for i in range(12)]
+    records = [_session_record(f"many-s{index}", "/work/proj-a", tokens=1) for index in range(12)]
     _write_jsonl(home / ".claude" / "metrics" / "sessions.jsonl", records)
     subagents = [
         {
-            "session_id": f"many-s{i}",
-            "agent_id": f"many-a{i}",
+            "session_id": f"many-s{index}",
+            "agent_id": f"many-a{index}",
             "input_tokens": 1,
             "duration_seconds": 1,
         }
-        for i in range(12)
+        for index in range(12)
     ]
     _write_jsonl(home / ".claude" / "metrics" / "subagents.jsonl", subagents)
 
