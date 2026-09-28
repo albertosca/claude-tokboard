@@ -404,7 +404,7 @@ def fixture(tmp_path: Path) -> dict[str, Path]:
             "s2", "2026-08-01T10:00:02Z", 10, transcript_path=str(projects / "slug" / "s2.jsonl")
         ),
     ]
-    metrics.write_text("".join(json.dumps(r) + "\n" for r in rows))
+    metrics.write_text("".join(json.dumps(row) + "\n" for row in rows))
     return {
         "projects": projects,
         "metrics": metrics,
@@ -514,9 +514,9 @@ def test_a_field_pass_refuses_a_plan_that_would_touch_anything_else(
 
     assert script.main() == 1
 
-    err = capsys.readouterr().err
-    assert "line 1: output_tokens changed 2 -> 1" in err
-    assert "line 1: key set changed" in err or "line 1: tag" in err
+    error_output = capsys.readouterr().err
+    assert "line 1: output_tokens changed 2 -> 1" in error_output
+    assert "line 1: key set changed" in error_output or "line 1: tag" in error_output
     assert paths["metrics"].read_bytes() == before
 
 
@@ -526,8 +526,8 @@ def test_a_tool_call_pass_refuses_a_row_that_moved_against_its_formula(
     paths = fixture(tmp_path)
     real = script.plan_tool_call_corrections
 
-    def backwards(*args, **kwargs):
-        plan = real(*args, **kwargs)
+    def backwards(*arguments, **keyword_arguments):
+        plan = real(*arguments, **keyword_arguments)
         return plan._replace(values=dict.fromkeys(plan.values, 0))
 
     monkeypatch.setattr(script, "plan_tool_call_corrections", backwards)
@@ -543,8 +543,8 @@ def test_a_tool_call_pass_refuses_a_raw_row_that_rose(tmp_path, script, monkeypa
     paths = fixture(tmp_path)
     real = script.plan_tool_call_corrections
 
-    def rising_raw(*args, **kwargs):
-        plan = real(*args, **kwargs)
+    def rising_raw(*arguments, **keyword_arguments):
+        plan = real(*arguments, **keyword_arguments)
         return plan._replace(
             values=dict.fromkeys(plan.values, 99),
             formulas=dict.fromkeys(plan.values, mr.RAW),

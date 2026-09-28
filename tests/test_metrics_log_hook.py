@@ -43,9 +43,9 @@ def _isolate_metrics(
 ) -> Path:
     """Redirect METRICS_DIRECTORY/METRICS_FILE to a throwaway location under
     tmp_path. Must be called by every test that can reach append_record."""
-    metrics_dir = tmp_path / "metrics"
-    metrics_file = metrics_dir / "sessions.jsonl"
-    monkeypatch.setattr(script, "METRICS_DIRECTORY", metrics_dir)
+    metrics_directory = tmp_path / "metrics"
+    metrics_file = metrics_directory / "sessions.jsonl"
+    monkeypatch.setattr(script, "METRICS_DIRECTORY", metrics_directory)
     monkeypatch.setattr(script, "METRICS_FILE", metrics_file)
     return metrics_file
 
@@ -68,8 +68,8 @@ def test_get_tmux_window_returns_none_without_tmux_env(script, monkeypatch):
 def test_get_tmux_window_returns_stripped_name_on_success(script, monkeypatch):
     monkeypatch.setenv("TMUX", "/tmp/tmux-1000/default,1234,0")
 
-    def fake_run(*args, **kwargs):
-        return subprocess.CompletedProcess(args, 0, stdout="  my-window  \n", stderr="")
+    def fake_run(*arguments, **keyword_arguments):
+        return subprocess.CompletedProcess(arguments, 0, stdout="  my-window  \n", stderr="")
 
     monkeypatch.setattr(script.subprocess, "run", fake_run)
 
@@ -79,8 +79,8 @@ def test_get_tmux_window_returns_stripped_name_on_success(script, monkeypatch):
 def test_get_tmux_window_returns_none_for_whitespace_only_output(script, monkeypatch):
     monkeypatch.setenv("TMUX", "/tmp/tmux-1000/default,1234,0")
 
-    def fake_run(*args, **kwargs):
-        return subprocess.CompletedProcess(args, 0, stdout="   \n", stderr="")
+    def fake_run(*arguments, **keyword_arguments):
+        return subprocess.CompletedProcess(arguments, 0, stdout="   \n", stderr="")
 
     monkeypatch.setattr(script.subprocess, "run", fake_run)
 
@@ -90,7 +90,7 @@ def test_get_tmux_window_returns_none_for_whitespace_only_output(script, monkeyp
 def test_get_tmux_window_returns_none_when_subprocess_raises(script, monkeypatch):
     monkeypatch.setenv("TMUX", "/tmp/tmux-1000/default,1234,0")
 
-    def fake_run(*args, **kwargs):
+    def fake_run(*arguments, **keyword_arguments):
         raise OSError("tmux not found")
 
     monkeypatch.setattr(script.subprocess, "run", fake_run)
@@ -109,7 +109,7 @@ def test_get_internal_name_returns_none_for_falsy_session_id(script, tmp_path):
 
 
 def test_get_internal_name_defaults_sessions_dir_to_the_real_claude_sessions_path(script):
-    # sessions_dir is optional; when omitted it must default to
+    # sessions_directory is optional; when omitted it must default to
     # ~/.claude/sessions. This only *reads* that directory (glob + json.load
     # on whatever real session files exist, if any) - it never writes
     # anything, so it is safe to exercise against the real path. A session
@@ -119,74 +119,74 @@ def test_get_internal_name_defaults_sessions_dir_to_the_real_claude_sessions_pat
 
 
 def test_get_internal_name_finds_match_via_ppid_file_first(script, tmp_path, monkeypatch):
-    sessions_dir = tmp_path / "sessions"
-    sessions_dir.mkdir()
+    sessions_directory = tmp_path / "sessions"
+    sessions_directory.mkdir()
     monkeypatch.setattr(script.os, "getppid", lambda: 4242)
-    (sessions_dir / "4242.json").write_text(
+    (sessions_directory / "4242.json").write_text(
         json.dumps({"sessionId": "target", "nameSource": None, "name": "from-ppid"})
     )
 
-    assert script.get_internal_name("target", sessions_dir) == "from-ppid"
+    assert script.get_internal_name("target", sessions_directory) == "from-ppid"
 
 
 def test_get_internal_name_falls_through_to_glob_when_ppid_file_missing(
     script, tmp_path, monkeypatch
 ):
-    sessions_dir = tmp_path / "sessions"
-    sessions_dir.mkdir()
+    sessions_directory = tmp_path / "sessions"
+    sessions_directory.mkdir()
     monkeypatch.setattr(script.os, "getppid", lambda: 999999)  # no such file
-    (sessions_dir / "other.json").write_text(
+    (sessions_directory / "other.json").write_text(
         json.dumps({"sessionId": "target", "nameSource": None, "name": "from-glob"})
     )
 
-    assert script.get_internal_name("target", sessions_dir) == "from-glob"
+    assert script.get_internal_name("target", sessions_directory) == "from-glob"
 
 
 def test_get_internal_name_skips_unparseable_json_without_crashing(script, tmp_path, monkeypatch):
-    sessions_dir = tmp_path / "sessions"
-    sessions_dir.mkdir()
+    sessions_directory = tmp_path / "sessions"
+    sessions_directory.mkdir()
     monkeypatch.setattr(script.os, "getppid", lambda: 999999)
-    (sessions_dir / "broken.json").write_text("not valid json{{{")
+    (sessions_directory / "broken.json").write_text("not valid json{{{")
 
-    assert script.get_internal_name("target", sessions_dir) is None
+    assert script.get_internal_name("target", sessions_directory) is None
 
 
 def test_get_internal_name_skips_when_session_id_does_not_match(script, tmp_path, monkeypatch):
-    sessions_dir = tmp_path / "sessions"
-    sessions_dir.mkdir()
+    sessions_directory = tmp_path / "sessions"
+    sessions_directory.mkdir()
     monkeypatch.setattr(script.os, "getppid", lambda: 999999)
-    (sessions_dir / "other.json").write_text(
+    (sessions_directory / "other.json").write_text(
         json.dumps({"sessionId": "someone-else", "nameSource": None, "name": "nope"})
     )
 
-    assert script.get_internal_name("target", sessions_dir) is None
+    assert script.get_internal_name("target", sessions_directory) is None
 
 
 def test_get_internal_name_skips_when_name_source_is_not_none(script, tmp_path, monkeypatch):
     # Directly targets the named mutation of flipping `nameSource is None`
     # to `nameSource is not None`: under the mutation this record would
     # match and the test would fail.
-    sessions_dir = tmp_path / "sessions"
-    sessions_dir.mkdir()
+    sessions_directory = tmp_path / "sessions"
+    sessions_directory.mkdir()
     monkeypatch.setattr(script.os, "getppid", lambda: 999999)
-    (sessions_dir / "other.json").write_text(
+    (sessions_directory / "other.json").write_text(
         json.dumps({"sessionId": "target", "nameSource": "cli-flag", "name": "user-named"})
     )
 
-    assert script.get_internal_name("target", sessions_dir) is None
+    assert script.get_internal_name("target", sessions_directory) is None
 
 
 def test_get_internal_name_returns_none_when_matched_name_is_not_a_string(
     script, tmp_path, monkeypatch
 ):
-    sessions_dir = tmp_path / "sessions"
-    sessions_dir.mkdir()
+    sessions_directory = tmp_path / "sessions"
+    sessions_directory.mkdir()
     monkeypatch.setattr(script.os, "getppid", lambda: 999999)
-    (sessions_dir / "other.json").write_text(
+    (sessions_directory / "other.json").write_text(
         json.dumps({"sessionId": "target", "nameSource": None, "name": 42})
     )
 
-    assert script.get_internal_name("target", sessions_dir) is None
+    assert script.get_internal_name("target", sessions_directory) is None
 
 
 def test_get_internal_name_does_not_reparse_the_ppid_file_seen_again_via_glob(
@@ -195,25 +195,25 @@ def test_get_internal_name_does_not_reparse_the_ppid_file_seen_again_via_glob(
     # The ppid candidate also shows up in the `*.json` glob (same file).
     # This pins the `seen` dedup: json.load must be called exactly once for
     # that path, not twice.
-    sessions_dir = tmp_path / "sessions"
-    sessions_dir.mkdir()
+    sessions_directory = tmp_path / "sessions"
+    sessions_directory.mkdir()
     monkeypatch.setattr(script.os, "getppid", lambda: 7777)
-    (sessions_dir / "7777.json").write_text(
+    (sessions_directory / "7777.json").write_text(
         json.dumps({"sessionId": "someone-else", "nameSource": None, "name": "irrelevant"})
     )
 
     real_load = script.json.load
     calls = []
 
-    def counting_load(f):
+    def counting_load(file_handle):
         calls.append(1)
         if len(calls) > 1:
             raise AssertionError("ppid candidate file was parsed more than once")
-        return real_load(f)
+        return real_load(file_handle)
 
     monkeypatch.setattr(script.json, "load", counting_load)
 
-    result = script.get_internal_name("target", sessions_dir)
+    result = script.get_internal_name("target", sessions_directory)
 
     assert result is None
     assert len(calls) == 1
@@ -752,7 +752,9 @@ def test_parse_transcript_tokens_by_model_totals_reconcile_with_the_record_total
     parsed = script.parse_transcript(str(path))
 
     for field in ("input_tokens", "output_tokens", "cache_read_tokens", "cache_creation_tokens"):
-        assert sum(b[field] for b in parsed["tokens_by_model"].values()) == parsed[field], field
+        assert (
+            sum(bucket[field] for bucket in parsed["tokens_by_model"].values()) == parsed[field]
+        ), field
 
 
 def test_parse_transcript_tokens_by_model_replayed_message_counts_once_too(script, tmp_path):
@@ -768,7 +770,8 @@ def test_parse_transcript_tokens_by_model_replayed_message_counts_once_too(scrip
     assert parsed["tokens_by_model"]["model-alpha"]["input_tokens"] == 10
     assert parsed["tokens_by_model"]["model-alpha"]["output_tokens"] == 20
     assert (
-        sum(b["input_tokens"] for b in parsed["tokens_by_model"].values()) == parsed["input_tokens"]
+        sum(bucket["input_tokens"] for bucket in parsed["tokens_by_model"].values())
+        == parsed["input_tokens"]
     )
 
 
@@ -831,7 +834,9 @@ def test_parse_transcript_tokens_by_model_buckets_a_synthetic_message_that_carri
         "cache_creation_tokens": 0,
     }
     for field in ("input_tokens", "output_tokens", "cache_read_tokens", "cache_creation_tokens"):
-        assert sum(b[field] for b in parsed["tokens_by_model"].values()) == parsed[field], field
+        assert (
+            sum(bucket[field] for bucket in parsed["tokens_by_model"].values()) == parsed[field]
+        ), field
 
 
 def test_parse_transcript_tokens_by_model_is_empty_when_there_are_no_assistant_entries(
@@ -883,7 +888,9 @@ def test_parse_transcript_tokens_by_model_buckets_a_missing_model_under_unknown(
         "cache_creation_tokens": 0,
     }
     for field in ("input_tokens", "output_tokens", "cache_read_tokens", "cache_creation_tokens"):
-        assert sum(b[field] for b in parsed["tokens_by_model"].values()) == parsed[field], field
+        assert (
+            sum(bucket[field] for bucket in parsed["tokens_by_model"].values()) == parsed[field]
+        ), field
 
 
 # ---------------------------------------------------------------------------
@@ -936,7 +943,7 @@ _EXPECTED_RECORD_KEYS = {
 def test_build_record_has_exact_key_set_and_correct_values(script, monkeypatch):
     monkeypatch.setattr(script, "get_tmux_window", lambda: "my-window")
     monkeypatch.setattr(
-        script, "get_internal_name", lambda session_id, sessions_dir=None: "my-name"
+        script, "get_internal_name", lambda session_id, sessions_directory=None: "my-name"
     )
     monkeypatch.setenv("CLAUDE_METRIC_TAG", "my-tag")
 
@@ -964,7 +971,9 @@ def test_build_record_has_exact_key_set_and_correct_values(script, monkeypatch):
 
 def test_build_record_tag_is_none_when_env_var_unset(script, monkeypatch):
     monkeypatch.setattr(script, "get_tmux_window", lambda: None)
-    monkeypatch.setattr(script, "get_internal_name", lambda session_id, sessions_dir=None: None)
+    monkeypatch.setattr(
+        script, "get_internal_name", lambda session_id, sessions_directory=None: None
+    )
     monkeypatch.delenv("CLAUDE_METRIC_TAG", raising=False)
 
     record = script.build_record({"session_id": "s", "cwd": "/x"}, _PARSED_STUB)
@@ -974,7 +983,9 @@ def test_build_record_tag_is_none_when_env_var_unset(script, monkeypatch):
 
 def test_build_record_carries_tokens_by_model_through(script, monkeypatch):
     monkeypatch.setattr(script, "get_tmux_window", lambda: None)
-    monkeypatch.setattr(script, "get_internal_name", lambda session_id, sessions_dir=None: None)
+    monkeypatch.setattr(
+        script, "get_internal_name", lambda session_id, sessions_directory=None: None
+    )
     parsed = dict(_PARSED_STUB)
     parsed["tokens_by_model"] = {
         "model-alpha": {
@@ -1073,7 +1084,9 @@ def test_main_returns_silently_when_transcript_path_does_not_exist(script, tmp_p
 def test_main_appends_exactly_one_record_on_the_happy_path(script, tmp_path, monkeypatch):
     metrics_file = _isolate_metrics(monkeypatch, script, tmp_path)
     monkeypatch.setattr(script, "get_tmux_window", lambda: None)
-    monkeypatch.setattr(script, "get_internal_name", lambda session_id, sessions_dir=None: None)
+    monkeypatch.setattr(
+        script, "get_internal_name", lambda session_id, sessions_directory=None: None
+    )
 
     transcript = tmp_path / "transcript.jsonl"
     transcript.write_text(
@@ -1155,7 +1168,9 @@ def test_main_swallows_exceptions_and_writes_nothing(script, tmp_path, monkeypat
 
 def test_build_record_records_the_project_root_when_claude_provides_it(script, monkeypatch):
     monkeypatch.setattr(script, "get_tmux_window", lambda: None)
-    monkeypatch.setattr(script, "get_internal_name", lambda session_id, sessions_dir=None: None)
+    monkeypatch.setattr(
+        script, "get_internal_name", lambda session_id, sessions_directory=None: None
+    )
     monkeypatch.setenv("CLAUDE_PROJECT_DIR", "/work/my-api")
 
     record = script.build_record({"session_id": "s", "cwd": "/work/my-api/docs"}, _PARSED_STUB)
@@ -1170,7 +1185,9 @@ def test_build_record_omits_the_project_root_when_claude_does_not_provide_it(scr
     # null would be a value the reader has to interpret, and the whole
     # historical corpus has no key at all.
     monkeypatch.setattr(script, "get_tmux_window", lambda: None)
-    monkeypatch.setattr(script, "get_internal_name", lambda session_id, sessions_dir=None: None)
+    monkeypatch.setattr(
+        script, "get_internal_name", lambda session_id, sessions_directory=None: None
+    )
     monkeypatch.delenv("CLAUDE_PROJECT_DIR", raising=False)
 
     record = script.build_record({"session_id": "s", "cwd": "/x"}, _PARSED_STUB)
@@ -1180,7 +1197,9 @@ def test_build_record_omits_the_project_root_when_claude_does_not_provide_it(scr
 
 def test_build_record_ignores_an_empty_project_root(script, monkeypatch):
     monkeypatch.setattr(script, "get_tmux_window", lambda: None)
-    monkeypatch.setattr(script, "get_internal_name", lambda session_id, sessions_dir=None: None)
+    monkeypatch.setattr(
+        script, "get_internal_name", lambda session_id, sessions_directory=None: None
+    )
     monkeypatch.setenv("CLAUDE_PROJECT_DIR", "")
 
     record = script.build_record({"session_id": "s", "cwd": "/x"}, _PARSED_STUB)
@@ -1194,7 +1213,9 @@ def test_build_record_records_incomplete_usage_messages_only_when_there_are_some
     # Absent means zero: the whole historical corpus has no such key, and a
     # key on every row would only grow the file.
     monkeypatch.setattr(script, "get_tmux_window", lambda: None)
-    monkeypatch.setattr(script, "get_internal_name", lambda session_id, sessions_dir=None: None)
+    monkeypatch.setattr(
+        script, "get_internal_name", lambda session_id, sessions_directory=None: None
+    )
     flagged = dict(_PARSED_STUB, incomplete_usage_messages=3)
 
     assert script.build_record({"session_id": "s"}, flagged)["incomplete_usage_messages"] == 3
