@@ -39,7 +39,7 @@ invariant the branch exists to check:
   call to `mr.get_task_label`.
 - dashboard_tui.py:516->518 (`if series_lists:` in `render_chart`'s pane
   branch) - `series_lists` is built from `series_keys`, which comes from
-  `compute_pane_projects(self.mr, self.chart_records)` - the SAME
+  `compute_pane_projects(self.metrics_core_module, self.chart_records)` - the SAME
   `self.chart_records` that `aggregate_by_day(self.chart_records)` (a few
   lines above) used to produce `days`. `compute_pane_projects` puts every
   record's `color_group_key(project_path)` into `totals` unconditionally
@@ -47,7 +47,7 @@ invariant the branch exists to check:
   which returns `project_path` unchanged, including None, whenever it is
   falsy or has no worktree marker). So any record that contributed a day
   bucket to `days` necessarily contributed at least one key to `totals`,
-  which means `top_keys` (`ordered[:PANE_MAX_PROJECTS]`) cannot be empty
+  which means `top_keys` (`ordered[:PANE_MAXIMUM_PROJECTS]`) cannot be empty
   whenever `days` is non-trivial. Proven empirically: two records with
   `project_path: None` on two different days still produce
   `top_keys == [None]`, not `[]`.
@@ -589,7 +589,7 @@ def test_model_mode_shows_the_unattributed_remainder_as_its_own_band():
 
 def _ytick_labels(text: str) -> list[str]:
     """The y-axis tick labels plotext printed, which encode the scale the
-    bars were drawn against (render_chart sets them from max_total). The
+    bars were drawn against (render_chart sets them from maximum_total). The
     legend text shares a line with the top tick, so this takes only what
     sits left of the axis, and strips the colour codes first."""
     plain = re.sub(r"\x1b\[[0-9;]*m", "", text)

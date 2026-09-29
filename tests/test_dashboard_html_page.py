@@ -298,7 +298,7 @@ def test_render_html_marks_exactly_one_default_period_active_per_block_family(
     # bug marking the wrong number of periods "active" (non-hidden) in any
     # one of them is exactly named mutation 1. The leaf renderers are
     # stubbed to embed which family+period they were called for, so the
-    # assembly logic under test is render_html's own hidden_attr decision,
+    # assembly logic under test is render_html's own hidden_attribute decision,
     # not chart internals (already covered by test_dashboard_html_charts.py).
     call_order: list[int] = []
 
@@ -500,7 +500,7 @@ def isolate_main_from_the_real_filesystem(tmp_path: Path, monkeypatch: pytest.Mo
       tests/test_labels.py's own docstring. monkeypatch.setenv("HOME", ...)
       alone would leave these pointed at the real ~/.claude/metrics files,
       so they are monkeypatched directly instead.
-    - main()'s own output_path and mr.get_open_projects()'s sessions_dir
+    - main()'s own output_path and mr.get_open_projects()'s sessions_directory
       are computed fresh from HOME at CALL time (Path(...).expanduser()
       inside main()/get_open_projects, not a module constant) - for
       these, monkeypatch.setenv("HOME", ...) is the correct and sufficient

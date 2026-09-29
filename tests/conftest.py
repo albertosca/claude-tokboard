@@ -277,8 +277,8 @@ def _inside_real_claude_dir(
     elsewhere inside a REAL ~/.claude that merely happens to CONTAIN such
     an installed checkout is still blocked.
 
-    `dir_fd`, when given (backlog 2026-09-24 #3), is an audit event's own
-    dir_fd argument (-1/None meaning "not dir_fd-relative") - a THIRD
+    `directory_file_descriptor`, when given (backlog 2026-09-24 #3), is an
+    audit event's own dir_fd argument (-1/None meaning "not dir_fd-relative") - a THIRD
     candidate is checked, joining the directory it names with
     `path_argument` when the latter is relative. Without this, a bare
     relative name like "victim.txt" would only ever be resolved against

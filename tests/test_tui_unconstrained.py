@@ -37,10 +37,10 @@ to a label is the right one:
 - `CompositionLegend.render` (~406): `self.totals.get(series, 0)` keyed by
   the wrong dict key (`name` instead of `series`) renders every chip's
   number as 0.
-- `ProjectRankingList.render` (~713): `self.mr.format_tokens(total)`
-  swapped for `format_tokens(max_total)` makes every row show the largest
+- `ProjectRankingList.render` (~713): `self.metrics_core_module.format_tokens(total)`
+  swapped for `format_tokens(maximum_total)` makes every row show the largest
   project's total.
-- `ProjectRankingList.render` (~710): `bar_len` replaced by a constant
+- `ProjectRankingList.render` (~710): `bar_length` replaced by a constant
   makes every bar the same length regardless of the row's own total.
 - `build_session_tree` (~317): the group header's `total_tokens = sum(...)`
   replaced by a literal makes every group's header lie about its total.
@@ -48,7 +48,7 @@ to a label is the right one:
 Deliberately NOT tested here, per the final review's own ruling: the
 `duration:.0f` -> `.1f` precision survivor (cosmetic - the `is not None`
 guard beside it is what actually matters and is already pinned) and the
-`bar_len` multiplier `30` -> `29` survivor (cosmetic below the `:<32` pad
+`bar_length` multiplier `30` -> `29` survivor (cosmetic below the `:<32` pad
 width; `* 40` is already caught by the column-alignment test above).
 """
 
@@ -287,7 +287,7 @@ def test_set_project_highlight_colors_the_highlighted_project_and_greys_the_rest
 def test_overflow_projects_beyond_pane_colors_get_the_other_color(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """9 distinct, distinctly-ranked projects: PANE_MAX_PROJECTS (7) go
+    """9 distinct, distinctly-ranked projects: PANE_MAXIMUM_PROJECTS (7) go
     into top_keys, the rest collapse into one "outros" bucket, so
     series_keys has exactly 8 entries - one more than len(PANE_COLORS) (7).
     That 8th entry (index 7) is the only one the `i < len(PANE_COLORS)`
@@ -486,11 +486,12 @@ def test_quota_summary_sums_input_and_cache_creation_keeps_output_separate():
 
 
 def test_project_ranking_rows_show_their_own_token_total_not_the_max():
-    """dashboard_tui.py:~713 (`self.mr.format_tokens(total)`). Two projects
-    with different totals - if the row rendered `format_tokens(max_total)`
-    instead, both rows would show the SAME (largest) number, and the
-    existing "shows exactly ten projects" test above would not notice
-    since it only checks which project LABELS are present."""
+    """dashboard_tui.py:~713 (`self.metrics_core_module.format_tokens(total)`).
+    Two projects with different totals - if the row rendered
+    `format_tokens(maximum_total)` instead, both rows would show the SAME
+    (largest) number, and the existing "shows exactly ten projects" test
+    above would not notice since it only checks which project LABELS are
+    present."""
     records = [_daily("/projects/big", 1, 900), _daily("/projects/small", 1, 100)]
     panel = tui.ProjectRankingList(mr, records, {}, {}, set(), lang="pt")
     lines = panel.render().split("\n")
@@ -507,10 +508,10 @@ def test_project_ranking_rows_show_their_own_token_total_not_the_max():
 
 
 def test_project_ranking_bar_length_is_proportional_to_each_rows_own_total():
-    """dashboard_tui.py:~710 (`bar_len = int((total / max_total) * 30)`).
-    A constant `bar_len` (or one derived from the wrong total) makes every
-    bar the same length regardless of the row's own data - unnoticed by
-    every test above, none of which counts bar characters."""
+    """dashboard_tui.py:~710 (`bar_length = int((total / maximum_total) * 30)`).
+    A constant `bar_length` (or one derived from the wrong total) makes
+    every bar the same length regardless of the row's own data -
+    unnoticed by every test above, none of which counts bar characters."""
     records = [_daily("/projects/big", 1, 900), _daily("/projects/small", 1, 100)]
     panel = tui.ProjectRankingList(mr, records, {}, {}, set(), lang="pt")
     lines = panel.render().split("\n")

@@ -226,7 +226,7 @@ def test_normalize_project_paths_excludes_worktree_paths_from_collapsing():
     # parent path never appeared in the dataset at all and so could never
     # have been a collapse target with or without the marker. With the
     # parent present, it has exactly one known child (feature-x), which
-    # is <= max_children_to_collapse - a genuine collapse candidate: if
+    # is <= maximum_children_to_collapse - a genuine collapse candidate: if
     # the marker didn't exclude worktree paths, feature-x would collapse
     # into it and both entries would read back as the bare
     # ".../worktrees" path. The marker keeps both untouched, preserving

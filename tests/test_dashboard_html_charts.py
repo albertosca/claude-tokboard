@@ -352,7 +352,7 @@ _DAY_GRANULARITY_RECORDS = [
     _day_record("2026-08-05", input_tokens=200),
     _day_record("2026-08-10", input_tokens=300),
 ]
-# max_pane / max_tokens for the record set above: the largest per-day total.
+# maximum_pane / maximum_tokens for the record set above: the largest per-day total.
 _DAY_GRANULARITY_MAX = 300
 VERTICAL_AXIS_FRACTIONS = (0.0, 0.25, 0.5, 0.75, 1.0)
 
@@ -557,7 +557,7 @@ def test_render_trend_chart_shared_denominator_pane_and_tokens_modes_agree_on_bu
     # (by project, by token type) and must therefore agree on how "tall"
     # each day's stack is - this is the property the module's own comment
     # (lines 297-306) documents as deliberate. Day A (10000 tokens, almost
-    # entirely cache) sets max_pane/max_tokens; Day B (1000 tokens, also
+    # entirely cache) sets maximum_pane/maximum_tokens; Day B (1000 tokens, also
     # mostly cache) should read as exactly 10% of full height in BOTH
     # modes. A split denominator (mutation #3) would make the "por tipo"
     # stack's top edge diverge from "por projeto"'s for the same day.
@@ -597,7 +597,7 @@ def test_render_trend_chart_shared_denominator_pane_and_tokens_modes_agree_on_bu
 
 def test_render_trend_chart_bar_width_floor_flag_false_and_widths_pinned_for_reachable_n():
     # The floor mechanism (source, lines 338-346): bar_width = step * 0.6;
-    # if bar_width < min_bar_width(8), the chart re-widens every bar to
+    # if bar_width < minimum_bar_width(8), the chart re-widens every bar to
     # exactly 8px and sets data-floor-hit="true". Swept computationally and
     # empirically (n from 1 to 20000) this floor's TRUE side is
     # unreachable given the current candidate_width formula - see this
@@ -678,8 +678,8 @@ def test_render_trend_chart_highlight_band_boundary_pinned_at_n_equals_7_and_8()
     out_8 = dashboard_html.render_trend_chart(_year_records(8), {"/proj/a": "x"}, "p1", lang="pt")
     assert "chart-highlight-band" not in out_7
     assert "chart-highlight-band" in out_8
-    # Pin its geometry too: highlight_start_idx = n - 7 = 1, hx = padding_left
-    # + 1*step, hwidth = 7*step.
+    # Pin its geometry too: highlight_start_index = n - 7 = 1,
+    # highlight_left = padding_left + 1*step, hwidth = 7*step.
     step_8 = _expected_step(8)
     expected_hx = PADDING_LEFT + 1 * step_8
     expected_hwidth = 7 * step_8
@@ -690,10 +690,10 @@ def test_render_trend_chart_highlight_band_boundary_pinned_at_n_equals_7_and_8()
 
 
 def test_render_trend_chart_max_pane_or_1_guard_survives_all_zero_token_days():
-    # Mutation target #4: max_pane = max(day_totals) or 1. Two buckets (so
+    # Mutation target #4: maximum_pane = max(day_totals) or 1. Two buckets (so
     # the n<2 early return doesn't intervene) with every record at zero
     # tokens: day_totals = [0, 0], max([0, 0]) is falsy (0), so without
-    # "or 1" the y-axis math (value / max_value inside build_y_axis, called
+    # "or 1" the y-axis math (value / maximum_value inside build_y_axis, called
     # with frac=0 giving value=0 too) divides 0/0 and raises
     # ZeroDivisionError. Confirmed by running: dropping the guard raises
     # immediately on the first y-axis gridline.
@@ -777,7 +777,7 @@ def test_render_trend_chart_multiple_records_for_same_project_same_day_merge_int
     ]
     # Still exactly one bar per day (the two same-day records merged into
     # a single project segment), and day 1's bar is full height (30
-    # tokens == max_pane) while day 2's is 1/6 of that (5 tokens).
+    # tokens == maximum_pane) while day 2's is 1/6 of that (5 tokens).
     assert len(rects) == 2
     day1 = max(rects, key=lambda rect: rect["height"])
     day2 = min(rects, key=lambda rect: rect["height"])
@@ -854,7 +854,7 @@ def test_render_project_totals_chart_orders_projects_by_spend_descending():
 
 
 def test_render_project_totals_chart_empty_and_all_zero_records_return_empty_string():
-    # `max_total = max(totals.values()) or 1` (source line ~613): verified
+    # `maximum_total = max(totals.values()) or 1` (source line ~613): verified
     # by running that this fallback is UNREACHABLE in the current source -
     # the preceding `if not ordered_projects: return ""` already excludes
     # every all-zero/empty scenario before that line is ever reached (an
@@ -933,7 +933,7 @@ def test_render_project_totals_chart_segments_carry_token_type_class_and_stack_l
     # trend chart's "por tipo de token" legend/handler), not by project
     # colour. This pins the real behaviour: one segment per positive
     # series, each carrying its series-N class, positioned left-to-right
-    # in series order with contiguous x_cursor advancement.
+    # in series order with contiguous segment_cursor advancement.
     records = [
         _project_record(
             "/proj/a",
@@ -960,7 +960,7 @@ def test_render_project_totals_chart_segments_carry_token_type_class_and_stack_l
         assert current_segment["x"] == pytest.approx(
             previous_segment["x"] + previous_segment["width"], abs=0.05
         )
-    assert segments[0]["x"] == 4  # label_x
+    assert segments[0]["x"] == 4  # label_offset
     total = 10 + 20 + 30 + 40
     for segment, value in zip(segments, (10, 20, 30, 40), strict=True):
         bar_maximum_width = 300

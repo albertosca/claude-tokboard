@@ -585,7 +585,7 @@ def test_selecting_a_different_session_replaces_the_panel_not_appends(tree_selec
 
 
 def test_session_tree_row_renders_a_real_zero_duration_as_0s_not_a_dash(tree_selection):
-    """build_session_tree's own duration_str expression (dashboard_tui.py
+    """build_session_tree's own duration_text expression (dashboard_tui.py
     around line 300) is a SEPARATE piece of code from show_session's, with
     its own copy of the same `duration is not None else "-"` guard - pinned
     independently rather than assumed identical."""
