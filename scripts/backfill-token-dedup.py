@@ -80,7 +80,9 @@ Limits
                              undercounted it; a row is rewritten only when
                              it exactly matches the every-entry or the
                              first-entry count, and may only fall or rise
-                             accordingly.
+                             accordingly - or, at a file cut, the time-cut
+                             count this pass itself wrote before
+                             2026-09-29, which moves to the file cut's.
   --fields incomplete_usage  adds incomplete_usage_messages (see
                              transcript_ingest.count_incomplete) to rows
                              written before the hooks recorded it, only
@@ -129,6 +131,7 @@ from metrics_core.backfill import (
     DEFAULT_CUTOFF,
     FIRST,
     RAW,
+    TIME_CUT,
     UNIT_ID_KEYS,
     FieldPlan,
     apply_field_plan,
@@ -161,7 +164,7 @@ PROJECTS_DIRECTORY = str(Path("~/.claude/projects").expanduser())
 
 # --fields value -> the record key its pass writes.
 FIELD_KEYS = {"tool_calls": "tool_call_count", "incomplete_usage": "incomplete_usage_messages"}
-FORMULA_NAMES = {RAW: "every-entry", FIRST: "first-entry"}
+FORMULA_NAMES = {RAW: "every-entry", FIRST: "first-entry", TIME_CUT: "earlier time-cut"}
 
 
 def print_daily_comparison(
@@ -455,11 +458,12 @@ def run_field_pass(
             print(f"  {problem}", file=sys.stderr)
         return 1
     if field == "tool_calls":
-        rising = sum(1 for formula in plan.formulas.values() if formula == FIRST)
+        by_formula = collections.Counter(plan.formulas.values())
         print(
             f"\nfield-by-field verification: only {key} changed; "
-            f"{len(plan.formulas) - rising} every-entry row(s) only fell, "
-            f"{rising} first-entry row(s) only rose"
+            f"{by_formula[RAW]} every-entry row(s) only fell, "
+            f"{by_formula[FIRST]} first-entry row(s) only rose, "
+            f"{by_formula[TIME_CUT]} earlier time-cut row(s) moved to their file cut"
         )
     else:
         print(f"\nfield-by-field verification: only {key} was added, nothing else changed")

@@ -11,12 +11,17 @@ matched exactly at the file prefix, which refused 745 rows that were
 already correct.
 """
 
+import importlib.util
 import json
+import types
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
 import metrics_core as mr
+import pytest
+
+SCRIPT_PATH = Path(__file__).resolve().parent.parent / "scripts" / "backfill-token-dedup.py"
 
 
 def assistant(
@@ -327,3 +332,106 @@ def test_file_cuts_that_reproduce_the_tokens_but_disagree_on_the_tool_count_refu
 
     assert plan.values == {}
     assert plan.stats == {"untouched: session has a row whose file cut is ambiguous": 1}
+
+
+def test_a_tool_count_an_earlier_time_cut_backfill_wrote_is_moved_to_the_file_cut(tmp_path):
+    # The 2026-09-28 apply rebuilt counts at the time cut: this row's hook
+    # value (0, m1's first entry) became 2, which counts m2's tool call the
+    # hook never read. 2 is no hook formula at the file cut the tokens
+    # reproduce; it is exactly the time cut's distinct count.
+    transcripts = {"s": write(tmp_path / "s.jsonl", STREAMED_TOOLS)}
+    records = [
+        row("s", "2026-08-01T10:00:05Z", 100, tool_call_count=2),
+        row("s", "2026-08-01T10:00:06Z", 150, tool_call_count=2),  # time cut, correct
+    ]
+
+    plan = mr.plan_tool_call_corrections(records, transcripts, "2026-09-01")
+
+    assert plan.values == {0: 1}
+    assert plan.formulas == {0: mr.TIME_CUT}
+    assert plan.stats == {
+        "untouched: already correct": 1,
+        "corrected: stored an earlier backfill's time-cut count": 1,
+    }
+
+
+def test_a_hook_formula_wins_over_the_time_cut_count_when_both_match(tmp_path):
+    # 2 is both the every-entry count at the file cut (m1 and its replay)
+    # and the distinct count at the time cut (t1, t2): a hook wrote it, so
+    # it is read as the hook's formula, whose direction is known.
+    transcripts = {
+        "s": write(
+            tmp_path / "s.jsonl",
+            [
+                assistant("2026-08-01T10:00:00Z", "m1", 100, tools=("t1",)),
+                assistant("2026-08-01T10:00:00Z", "m1", 100, tools=("t1",)),
+                other("2026-08-01T10:00:05Z", "queue-operation"),
+                assistant("2026-08-01T10:00:03Z", "m2", 50, tools=("t2",)),
+            ],
+        )
+    }
+    records = [row("s", "2026-08-01T10:00:05Z", 100, tool_call_count=2)]
+
+    plan = mr.plan_tool_call_corrections(records, transcripts, "2026-09-01")
+
+    assert plan.values == {0: 1}
+    assert plan.formulas == {0: mr.RAW}
+
+
+# --- the script ----------------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def script() -> types.ModuleType:
+    spec = importlib.util.spec_from_file_location("backfill_token_dedup_file_cut", SCRIPT_PATH)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_the_script_moves_a_time_cut_count_to_the_file_cut_and_then_leaves_it(
+    tmp_path, script, monkeypatch, capsys
+):
+    projects = tmp_path / "projects"
+    (projects / "slug").mkdir(parents=True)
+    transcript = write(projects / "slug" / "s.jsonl", STREAMED_TOOLS)
+    metrics = tmp_path / "sessions.jsonl"
+    rows = [
+        row("s", "2026-08-01T10:00:05Z", 100, tool_call_count=2, transcript_path=transcript),
+        row("s", "2026-08-01T10:00:06Z", 150, tool_call_count=2, transcript_path=transcript),
+    ]
+    metrics.write_text("".join(json.dumps(item) + "\n" for item in rows))
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "backfill-token-dedup.py",
+            "--metrics-file",
+            str(metrics),
+            "--projects-dir",
+            str(projects),
+            "--backup-dir",
+            str(tmp_path / "backups"),
+            "--state-file",
+            str(tmp_path / "state.json"),
+            "--cutoff",
+            "2026-09-01",
+            "--fields",
+            "tool_calls",
+            "--apply",
+        ],
+    )
+
+    assert script.main() == 0
+
+    out = capsys.readouterr().out
+    assert (
+        "0 every-entry row(s) only fell, 0 first-entry row(s) only rose, "
+        "1 earlier time-cut row(s) moved to their file cut"
+    ) in out
+    written = [json.loads(line) for line in metrics.read_text().splitlines()]
+    assert [item["tool_call_count"] for item in written] == [1, 2]
+
+    assert script.main() == 0
+    assert "nothing to correct" in capsys.readouterr().out

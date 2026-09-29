@@ -489,6 +489,9 @@ def token_sum(record: dict[str, Any]) -> int:
 # The two formulas a stored row can be recognised as, and so corrected from.
 RAW = "raw"
 FIRST = "first"
+# A tool_call_count an earlier run of this pass wrote at the time cut (see
+# _tool_reading); it has no direction of its own.
+TIME_CUT = "time_cut"
 # Disposition keys a corrected row is counted under, by formula.
 CORRECTED_REASONS = {
     RAW: "corrected: stored the raw sum (every entry)",
@@ -853,6 +856,7 @@ def _eligible_units(
 TOOL_CALL_REASONS = {
     RAW: "corrected: stored the every-entry count",
     FIRST: "corrected: stored the first-entry count",
+    TIME_CUT: "corrected: stored an earlier backfill's time-cut count",
 }
 
 
@@ -860,15 +864,29 @@ def _stored_tokens(record: dict[str, Any]) -> list[int]:
     return [record.get(field, 0) or 0 for field in TOKEN_FIELDS]
 
 
-def _tool_reading(stored: Any, now: ToolCounts) -> tuple[int, str | None] | None:
+def _tool_reading(
+    stored: Any, now: ToolCounts, time_cut_count: int | None = None
+) -> tuple[int, str | None] | None:
     """(the count the row should hold, the formula it was recognised as or
-    None when it already holds it), or None when it matches no rule."""
+    None when it already holds it), or None when it matches no rule.
+
+    `time_cut_count` is the distinct count at the time cut, passed only when
+    `now` is a file cut: before 2026-09-29 this pass rebuilt every row at the
+    time cut, so a row it wrote holds that count - which is neither hook
+    formula at the file cut when the two cuts disagree. Measured on the
+    2026-09-28 apply: 2 session rows, 149 and 152 where the file cut gives
+    148 and 151 (their hook values, 31, were the first-entry count at both
+    cuts). Only an exact match is recognised, and only after both hook
+    formulas, so a value a hook wrote is always read as the hook's.
+    """
     if stored == now.distinct:
         return (now.distinct, None)
     if stored == now.raw:
         return (now.distinct, RAW)
     if stored == now.first:
         return (now.distinct, FIRST)
+    if time_cut_count is not None and stored == time_cut_count:
+        return (now.distinct, TIME_CUT)
     return None
 
 
@@ -913,8 +931,10 @@ def plan_tool_call_corrections(
             end = record["timestamp_end"]
             counts = reproducing_cuts(_stored_tokens(record), cut_points.get(end, ()), file_sums)
             if counts:
+                time_cut_count = tool_calls_as_of(facts, end).distinct
                 readings = {
-                    _tool_reading(stored, tool_calls_as_of(facts[:count], None)) for count in counts
+                    _tool_reading(stored, tool_calls_as_of(facts[:count], None), time_cut_count)
+                    for count in counts
                 }
             else:
                 readings = {_tool_reading(stored, tool_calls_as_of(facts, end))}
