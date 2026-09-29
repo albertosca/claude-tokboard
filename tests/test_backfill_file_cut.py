@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any
 
 import metrics_core as mr
+import metrics_core.backfill as backfill_module
 import pytest
 
 SCRIPT_PATH = Path(__file__).resolve().parent.parent / "scripts" / "backfill-token-dedup.py"
@@ -461,6 +462,40 @@ def test_a_time_cut_count_the_entries_between_the_cuts_do_not_explain_is_refused
 
     assert plan.values == {}
     assert plan.stats == {"untouched: session has a row matching no formula": 1}
+
+
+# --- one read per unit ---------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "planner",
+    [mr.plan_corrections_by_formula, mr.plan_tool_call_corrections, mr.plan_incomplete_usage],
+    ids=["tokens", "tool_calls", "incomplete_usage"],
+)
+def test_a_plan_reads_each_units_transcript_once(tmp_path, monkeypatch, planner):
+    # A live transcript can grow between two reads, and the growth can
+    # replay a line stamped with an old timestamp_end: a cut read from the
+    # grown file then indexes past the totals built from the shorter one.
+    # Every table a plan uses must come from one read.
+    transcripts = {"s": write(tmp_path / "s.jsonl", BACKWARD)}
+    records = [row("s", "2026-08-01T10:00:05Z", 100, tool_call_count=0)]
+    expected = planner(records, transcripts, "2026-09-01")
+    grown = [
+        *BACKWARD,
+        assistant("2026-08-01T10:00:06Z", "m3", 7),
+        assistant("2026-08-01T10:00:06Z", "m3", 7),
+        other("2026-08-01T10:00:05Z"),
+    ]
+    reads: list[str] = []
+
+    def reader(path: str) -> Any:
+        reads.append(path)
+        return iter(BACKWARD if len(reads) == 1 else grown)
+
+    monkeypatch.setattr(backfill_module, "read_transcript_entries", reader)
+
+    assert planner(records, transcripts, "2026-09-01") == expected
+    assert reads == [transcripts["s"]]
 
 
 # --- the incomplete_usage pass -----------------------------------------------

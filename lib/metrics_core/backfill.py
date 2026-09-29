@@ -12,7 +12,7 @@ import collections
 import hashlib
 import json
 import os
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
 from pathlib import Path
 from typing import Any, BinaryIO, NamedTuple, cast
 
@@ -319,8 +319,12 @@ def scan_transcript(path: str) -> list[TimelineEntry]:
     model_key rule), so callers can build per-model as-of totals without
     re-reading the transcript.
     """
-    timeline: list[TimelineEntry] = []
-    seen_ids: set[Any] = set()
+    return scan_unit(path).timeline
+
+
+def read_transcript_entries(path: str) -> Iterator[dict[str, Any]]:
+    """Every parsed line of a transcript, in file order, skipping blank and
+    malformed lines - the same lines the hook skips."""
     with Path(path).open() as transcript_file:
         for line in transcript_file:
             line = line.strip()
@@ -330,23 +334,67 @@ def scan_transcript(path: str) -> list[TimelineEntry]:
                 entry = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            if entry.get("type") != "assistant":
-                continue
+            yield entry
+
+
+class EntryFacts(NamedTuple):
+    """What one assistant entry says about tool calls and finalisation."""
+
+    stamp: str
+    message_id: Any
+    finalised: bool
+    # tool_use block ids in content order; None for a block without an id.
+    tool_ids: tuple[Any, ...]
+
+
+class TranscriptScan(NamedTuple):
+    """Everything the plans need from one transcript, from ONE read of it:
+    scan_transcript's timeline, scan_entry_facts' facts and
+    scan_cut_points' cuts. A live transcript grows between reads, and a
+    grown file can replay a line stamped with an old timestamp_end, so cuts
+    taken from a later read than the totals can index past them."""
+
+    timeline: list[TimelineEntry]
+    facts: list[EntryFacts]
+    cut_points: dict[str, tuple[int, ...]]
+
+
+def scan_unit(path: str) -> TranscriptScan:
+    """Read a transcript once and build the timeline, the entry facts and
+    the cut points from the same lines, so their counts index the same
+    entries."""
+    timeline: list[TimelineEntry] = []
+    facts: list[EntryFacts] = []
+    cuts: dict[str, set[int]] = collections.defaultdict(set)
+    seen_ids: set[Any] = set()
+    last: str | None = None
+    for entry in read_transcript_entries(path):
+        timestamp = entry.get("timestamp")
+        if timestamp:
+            last = timestamp
+        if entry.get("type") == "assistant":
             message = entry.get("message") or {}
             message_id = message.get("id")
             is_duplicate = message_id is not None and message_id in seen_ids
             if message_id is not None:
                 seen_ids.add(message_id)
+            stamp = timestamp or ""
             timeline.append(
-                (
-                    entry.get("timestamp") or "",
-                    is_duplicate,
-                    usage_values(message),
-                    model_key(message),
-                    message_id,
-                )
+                (stamp, is_duplicate, usage_values(message), model_key(message), message_id)
             )
-    return timeline
+            content = message.get("content") or []
+            tool_ids = tuple(
+                block.get("id")
+                for block in (content if isinstance(content, list) else [])
+                if isinstance(block, dict) and block.get("type") == "tool_use"
+            )
+            facts.append(
+                EntryFacts(stamp, message_id, message.get("stop_reason") is not None, tool_ids)
+            )
+        if last is not None:
+            cuts[last].add(len(timeline))
+    cut_points = {stamp: tuple(sorted(counts)) for stamp, counts in cuts.items()}
+    return TranscriptScan(timeline, facts, cut_points)
 
 
 def build_prefix_sums(timeline: list[TimelineEntry]) -> PrefixSums:
@@ -393,28 +441,9 @@ def scan_cut_points(path: str) -> dict[str, tuple[int, ...]]:
     A timestamp can close several cuts: untimestamped lines after it leave
     it the last one read, and the same stamp can recur further down the
     file. The counts index the same entries scan_transcript and
-    scan_entry_facts return, because all three skip exactly the same lines.
+    scan_entry_facts return, because all three come from one scan_unit.
     """
-    cuts: dict[str, set[int]] = collections.defaultdict(set)
-    count = 0
-    last: str | None = None
-    with Path(path).open() as transcript_file:
-        for line in transcript_file:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                entry = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            timestamp = entry.get("timestamp")
-            if timestamp:
-                last = timestamp
-            if entry.get("type") == "assistant":
-                count += 1
-            if last is not None:
-                cuts[last].add(count)
-    return {stamp: tuple(sorted(counts)) for stamp, counts in cuts.items()}
+    return scan_unit(path).cut_points
 
 
 def reproducing_cuts(
@@ -611,10 +640,9 @@ def plan_corrections_by_formula(
             stats[f"untouched: {unit_noun} spans the cutoff"] += len(indexes)
             continue
 
-        timeline = scan_transcript(transcript)
+        timeline, _facts, cut_points = scan_unit(transcript)
         sums = build_prefix_sums(timeline)
         file_sums = build_file_order_sums(timeline)
-        cut_points = scan_cut_points(transcript)
         proposals: dict[int, tuple[list[int], str, int | None]] = {}
         already_correct = 0
         refused: str | None = None
@@ -709,47 +737,10 @@ def plan_corrections(
 # no hook before 2026-09-25 recorded.
 
 
-class EntryFacts(NamedTuple):
-    """What one assistant entry says about tool calls and finalisation."""
-
-    stamp: str
-    message_id: Any
-    finalised: bool
-    # tool_use block ids in content order; None for a block without an id.
-    tool_ids: tuple[Any, ...]
-
-
 def scan_entry_facts(path: str) -> list[EntryFacts]:
     """Every assistant entry of a transcript, in FILE order - the order the
     hook read them in, which decides first occurrences."""
-    facts: list[EntryFacts] = []
-    with Path(path).open() as handle:
-        for line in handle:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                entry = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if entry.get("type") != "assistant":
-                continue
-            message = entry.get("message") or {}
-            content = message.get("content") or []
-            tool_ids = tuple(
-                block.get("id")
-                for block in (content if isinstance(content, list) else [])
-                if isinstance(block, dict) and block.get("type") == "tool_use"
-            )
-            facts.append(
-                EntryFacts(
-                    entry.get("timestamp") or "",
-                    message.get("id"),
-                    message.get("stop_reason") is not None,
-                    tool_ids,
-                )
-            )
-    return facts
+    return scan_unit(path).facts
 
 
 def _entries_as_of(facts: list[EntryFacts], end_timestamp: str | None) -> list[EntryFacts]:
@@ -945,9 +936,8 @@ def plan_tool_call_corrections(
     values: dict[int, int] = {}
     formulas: dict[int, str] = {}
     for indexes, transcript in _eligible_units(records, transcripts, cutoff, id_key, stats):
-        facts = scan_entry_facts(transcript)
-        file_sums = build_file_order_sums(scan_transcript(transcript))
-        cut_points = scan_cut_points(transcript)
+        timeline, facts, cut_points = scan_unit(transcript)
+        file_sums = build_file_order_sums(timeline)
         proposals: dict[int, tuple[int, str]] = {}
         refused: str | None = None
         for index in indexes:
@@ -1007,11 +997,9 @@ def plan_incomplete_usage(
     stats: collections.Counter[str] = collections.Counter()
     values: dict[int, int] = {}
     for indexes, transcript in _eligible_units(records, transcripts, cutoff, id_key, stats):
-        timeline = scan_transcript(transcript)
+        timeline, facts, cut_points = scan_unit(transcript)
         sums = build_prefix_sums(timeline)
         file_sums = build_file_order_sums(timeline)
-        cut_points = scan_cut_points(transcript)
-        facts = scan_entry_facts(transcript)
         proposals: dict[int, int] = {}
         refusal = None
         for index in indexes:
