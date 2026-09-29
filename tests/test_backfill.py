@@ -1757,3 +1757,17 @@ def test_a_state_write_through_a_symlink_replaces_the_target_and_keeps_the_link(
     assert json.loads(real.read_text())["applied_at"] == "b"
     assert sorted(child.name for child in real_directory.iterdir()) == ["state.json"]
     assert sorted(child.name for child in tmp_path.iterdir()) == ["real", "state.json"]
+
+
+def test_a_state_write_leaves_the_process_umask_as_it_found_it(tmp_path):
+    # Reading the umask means setting it; a write that forgot to set it
+    # back would leave every file the process creates afterwards 0o666.
+    previous = os.umask(0o027)
+    try:
+        mr.write_field_state(
+            "sessions", "tool_calls", None, "a", _names(1), path=str(tmp_path / "s.json")
+        )
+        after = os.umask(0o027)
+    finally:
+        os.umask(previous)
+    assert after == 0o027

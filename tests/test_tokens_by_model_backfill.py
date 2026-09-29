@@ -1877,6 +1877,7 @@ def test_record_earlier_applies_with_no_backups_records_nothing(
     script, tmp_path, monkeypatch, capsys
 ):
     _two_native_session_rows(tmp_path)
+    (tmp_path / "backups").mkdir()
     _applying_argv(monkeypatch, tmp_path, "--record-earlier-applies", "--apply")
     assert script.main() == 0
     assert "0 row(s) written by earlier by-model applies" in capsys.readouterr().out
@@ -2265,3 +2266,97 @@ def test_a_default_path_spelled_differently_is_still_the_default(script, tmp_pat
     assert options(f"{metrics}/", f"{projects}/") == []
     assert options(str(alias), str(projects)) == []
     assert options(str(tmp_path), str(projects)) == ["--metrics-dir", str(tmp_path)]
+
+
+# ---------------------------------------------------------------------------
+# A run given only --metrics-file reads and writes beside that file. Its
+# state and its backups default there, never to --metrics-dir: that
+# default is the real ~/.claude/metrics, and a run pointed at a copy must
+# record into the copy. The stand-in below takes the real directory's place
+# so a regression lands somewhere a test can see, not on real data.
+# ---------------------------------------------------------------------------
+
+
+def _beside_the_metrics_file(base: Path) -> tuple[Path, Path]:
+    """_backfilled_history with its backups moved beside the metrics file,
+    and a stand-in for the default metrics directory that must stay empty."""
+    _backfilled_history(base)
+    (base / "backups").rename(base / "metrics" / "backups")
+    stand_in = base / "default metrics dir"
+    stand_in.mkdir()
+    return base / "metrics" / "sessions.jsonl", stand_in
+
+
+def test_a_metrics_file_alone_finds_its_backups_and_state_beside_it(
+    script, tmp_path, monkeypatch, capsys
+):
+    metrics, stand_in = _beside_the_metrics_file(tmp_path)
+    live = _live_records(tmp_path)
+    monkeypatch.setattr(script, "METRICS_DIRECTORY", str(stand_in))
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "backfill-tokens-by-model.py",
+            "--metrics-file",
+            str(metrics),
+            "--record-earlier-applies",
+            "--apply",
+        ],
+    )
+
+    assert script.main() == 0
+
+    assert "2 row(s) written by earlier by-model applies" in capsys.readouterr().out
+    assert _recorded_ids(tmp_path) == sorted(script.row_identities(live, [0, 1], "session_id"))
+    assert list(stand_in.iterdir()) == [], "nothing may land in the default directory"
+
+
+def test_backups_found_by_a_metrics_file_name_with_glob_characters(
+    script, tmp_path, monkeypatch, capsys
+):
+    # The name is matched literally: "copy[1]" is not a character class.
+    # Both lookups are covered - the by-model backups, and the dedup
+    # backups the rebuilt maps are found in.
+    live = _rebuilt_history(tmp_path)
+    metrics = tmp_path / "metrics" / "sessions.jsonl"
+    renamed = metrics.with_name("copy[1].jsonl")
+    metrics.rename(renamed)
+    for backup in (tmp_path / "backups").iterdir():
+        backup.rename(backup.with_name(backup.name.replace("sessions.jsonl", renamed.name)))
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "backfill-tokens-by-model.py",
+            "--metrics-file",
+            str(renamed),
+            "--backup-dir",
+            str(tmp_path / "backups"),
+            "--record-earlier-applies",
+            "--apply",
+        ],
+    )
+
+    assert script.main() == 0
+
+    capsys.readouterr()
+    fields = json.loads(_state_path(tmp_path).read_text())["fields"]
+    written = fields["sessions.tokens_by_model"]["corrected_row_ids"]
+    rebuilt = fields["sessions.tokens_by_model_rebuilt"]["corrected_row_ids"]
+    assert written == script.row_identities(live, [0], "session_id")
+    assert rebuilt == script.row_identities(live, [1], "session_id")
+
+
+def test_a_backup_directory_that_does_not_exist_is_refused(script, tmp_path, monkeypatch, capsys):
+    # A mistyped directory used to read as "0 found, nothing new to record"
+    # and exit 0 - a recovery that reported success and recorded nothing.
+    _backfilled_history(tmp_path)
+    missing = tmp_path / "no such dir"
+    for arguments in (["--record-earlier-applies"], ["--record-earlier-applies", "--apply"]):
+        _argv(monkeypatch, tmp_path, "--backup-dir", str(missing), *arguments)
+        assert script.main() == 1
+        output = capsys.readouterr()
+        assert f"no backup directory at {missing}" in output.err
+        assert "nothing new to record" not in output.out
+    assert not _state_path(tmp_path).exists()

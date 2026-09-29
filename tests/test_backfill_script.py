@@ -1326,3 +1326,73 @@ def test_a_token_pass_whose_state_write_fails_names_the_recovery(
     entry = json.loads(state.read_text())["fields"]["subagents.tokens_by_model_rebuilt"]
     assert entry["corrected_row_ids"] == script.row_identities(records, [0], "agent_id")
     assert not (metrics.parent / "backfill_state.json").exists()
+
+
+# ---------------------------------------------------------------------------
+# A dedup run on a copy keeps its backup and its state beside the copy. The
+# defaults used to be the real ~/.claude/metrics/backups and
+# backfill_state.json whatever --metrics-file said, so a run on a copy wrote
+# into the real directory. The stand-ins below take the real paths' place
+# so a regression lands where a test can see it.
+# ---------------------------------------------------------------------------
+
+
+def test_the_default_invocation_resolves_to_the_same_paths_as_before(script):
+    real = Path("~/.claude/metrics").expanduser()
+    for kind in ("sessions", "subagents"):
+        arguments = argparse.Namespace(
+            kind=kind, metrics_file=None, state_file=None, backup_dir=None
+        )
+        assert script.resolve_paths(arguments) == (
+            str(real / f"{kind}.jsonl"),
+            str(real / "backfill_state.json"),
+            str(real / "backups"),
+        )
+
+
+def test_explicit_paths_win_over_the_defaults(script, tmp_path):
+    arguments = argparse.Namespace(
+        kind="sessions",
+        metrics_file=str(tmp_path / "m.jsonl"),
+        state_file=str(tmp_path / "s.json"),
+        backup_dir=str(tmp_path / "b"),
+    )
+    assert script.resolve_paths(arguments) == (
+        str(tmp_path / "m.jsonl"),
+        str(tmp_path / "s.json"),
+        str(tmp_path / "b"),
+    )
+
+
+def test_a_run_on_a_metrics_file_keeps_its_backup_and_state_beside_it(
+    tmp_path, script, monkeypatch, capsys
+):
+    paths = _streamed_fixture(tmp_path)
+    stand_in = tmp_path / "default metrics dir"
+    monkeypatch.setattr(script, "BACKFILL_STATE_FILE", str(stand_in / "backfill_state.json"))
+    monkeypatch.setattr(script, "BACKUP_DIRECTORY", str(stand_in / "backups"))
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "backfill-token-dedup.py",
+            "--kind",
+            "subagents",
+            "--metrics-file",
+            str(paths["metrics"]),
+            "--projects-dir",
+            str(paths["projects"]),
+            "--cutoff",
+            "2026-08-21",
+            "--apply",
+        ],
+    )
+
+    assert script.main() == 0
+
+    capsys.readouterr()
+    beside = paths["metrics"].parent
+    assert (
+        json.loads((beside / "backfill_state.json").read_text())["subagents"]["corrected_rows"] == 1
+    )
+    assert len(list((beside / "backups").glob("subagents.jsonl.backfill-*.bak"))) == 1
+    assert not stand_in.exists(), "nothing may land in the default directory"

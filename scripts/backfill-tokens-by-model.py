@@ -134,6 +134,7 @@ from __future__ import annotations
 
 import argparse
 import collections
+import glob
 import json
 import os
 import shlex
@@ -679,7 +680,9 @@ def backup_chain(backups: Path, metrics_name: str) -> list[tuple[str, str, Path]
     the file they backed up, so a copy under another name finds its own."""
     chain = []
     prefix = f"{metrics_name}."
-    for path in backups.glob(f"{prefix}*.bak"):
+    # Escaped: the name is matched literally, so "copy[1].jsonl" finds its
+    # own backups rather than reading "[1]" as a character class.
+    for path in backups.glob(f"{glob.escape(prefix)}*.bak"):
         middle = path.name[len(prefix) : -len(".bak")]
         for pass_name in (DEDUP_PASS, BY_MODEL_PASS):
             if middle.startswith(f"{pass_name}-"):
@@ -742,7 +745,7 @@ def earlier_apply_identities(
     """
     identities = row_identities(records, range(len(records)), id_key)
     written: set[str] = set()
-    sources = sorted(backups.glob(f"{metrics_name}.{BY_MODEL_PASS}-*.bak"))
+    sources = sorted(backups.glob(f"{glob.escape(metrics_name)}.{BY_MODEL_PASS}-*.bak"))
     for source in sources:
         earlier = load_records(str(source))
         require_prefix(earlier, records, id_key, source, "the metrics file")
@@ -1380,6 +1383,16 @@ def record_earlier_applies(
     dedup token passes rebuilt (see dedup_rebuilt_identities), each
     recorded under its own state entry."""
     backups = Path(arguments.backup_dir) if arguments.backup_dir else path.parent / "backups"
+    if not backups.is_dir():
+        # A missing directory reads as "no backups" to the globs below, and
+        # the run would report "nothing new to record" - a recovery that
+        # says it succeeded while recording nothing.
+        print(
+            f"refusing to record: no backup directory at {backups}; pass the one the "
+            "earlier runs wrote to with --backup-dir",
+            file=sys.stderr,
+        )
+        return 1
     try:
         written, by_model_sources = earlier_apply_identities(backups, path.name, records, id_key)
         rebuilt, dedup_sources = dedup_rebuilt_identities(backups, path.name, records, id_key)

@@ -526,6 +526,29 @@ def run_field_pass(
     )
 
 
+def resolve_paths(arguments: argparse.Namespace) -> tuple[str, str, str]:
+    """(metrics file, state file, backup directory) for this run.
+
+    The state and the backups default to BESIDE the metrics file, so a run
+    on a copy writes its backup and its state next to the copy and never
+    into the real ~/.claude/metrics. Without --metrics-file the metrics
+    file is the real one, and beside it are exactly BACKFILL_STATE_FILE and
+    BACKUP_DIRECTORY - the defaults these always had.
+    """
+    if not arguments.metrics_file:
+        return (
+            METRICS_FILES[arguments.kind],
+            arguments.state_file or BACKFILL_STATE_FILE,
+            arguments.backup_dir or BACKUP_DIRECTORY,
+        )
+    beside = Path(arguments.metrics_file).parent
+    return (
+        arguments.metrics_file,
+        arguments.state_file or str(beside / "backfill_state.json"),
+        arguments.backup_dir or str(beside / "backups"),
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -545,11 +568,18 @@ def main() -> int:
         help="default: ~/.claude/metrics/<kind>.jsonl",
     )
     parser.add_argument("--projects-dir", default=PROJECTS_DIRECTORY)
-    parser.add_argument("--backup-dir", default=BACKUP_DIRECTORY)
+    parser.add_argument(
+        "--backup-dir",
+        default=None,
+        help="default: a backups/ beside the metrics file",
+    )
     parser.add_argument(
         "--state-file",
-        default=BACKFILL_STATE_FILE,
-        help="where to record the cutoff and timestamp of a successful apply",
+        default=None,
+        help=(
+            "where to record the cutoff and timestamp of a successful apply "
+            "(default: backfill_state.json beside the metrics file)"
+        ),
     )
     parser.add_argument(
         "--cutoff",
@@ -579,7 +609,7 @@ def main() -> int:
     arguments = parser.parse_args()
 
     id_key = UNIT_ID_KEYS[arguments.kind]
-    path = arguments.metrics_file or METRICS_FILES[arguments.kind]
+    path, arguments.state_file, arguments.backup_dir = resolve_paths(arguments)
     metrics_path = Path(path)
     if not metrics_path.exists():
         print(f"no metrics file at {path}", file=sys.stderr)
