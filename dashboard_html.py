@@ -413,7 +413,7 @@ def render_trend_chart(
     # running (backlog, 2026-09-02: "the newest bar always reads as a
     # decline") - flagged here, once, rather than separately in each of
     # bars_for_pane/bars_for_tokens/the x-axis loop below.
-    partial_frac = metrics_core_module.partial_bucket_fraction(
+    partial_fraction = metrics_core_module.partial_bucket_fraction(
         granularity, days[-1]["day"], now or datetime.now().astimezone()
     )
 
@@ -490,8 +490,8 @@ def render_trend_chart(
 
     def build_y_axis(maximum_value: float) -> str:
         parts = []
-        for frac in (0, 0.25, 0.5, 0.75, 1.0):
-            value = maximum_value * frac
+        for fraction in (0, 0.25, 0.5, 0.75, 1.0):
+            value = maximum_value * fraction
             vertical_position = y_for(value, maximum_value)
             parts.append(
                 f'<line x1="{padding_left}" y1="{vertical_position:.1f}" '
@@ -509,8 +509,8 @@ def render_trend_chart(
         tick_position = padding_left + day_index * step + bar_width / 2
         bucket_dt = datetime.strptime(days[day_index]["day"], parse_format)
         tick_date = metrics_core_module.tick_label(granularity, bucket_dt, lang)
-        if day_index == day_count - 1 and partial_frac is not None:
-            tick_date += f" · {round(partial_frac * 100)}%"
+        if day_index == day_count - 1 and partial_fraction is not None:
+            tick_date += f" · {round(partial_fraction * 100)}%"
         tick_labels.append(
             f'<text x="{tick_position:.1f}" y="{height - 4}" class="chart-axis-label" '
             f'text-anchor="middle">{tick_date}</text>'
@@ -537,8 +537,8 @@ def render_trend_chart(
     # every bars_for_* segment's `if hatch_url and day_index == day_count - 1` guard below
     # is skipped entirely and nothing about a complete chart changes.
     partial_note = (
-        metrics_core_module.t("partial", lang, pct=round(partial_frac * 100))
-        if partial_frac is not None
+        metrics_core_module.t("partial", lang, pct=round(partial_fraction * 100))
+        if partial_fraction is not None
         else ""
     )
 
@@ -586,7 +586,7 @@ def render_trend_chart(
                     f"<title>{html.escape(project_label)} · {day['day']} - "
                     f"{metrics_core_module.format_tokens(value)} tokens{note}</title></rect>"
                 )
-                if day_index == day_count - 1 and partial_frac is not None:
+                if day_index == day_count - 1 and partial_fraction is not None:
                     bars.append(
                         hatch_overlay(hatch_id, bar_left, vertical_cursor, bar_width, seg_height)
                     )
@@ -625,7 +625,7 @@ def render_trend_chart(
                     f"<title>{type_name} · {day['day']} - "
                     f"{metrics_core_module.format_tokens(value)} tokens{note}</title></rect>"
                 )
-                if day_index == day_count - 1 and partial_frac is not None:
+                if day_index == day_count - 1 and partial_fraction is not None:
                     bars.append(
                         hatch_overlay(hatch_id, bar_left, vertical_cursor, bar_width, seg_height)
                     )
@@ -704,7 +704,7 @@ def render_trend_chart(
                     f"<title>{html.escape(label)} · {day['day']} - "
                     f"{metrics_core_module.format_tokens(value)} tokens{note}</title></rect>"
                 )
-                if day_index == day_count - 1 and partial_frac is not None:
+                if day_index == day_count - 1 and partial_fraction is not None:
                     bars.append(
                         hatch_overlay(hatch_id, bar_left, vertical_cursor, bar_width, seg_height)
                     )
@@ -731,7 +731,7 @@ def render_trend_chart(
     # (the ~15 existing tests, plus any period whose last bucket has
     # already fully elapsed) stays byte-identical to before this feature.
     def hatch_defs(hatch_id: str) -> str:
-        if partial_frac is None:
+        if partial_fraction is None:
             return ""
         return (
             f'<defs><pattern id="{hatch_id}" width="6" height="6" '

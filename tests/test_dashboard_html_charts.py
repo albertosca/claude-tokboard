@@ -358,7 +358,7 @@ VERTICAL_AXIS_FRACTIONS = (0.0, 0.25, 0.5, 0.75, 1.0)
 
 
 def test_render_trend_chart_y_axis_draws_five_gridlines_spanning_the_whole_plot_area():
-    # Pins gridline COUNT (one per frac in build_y_axis's tuple), their
+    # Pins gridline COUNT (one per fraction in build_y_axis's tuple), their
     # class (the stylesheet hook - renaming it silently unstyles every
     # gridline), their y positions (top of plot to baseline, evenly
     # spaced), and their horizontal EXTENT: a gridline runs from the left
@@ -373,7 +373,8 @@ def test_render_trend_chart_y_axis_draws_five_gridlines_spanning_the_whole_plot_
         ]
         assert len(gridlines) == len(VERTICAL_AXIS_FRACTIONS)
         expected_ys = [
-            PADDING_TOP + PLOT_HEIGHT - frac * PLOT_HEIGHT for frac in VERTICAL_AXIS_FRACTIONS
+            PADDING_TOP + PLOT_HEIGHT - fraction * PLOT_HEIGHT
+            for fraction in VERTICAL_AXIS_FRACTIONS
         ]
         assert expected_ys == [130.0, 100.0, 70.0, 40.0, 10.0]
         assert [line["y1"] for line in gridlines] == expected_ys
@@ -394,7 +395,7 @@ def test_render_trend_chart_y_axis_labels_read_the_scale_from_zero_up_to_the_bus
         _DAY_GRANULARITY_RECORDS, {"/proj/a": "group-color-1"}, "p1", lang="pt"
     )
     expected_labels = [
-        mr.format_tokens(_DAY_GRANULARITY_MAX * frac) for frac in VERTICAL_AXIS_FRACTIONS
+        mr.format_tokens(_DAY_GRANULARITY_MAX * fraction) for fraction in VERTICAL_AXIS_FRACTIONS
     ]
     assert expected_labels == ["0", "75", "150", "225", "300"]
     for svg in (_svg_block(out, "chart-pane-"), _svg_block(out, "chart-tokens-")):
@@ -694,7 +695,7 @@ def test_render_trend_chart_max_pane_or_1_guard_survives_all_zero_token_days():
     # the n<2 early return doesn't intervene) with every record at zero
     # tokens: day_totals = [0, 0], max([0, 0]) is falsy (0), so without
     # "or 1" the y-axis math (value / maximum_value inside build_y_axis, called
-    # with frac=0 giving value=0 too) divides 0/0 and raises
+    # with fraction=0 giving value=0 too) divides 0/0 and raises
     # ZeroDivisionError. Confirmed by running: dropping the guard raises
     # immediately on the first y-axis gridline.
     records = [

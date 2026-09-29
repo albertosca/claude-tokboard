@@ -923,7 +923,7 @@ class TrendChart(PlotextPlot):
         # as a decline") - said in words rather than greyed out like
         # dashboard_html.py's SVG rects are: each series is drawn in one
         # colour across every bucket (see draw_stacked_bars).
-        partial_frac = self.metrics_core_module.partial_bucket_fraction(
+        partial_fraction = self.metrics_core_module.partial_bucket_fraction(
             granularity, days[-1]["day"], now or datetime.now().astimezone()
         )
         color: Sequence[PlotColor]
@@ -1047,7 +1047,7 @@ class TrendChart(PlotextPlot):
         # this dashboard already using k/M/B/T suffixes. Overriding with
         # explicit ticks at even fractions of the tallest bar keeps the
         # scale meaningful while reusing format_tokens for the labels.
-        tick_values = [maximum_total * frac for frac in (0, 0.25, 0.5, 0.75, 1.0)]
+        tick_values = [maximum_total * fraction for fraction in (0, 0.25, 0.5, 0.75, 1.0)]
         tick_labels = [self.metrics_core_module.format_tokens(value) for value in tick_values]
         # The canvas is what is left of the widget once plotext has drawn
         # the widest y tick label and the two vertical frame lines beside
@@ -1078,11 +1078,11 @@ class TrendChart(PlotextPlot):
         # last one - made longest by the suffix - was the first to go.
         # Measured 2026-09-25 over 30 days of data: the percentage showed
         # at 25 of the 141 widths from 60 to 200 columns, none under 163.
-        if partial_frac is not None:
+        if partial_fraction is not None:
             marker = partial_marker(
                 self.metrics_core_module,
                 granularity,
-                round(partial_frac * 100),
+                round(partial_fraction * 100),
                 canvas_width,
                 lang=self.lang,
             )
