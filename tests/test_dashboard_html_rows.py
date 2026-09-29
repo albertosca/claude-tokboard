@@ -417,6 +417,28 @@ def test_render_group_header_shows_display_label_and_aggregate_token_total():
     assert f"({len(records)} sessões" in body
 
 
+@pytest.mark.parametrize("lang", ["en", "pt"])
+def test_render_group_header_formats_a_large_session_count(lang):
+    # A project with thousands of sessions used to print the raw int
+    # ("1234 sessions"/"1234 sessões") while the floor note next to it went
+    # through format_tokens (7d71b25) - the same treatment now applies here.
+    records = [
+        {
+            "session_id": f"s{index}",
+            "project_path": "/proj/a",
+            "timestamp_start": "2026-08-20T10:00:00Z",
+            "input_tokens": 1,
+            "output_tokens": 0,
+        }
+        for index in range(1234)
+    ]
+    group = _group("/proj/a", records)
+    out = dashboard_html.render_group_header(0, group, _ALL_NONE_PERIOD_WINDOWS, lang=lang)
+    _attrs, body = _period_block(out, "tudo")
+    assert f"({mr.format_tokens(1234)} " in body
+    assert "1234 " not in body
+
+
 def test_render_group_header_only_default_period_block_is_unhidden():
     # The period-visibility invariant itself, pinned directly and by name -
     # the same family of bug (period.id == DEFAULT_PERIOD_ID deciding what

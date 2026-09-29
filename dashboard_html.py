@@ -239,7 +239,9 @@ def render_group_header(
             sum(metrics_core_module.record_token_total(record) for record in scoped)
         )
         hidden_attribute = "" if period.id == metrics_core_module.DEFAULT_PERIOD_ID else " hidden"
-        session_count = metrics_core_module.tn("sessions", len(scoped), lang)
+        session_count = metrics_core_module.tn(
+            "sessions", len(scoped), lang, n=metrics_core_module.format_tokens(len(scoped))
+        )
         counts.append(
             f'<span class="group-count period-block" data-period="{period.id}"{hidden_attribute}>'
             f"({session_count} · {total_tokens} tokens)</span>"

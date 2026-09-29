@@ -563,3 +563,24 @@ def test_session_tree_group_header_shows_the_real_summed_total():
     assert alpha_label != beta_label, (
         "each project group's header must show its OWN summed token total, not a shared constant"
     )
+
+
+def test_session_tree_group_header_formats_a_large_session_count():
+    # Same treatment as the floor note's message count (7d71b25) and the
+    # HTML group header (backlog sweep 3 / M2) - a project with thousands
+    # of sessions must not print the raw int.
+    records = [
+        {
+            "project_path": "/projects/alpha",
+            "session_id": f"s{index}",
+            "input_tokens": 1,
+            "output_tokens": 0,
+            "cache_read_tokens": 0,
+            "cache_creation_tokens": 0,
+        }
+        for index in range(1234)
+    ]
+    tree = tui.build_session_tree(records, {}, mr, lang="pt")
+    label = str(tree.root.children[0].label)
+    assert mr.format_tokens(1234) in label, label
+    assert "1234 sessões" not in label, label

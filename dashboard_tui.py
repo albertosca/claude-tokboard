@@ -395,9 +395,14 @@ def build_session_tree(
         total_tokens = sum(
             metrics_core_module.record_token_total(record) for record in visible_records
         )
+        session_count = metrics_core_module.tn(
+            "sessions",
+            len(visible_records),
+            lang,
+            n=metrics_core_module.format_tokens(len(visible_records)),
+        )
         group_node = tree.root.add(
-            f"{label} ({metrics_core_module.tn('sessions', len(visible_records), lang)} · "
-            f"{metrics_core_module.format_tokens(total_tokens)} tokens)",
+            f"{label} ({session_count} · {metrics_core_module.format_tokens(total_tokens)} tokens)",
             expand=False,
         )
         for record in visible_records:
