@@ -888,22 +888,21 @@ def _explained_time_cut_count(facts: list[EntryFacts], end_timestamp: str) -> in
     """The distinct tool count at the time cut, or None when the entries
     lying between it and a file cut do not explain how it differs.
 
-    Read as a file position, the time cut ends after its own size - the
-    number of entries stamped at or before `end_timestamp` - so the entries
-    between it and a file cut are the ones between those two positions.
-    The time cut's count is explained when it equals the count of the file
-    prefix of that same size: the two cuts then differ exactly by the
-    distinct tool_use blocks of the entries between them, in either
-    direction. That is the measured mechanism behind the 2026-09-28 rows
-    (one in-flight message written just below the hook's last read). A
-    time cut that takes an entry further down while skipping one between
-    the cuts can match a stored count by coincidence, and is not trusted.
+    The time cut is trusted only when it IS a file prefix: the first `size`
+    entries, where `size` is how many are stamped at or before
+    `end_timestamp` - none of them stamped later. The two cuts then differ
+    exactly by the entries between the two positions, and by the distinct
+    tool_use blocks those entries carry, in either direction. That is the
+    measured mechanism behind the 2026-09-28 rows (one in-flight message
+    written just below the hook's last read). A time cut that takes an
+    entry further down while skipping one between the cuts can match a
+    stored count by coincidence - even with the same number of distinct
+    calls as the prefix of its size - and is not trusted.
     """
     size = sum(1 for fact in facts if fact.stamp <= end_timestamp)
-    time_count = tool_calls_as_of(facts, end_timestamp).distinct
-    if time_count != tool_calls_as_of(facts[:size], None).distinct:
+    if any(fact.stamp > end_timestamp for fact in facts[:size]):
         return None
-    return time_count
+    return tool_calls_as_of(facts[:size], None).distinct
 
 
 def plan_tool_call_corrections(

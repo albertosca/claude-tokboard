@@ -464,6 +464,29 @@ def test_a_time_cut_count_the_entries_between_the_cuts_do_not_explain_is_refused
     assert plan.stats == {"untouched: session has a row matching no formula": 1}
 
 
+def test_a_time_cut_that_only_counts_like_the_file_prefix_of_its_size_is_refused(tmp_path):
+    # The time cut is {m1, m3} and the file prefix of its size {m1, m2}:
+    # the same number of distinct tool calls, but not the same entries, so
+    # the entries between the cuts do not explain the move.
+    transcripts = {
+        "s": write(
+            tmp_path / "s.jsonl",
+            [
+                assistant("2026-08-01T10:00:00Z", "m1", 100, tools=("t1",)),
+                other("2026-08-01T10:00:05Z", "queue-operation"),
+                assistant("2026-08-01T10:00:07Z", "m2", 50, tools=("t2",)),
+                assistant("2026-08-01T10:00:02Z", "m3", 30, tools=("t3",)),
+            ],
+        )
+    }
+    records = [row("s", "2026-08-01T10:00:05Z", 100, tool_call_count=2)]
+
+    plan = mr.plan_tool_call_corrections(records, transcripts, "2026-09-01")
+
+    assert plan.values == {}
+    assert plan.stats == {"untouched: session has a row matching no formula": 1}
+
+
 # --- one read per unit ---------------------------------------------------------
 
 
