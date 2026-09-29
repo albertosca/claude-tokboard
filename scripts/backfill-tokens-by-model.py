@@ -558,6 +558,21 @@ def state_key(file_name: str) -> str:
     return f"{file_name}.{FIELD}"
 
 
+def recorded_names(state: Any, key: str) -> set[str]:
+    """The row names the backfill state's "fields" entry `key` holds.
+
+    Whatever this cannot read names no row: a hand-edited state then
+    excludes less, which the operator sees in the counts, rather than
+    failing the run.
+    """
+    fields = state.get("fields") if isinstance(state, dict) else None
+    entry = fields.get(key) if isinstance(fields, dict) else None
+    names = entry.get("corrected_row_ids") if isinstance(entry, dict) else None
+    if not isinstance(names, list):
+        return set()
+    return {name for name in names if isinstance(name, str)}
+
+
 def backfilled_rows(
     records: list[dict[str, Any]], id_key: str, state: Any, file_name: str
 ) -> set[int]:
@@ -578,12 +593,9 @@ def backfilled_rows(
     counts more rows as native, which the operator sees in the counts,
     rather than the run failing over a hand-edited file.
     """
-    fields = state.get("fields") if isinstance(state, dict) else None
-    entry = fields.get(state_key(file_name)) if isinstance(fields, dict) else None
-    names = entry.get("corrected_row_ids") if isinstance(entry, dict) else None
-    if not isinstance(names, list):
+    wanted = recorded_names(state, state_key(file_name))
+    if not wanted:
         return set()
-    wanted = {name for name in names if isinstance(name, str)}
     identities = row_identities(records, range(len(records)), id_key)
     return {
         index for index, name in enumerate(identities) if name in wanted and FIELD in records[index]
@@ -1166,9 +1178,16 @@ def record_earlier_applies(
     except NotAPrefix as problem:
         print(f"refusing to record: {problem}", file=sys.stderr)
         return 1
+    # Only the rows the state does not name yet: a second run finds the
+    # same rows in the same backups, and recording them again stamped a
+    # new applied_at and a rows_changed_this_run of the whole set for a
+    # run that changed nothing.
+    known = recorded_names(load_backfill_state(state_path), state_key(arguments.file))
+    fresh = [name for name in identities if name not in known]
     print(
         f"{len(identities)} row(s) written by earlier by-model applies, "
-        f"found in {sources} backup(s) under {backups}"
+        f"found in {sources} backup(s) under {backups}; "
+        f"{len(fresh)} of them not yet recorded"
     )
     if not arguments.apply:
         print(
@@ -1176,11 +1195,11 @@ def record_earlier_applies(
             "--record-earlier-applies --apply"
         )
         return 0
-    if not identities:
-        print("nothing to record; leaving the backfill state untouched")
+    if not fresh:
+        print("nothing new to record; leaving the backfill state untouched")
         return 0
     write_field_state(
-        arguments.file, FIELD, None, datetime.now().isoformat(), identities, path=state_path
+        arguments.file, FIELD, None, datetime.now().isoformat(), fresh, path=state_path
     )
     print(f"backfill state recorded: {state_path}")
     return 0

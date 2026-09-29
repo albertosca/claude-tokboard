@@ -1913,3 +1913,53 @@ def test_a_state_write_that_fails_after_the_apply_warns_instead_of_raising(
     warning = capsys.readouterr().err
     assert "the backfill state could not be recorded" in warning
     assert "disk full" in warning
+
+
+def test_record_earlier_applies_run_again_records_nothing_new(
+    script, tmp_path, monkeypatch, capsys
+):
+    # A second run finds the same rows in the same backups. Before, it
+    # rewrote the entry anyway: a new applied_at, and rows_changed_this_run
+    # set to the whole recorded set, as if it had just recorded them all.
+    _backfilled_history(tmp_path)
+    _applying_argv(monkeypatch, tmp_path, "--record-earlier-applies", "--apply")
+    assert script.main() == 0
+    capsys.readouterr()
+    recorded = _state_path(tmp_path).read_bytes()
+
+    _applying_argv(monkeypatch, tmp_path, "--record-earlier-applies", "--apply")
+    assert script.main() == 0
+
+    assert "nothing new to record" in capsys.readouterr().out
+    assert _state_path(tmp_path).read_bytes() == recorded
+
+
+def test_record_earlier_applies_records_only_the_rows_the_state_lacks(
+    script, tmp_path, monkeypatch, capsys
+):
+    live = _backfilled_history(tmp_path)
+    already = script.row_identities(live, [0], "session_id")
+    _state_path(tmp_path).write_text(
+        json.dumps(
+            {
+                "fields": {
+                    "sessions.tokens_by_model": {
+                        "cutoff": None,
+                        "applied_at": "2026-09-29T14:07:40",
+                        "corrected_rows": 1,
+                        "rows_changed_this_run": 1,
+                        "corrected_row_ids": already,
+                    }
+                }
+            }
+        )
+    )
+
+    _applying_argv(monkeypatch, tmp_path, "--record-earlier-applies", "--apply")
+    assert script.main() == 0
+
+    assert "1 of them not yet recorded" in capsys.readouterr().out
+    entry = json.loads(_state_path(tmp_path).read_text())["fields"]["sessions.tokens_by_model"]
+    assert entry["rows_changed_this_run"] == 1
+    assert entry["corrected_rows"] == 2
+    assert entry["corrected_row_ids"] == sorted(script.row_identities(live, [0, 1], "session_id"))
