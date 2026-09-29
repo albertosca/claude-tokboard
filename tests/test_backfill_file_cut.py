@@ -378,6 +378,80 @@ def test_a_hook_formula_wins_over_the_time_cut_count_when_both_match(tmp_path):
     assert plan.formulas == {0: mr.RAW}
 
 
+# --- the incomplete_usage pass -----------------------------------------------
+
+
+def unfinished(stamp: str, message_id: str, input_tokens: int) -> dict[str, Any]:
+    line = assistant(stamp, message_id, input_tokens)
+    line["message"]["stop_reason"] = None
+    return line
+
+
+def test_incomplete_usage_is_counted_at_the_cut_the_rows_tokens_reproduce(tmp_path):
+    transcripts = {
+        "s": write(
+            tmp_path / "s.jsonl",
+            [
+                unfinished("2026-08-01T10:00:00Z", "m1", 100),
+                assistant("2026-08-01T10:00:01Z", "m2", 10),
+                other("2026-08-01T10:00:05Z", "queue-operation"),
+                assistant("2026-08-01T10:00:03Z", "m3", 50),  # written after the read
+            ],
+        )
+    }
+    # 110 is m1 and m2: the file cut. The time cut (160) does not reproduce
+    # the row, which used to refuse the unit.
+    records = [row("s", "2026-08-01T10:00:05Z", 110)]
+
+    plan = mr.plan_incomplete_usage(records, transcripts, "2026-09-01")
+
+    assert plan.values == {0: 1}
+
+
+def test_incomplete_usage_refuses_file_cuts_that_disagree_on_the_count(tmp_path):
+    # m2 adds no tokens, so both cuts reproduce the row; it also ends m1,
+    # which only the second cut can therefore count as incomplete.
+    transcripts = {
+        "s": write(
+            tmp_path / "s.jsonl",
+            [
+                unfinished("2026-08-01T10:00:00Z", "m1", 100),
+                other("2026-08-01T10:00:05Z"),
+                assistant("2026-08-01T10:00:00Z", "m2", 0),
+                other("2026-08-01T10:00:05Z"),
+            ],
+        )
+    }
+    records = [row("s", "2026-08-01T10:00:05Z", 100)]
+
+    plan = mr.plan_incomplete_usage(records, transcripts, "2026-09-01")
+
+    assert plan.values == {}
+    assert plan.stats == {"untouched: session has a row whose file cut is ambiguous": 1}
+
+
+def test_incomplete_usage_still_refuses_a_row_reproduced_only_as_a_broken_formula(tmp_path):
+    # At the file cut 200 is the raw sum, not the peak: the tokens are not
+    # what the current hook writes, so the count is not trusted either.
+    transcripts = {
+        "s": write(
+            tmp_path / "s.jsonl",
+            [
+                unfinished("2026-08-01T10:00:00Z", "m1", 100),
+                unfinished("2026-08-01T10:00:00Z", "m1", 100),
+                other("2026-08-01T10:00:05Z"),
+            ],
+        )
+    }
+    records = [row("s", "2026-08-01T10:00:05Z", 200)]
+
+    plan = mr.plan_incomplete_usage(records, transcripts, "2026-09-01")
+
+    assert plan.stats == {
+        "untouched: session has a row whose tokens the transcript does not reproduce": 1
+    }
+
+
 # --- the script ----------------------------------------------------------------
 
 

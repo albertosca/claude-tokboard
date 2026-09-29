@@ -970,7 +970,10 @@ def plan_incomplete_usage(
     There is no earlier formula to recognise - no hook wrote the key before
     2026-09-25 - so the evidence that the as-of reconstruction models a row
     is its TOKENS: every row of the unit must equal the transcript's as-of
-    peak total exactly, or the unit is refused. A row that already carries
+    peak total exactly, or the unit is refused. "As-of" is the cut those
+    tokens say the hook made (see plan_corrections_by_formula), and the
+    count is taken at that same cut; prefixes that reproduce the tokens but
+    disagree on the count refuse the unit. A row that already carries
     the key must carry what the transcript gives, or the unit is refused.
     Only positive counts are added (absent means zero, as the hooks write
     it), so a row with nothing to flag is left byte-for-byte alone.
@@ -979,17 +982,34 @@ def plan_incomplete_usage(
     stats: collections.Counter[str] = collections.Counter()
     values: dict[int, int] = {}
     for indexes, transcript in _eligible_units(records, transcripts, cutoff, id_key, stats):
-        sums = build_prefix_sums(scan_transcript(transcript))
+        timeline = scan_transcript(transcript)
+        sums = build_prefix_sums(timeline)
+        file_sums = build_file_order_sums(timeline)
+        cut_points = scan_cut_points(transcript)
         facts = scan_entry_facts(transcript)
         proposals: dict[int, int] = {}
         refusal = None
         for index in indexes:
             record = records[index]
-            stored_tokens = [record.get(field, 0) or 0 for field in TOKEN_FIELDS]
-            if stored_tokens != as_of(sums, record["timestamp_end"]).peak:
+            stored_tokens = _stored_tokens(record)
+            end = record["timestamp_end"]
+            # (whether the tokens are the peak there, the count there), at
+            # the cut the tokens say the hook made - see the token pass.
+            counts = reproducing_cuts(stored_tokens, cut_points.get(end, ()), file_sums)
+            if counts:
+                readings = {
+                    (stored_tokens == file_sums.peak[cut], incomplete_as_of(facts[:cut], None))
+                    for cut in counts
+                }
+            else:
+                readings = {(stored_tokens == as_of(sums, end).peak, incomplete_as_of(facts, end))}
+            if len(readings) > 1:
+                refusal = "has a row whose file cut is ambiguous"
+                break
+            ((reproduced, count),) = readings
+            if not reproduced:
                 refusal = "has a row whose tokens the transcript does not reproduce"
                 break
-            count = incomplete_as_of(facts, record["timestamp_end"])
             if "incomplete_usage_messages" in record:
                 if record["incomplete_usage_messages"] != count:
                     refusal = "has a recorded count the transcript does not reproduce"
