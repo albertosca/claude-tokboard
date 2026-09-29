@@ -22,6 +22,13 @@ OWN timestamp_end: only transcript entries at or before that moment count,
 each message once at its per-field PEAK, exactly as the fixed
 parse_transcript counts it (see transcript_ingest.usage_increment).
 
+"At or before that moment" is the cut the hook really made: the file
+prefix whose last timestamped line carries timestamp_end, since the hook
+reads the file in order and Claude Code does not write it in timestamp
+order (see metrics_core.backfill.scan_cut_points). A prefix is used when
+its reconstruction reproduces the row's stored tokens; otherwise every
+entry stamped at or before timestamp_end is, as before 2026-09-29.
+
 Why the row selection is evidence-driven, not date-driven
 ---------------------------------------------------------
 Two broken formulas are in the file. Before 2026-08-11 the hook summed

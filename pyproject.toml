@@ -75,6 +75,7 @@ module = [
     "js_runtime",
     "test_backfill",
     "test_backfill_fields",
+    "test_backfill_file_cut",
     "test_backfill_script",
     "test_dashboard_html_backfill_note",
     "test_dashboard_html_charts",

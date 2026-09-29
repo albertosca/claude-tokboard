@@ -357,7 +357,76 @@ def build_prefix_sums(timeline: list[TimelineEntry]) -> PrefixSums:
     flagged in file order, or a per-id maximum built from increments - so
     sorting changes nothing but the lookup cost.
     """
-    ordered = sorted(timeline, key=lambda item: item[0])
+    return _running_sums(sorted(timeline, key=lambda item: item[0]))
+
+
+def build_file_order_sums(timeline: list[TimelineEntry]) -> PrefixSums:
+    """Running peak/first/raw totals over the timeline in FILE order, so
+    at_cut(sums, count) is what a hook that had read the first `count`
+    assistant entries of the file counted (see scan_cut_points)."""
+    return _running_sums(timeline)
+
+
+def at_cut(sums: PrefixSums, count: int) -> AsOf:
+    """Peak, first and raw totals after the first `count` entries of `sums`."""
+    return AsOf(sums.peak[count], sums.first[count], sums.raw[count])
+
+
+def scan_cut_points(path: str) -> dict[str, tuple[int, ...]]:
+    """timestamp -> every count of assistant entries a hook had read, in
+    FILE order, at a moment when the last timestamped line it had read
+    carried that timestamp.
+
+    This is the cut a hook really made. parse_transcript reads the file top
+    to bottom and records as timestamp_end the timestamp of the last
+    timestamped line it read - any line type (an attachment, a
+    queue-operation, a pr-link), not only an assistant entry. Claude Code
+    does not write lines in timestamp order, so the time cut (every
+    assistant entry stamped at or before timestamp_end) can include an entry
+    appended after the hook's read, or leave out one read before it.
+    Measured 2026-09-29 over real session history: 24 rows matched no
+    formula at the time cut - 11 missing an entry stamped earlier but
+    written later, 13 holding one stamped later but written earlier - and
+    all 24 matched exactly at one of these cuts.
+
+    A timestamp can close several cuts: untimestamped lines after it leave
+    it the last one read, and the same stamp can recur further down the
+    file. The counts index the same entries scan_transcript and
+    scan_entry_facts return, because all three skip exactly the same lines.
+    """
+    cuts: dict[str, set[int]] = collections.defaultdict(set)
+    count = 0
+    last: str | None = None
+    with Path(path).open() as transcript_file:
+        for line in transcript_file:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                entry = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            timestamp = entry.get("timestamp")
+            if timestamp:
+                last = timestamp
+            if entry.get("type") == "assistant":
+                count += 1
+            if last is not None:
+                cuts[last].add(count)
+    return {stamp: tuple(sorted(counts)) for stamp, counts in cuts.items()}
+
+
+def reproducing_cuts(
+    stored: list[int], counts: tuple[int, ...], file_sums: PrefixSums
+) -> list[int]:
+    """The candidate cuts at which one of the three reconstructions - peak,
+    first or raw - equals a row's stored tokens exactly. Tokens are the
+    evidence of which cut the hook made: the formula they match says which
+    hook wrote them, the cut they match says what it had read."""
+    return [count for count in counts if stored in at_cut(file_sums, count)]
+
+
+def _running_sums(ordered: list[TimelineEntry]) -> PrefixSums:
     stamps = [item[0] for item in ordered]
     peak: list[list[int]] = [[0] * 4]
     first: list[list[int]] = [[0] * 4]
@@ -465,6 +534,15 @@ def _recognise(stored: list[int], now: AsOf) -> str | None:
     return None
 
 
+# What a row reproducing the peak is read as: already correct.
+PEAK = "peak"
+
+
+def _recognise_or_peak(stored: list[int], now: AsOf) -> str | None:
+    """PEAK when `stored` is already correct at `now`, else _recognise."""
+    return PEAK if stored == now.peak else _recognise(stored, now)
+
+
 def plan_corrections_by_formula(
     records: list[dict[str, Any]],
     transcripts: dict[str, str],
@@ -483,6 +561,14 @@ def plan_corrections_by_formula(
     grow (the peak of an id is at least its first entry). Both are
     recognised only on an exact match, so neither can move the wrong way. A
     row recognised as neither refuses its unit.
+
+    "As of its own timestamp_end" means the cut the hook made (see
+    scan_cut_points): a file prefix whose last timestamped line carries
+    that timestamp, chosen because one of the three reconstructions there
+    reproduces the row's tokens exactly. Only when no such prefix does is
+    the time cut - every entry stamped at or before timestamp_end - used,
+    as it was before 2026-09-29. Two prefixes that both reproduce the
+    tokens but disagree on the formula or the peak refuse the unit.
 
     Decisions are taken per UNIT - the rows sharing `id_key` - and applied to
     all of its rows or none of them; every skip reason is counted so the dry
@@ -523,13 +609,37 @@ def plan_corrections_by_formula(
 
         timeline = scan_transcript(transcript)
         sums = build_prefix_sums(timeline)
-        proposals: dict[int, tuple[list[int], str]] = {}
+        file_sums = build_file_order_sums(timeline)
+        cut_points = scan_cut_points(transcript)
+        proposals: dict[int, tuple[list[int], str, int | None]] = {}
         already_correct = 0
         refused: str | None = None
         for index in indexes:
             record = records[index]
             stored = [record.get(field, 0) or 0 for field in TOKEN_FIELDS]
-            now = as_of(sums, record["timestamp_end"])
+            # The cut the hook made, when a file cut reproduces the tokens;
+            # the time cut otherwise.
+            counts = reproducing_cuts(
+                stored, cut_points.get(record["timestamp_end"], ()), file_sums
+            )
+            cut: int | None = counts[0] if counts else None
+            if cut is None:
+                now = as_of(sums, record["timestamp_end"])
+            else:
+                now = at_cut(file_sums, cut)
+                readings = {
+                    (
+                        _recognise_or_peak(stored, at_cut(file_sums, count)),
+                        tuple(file_sums.peak[count]),
+                    )
+                    for count in counts
+                }
+                if len(readings) > 1:
+                    # Two cuts the hook could have made disagree on whether
+                    # the row is broken or on what it should hold: refuse
+                    # rather than guess.
+                    refused = f"untouched: {unit_noun} has a row whose file cut is ambiguous"
+                    break
             if stored == now.peak:
                 already_correct += 1
                 continue
@@ -542,7 +652,7 @@ def plan_corrections_by_formula(
             # counts every entry the peak counts) and a first sum at most
             # (a message's peak is at least its first entry). verify_fields
             # still enforces each row's direction at write time.
-            proposals[index] = (now.peak, formula)
+            proposals[index] = (now.peak, formula, cut)
 
         if refused:
             stats[refused] += len(indexes)
@@ -552,11 +662,15 @@ def plan_corrections_by_formula(
             continue
 
         stats["untouched: already correct"] += already_correct
-        for index, (values, formula) in proposals.items():
+        for index, (values, formula, cut) in proposals.items():
             stats[CORRECTED_REASONS[formula]] += 1
             plan[index] = values
             formulas[index] = formula
-            model_maps[index] = model_totals_as_of(timeline, records[index]["timestamp_end"])
+            # The map is rebuilt from the same cut as the totals.
+            if cut is None:
+                model_maps[index] = model_totals_as_of(timeline, records[index]["timestamp_end"])
+            else:
+                model_maps[index] = model_totals_as_of(timeline[:cut], None)
             before = sum(records[index].get(field, 0) or 0 for field in TOKEN_FIELDS)
             # A planned row's peak is never zero: a zero peak means every
             # entry up to that moment is zero, so the raw and first sums are
