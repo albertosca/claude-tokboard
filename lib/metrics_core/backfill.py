@@ -856,6 +856,22 @@ TOOL_CALL_REASONS = {
 }
 
 
+def _stored_tokens(record: dict[str, Any]) -> list[int]:
+    return [record.get(field, 0) or 0 for field in TOKEN_FIELDS]
+
+
+def _tool_reading(stored: Any, now: ToolCounts) -> tuple[int, str | None] | None:
+    """(the count the row should hold, the formula it was recognised as or
+    None when it already holds it), or None when it matches no rule."""
+    if stored == now.distinct:
+        return (now.distinct, None)
+    if stored == now.raw:
+        return (now.distinct, RAW)
+    if stored == now.first:
+        return (now.distinct, FIRST)
+    return None
+
+
 def plan_tool_call_corrections(
     records: list[dict[str, Any]],
     transcripts: dict[str, str],
@@ -871,6 +887,15 @@ def plan_tool_call_corrections(
     current rule is left alone (so a second run is a no-op); a row matching
     none refuses its whole unit, and a unit is corrected all or nothing, so
     one agent's series never mixes two rules.
+
+    "As of its own timestamp_end" is the cut the row's TOKENS say the hook
+    made: the file prefix (see scan_cut_points) at which a token formula
+    reproduces them exactly, else the time cut. A tool_use block can sit in
+    an entry that carries no new usage, so the time cut can count a tool
+    call the hook had not read even where the tokens agree - measured
+    2026-09-29, 7 real rows whose time and file cuts disagreed on the target.
+    Prefixes that reproduce the tokens but disagree on the count, or on
+    whether the row matches at all, refuse the unit.
     """
     unit_noun = "agent" if id_key == "agent_id" else "session"
     stats: collections.Counter[str] = collections.Counter()
@@ -878,22 +903,33 @@ def plan_tool_call_corrections(
     formulas: dict[int, str] = {}
     for indexes, transcript in _eligible_units(records, transcripts, cutoff, id_key, stats):
         facts = scan_entry_facts(transcript)
+        file_sums = build_file_order_sums(scan_transcript(transcript))
+        cut_points = scan_cut_points(transcript)
         proposals: dict[int, tuple[int, str]] = {}
-        refused = False
+        refused: str | None = None
         for index in indexes:
-            stored = records[index].get("tool_call_count")
-            now = tool_calls_as_of(facts, records[index]["timestamp_end"])
-            if stored == now.distinct:
-                continue
-            if stored == now.raw:
-                proposals[index] = (now.distinct, RAW)
-            elif stored == now.first:
-                proposals[index] = (now.distinct, FIRST)
+            record = records[index]
+            stored = record.get("tool_call_count")
+            end = record["timestamp_end"]
+            counts = reproducing_cuts(_stored_tokens(record), cut_points.get(end, ()), file_sums)
+            if counts:
+                readings = {
+                    _tool_reading(stored, tool_calls_as_of(facts[:count], None)) for count in counts
+                }
             else:
-                refused = True
+                readings = {_tool_reading(stored, tool_calls_as_of(facts, end))}
+            if len(readings) > 1:
+                refused = "has a row whose file cut is ambiguous"
                 break
+            (reading,) = readings
+            if reading is None:
+                refused = "has a row matching no formula"
+                break
+            value, formula = reading
+            if formula is not None:
+                proposals[index] = (value, formula)
         if refused:
-            stats[f"untouched: {unit_noun} has a row matching no formula"] += len(indexes)
+            stats[f"untouched: {unit_noun} {refused}"] += len(indexes)
             continue
         stats["untouched: already correct"] += len(indexes) - len(proposals)
         for index, (value, formula) in proposals.items():

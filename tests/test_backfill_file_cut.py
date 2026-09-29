@@ -266,3 +266,64 @@ def test_a_raw_sum_no_file_cut_reproduces_is_corrected_at_the_time_cut(tmp_path)
 
     assert plan.values == {0: [100, 0, 0, 0]}
     assert list(plan.model_maps[0]) == ["model-alpha"]
+
+
+# --- the tool_calls pass -----------------------------------------------------
+
+
+# m1 is streamed: its tool_use block arrives in its SECOND entry. m2 is
+# stamped before the queue-operation line but written after it, so the hook
+# that stopped at the queue-operation never saw m2's tool call.
+STREAMED_TOOLS = [
+    assistant("2026-08-01T10:00:00Z", "m1", 100),
+    assistant("2026-08-01T10:00:00Z", "m1", 100, tools=("t1",)),
+    other("2026-08-01T10:00:05Z", "queue-operation"),
+    assistant("2026-08-01T10:00:03Z", "m2", 50, tools=("t2",)),
+]
+
+
+def test_a_tool_count_is_corrected_to_the_count_at_the_cut_its_tokens_reproduce(tmp_path):
+    transcripts = {"s": write(tmp_path / "s.jsonl", STREAMED_TOOLS)}
+    # tokens: the peak of m1 alone - the hook read up to the queue-operation.
+    # 0 is m1's first-entry count there; at the time cut the first-entry
+    # count is 1 (m2's) and the distinct count 2, so the row used to match
+    # no formula and would have been raised to 2 had it matched one.
+    records = [row("s", "2026-08-01T10:00:05Z", 100, tool_call_count=0)]
+
+    plan = mr.plan_tool_call_corrections(records, transcripts, "2026-09-01")
+
+    assert plan.values == {0: 1}
+    assert plan.formulas == {0: mr.FIRST}
+
+
+def test_a_tool_count_no_file_cut_explains_uses_the_time_cut(tmp_path):
+    transcripts = {"s": write(tmp_path / "s.jsonl", STREAMED_TOOLS)}
+    # tokens 150: m1 and m2, the time cut; no prefix reproduces them
+    records = [row("s", "2026-08-01T10:00:05Z", 150, tool_call_count=1)]
+
+    plan = mr.plan_tool_call_corrections(records, transcripts, "2026-09-01")
+
+    assert plan.values == {0: 2}
+    assert plan.formulas == {0: mr.FIRST}
+
+
+def test_file_cuts_that_reproduce_the_tokens_but_disagree_on_the_tool_count_refuse(tmp_path):
+    # The second entry of m1 carries no new usage, only a tool_use block:
+    # both cuts reproduce the tokens, and they disagree on the count.
+    transcripts = {
+        "s": write(
+            tmp_path / "s.jsonl",
+            [
+                assistant("2026-08-01T10:00:00Z", "m1", 100),
+                other("2026-08-01T10:00:05Z"),
+                assistant("2026-08-01T10:00:00Z", "m1", 100, tools=("t1",)),
+                other("2026-08-01T10:00:05Z"),
+            ],
+        )
+    }
+    records = [row("s", "2026-08-01T10:00:05Z", 100, tool_call_count=0)]
+
+    plan = mr.plan_tool_call_corrections(records, transcripts, "2026-09-01")
+
+    assert plan.values == {}
+    assert plan.stats == {"untouched: session has a row whose file cut is ambiguous": 1}
