@@ -12,6 +12,7 @@ import importlib.util
 import json
 import os
 import shlex
+import subprocess
 import sys
 import types
 from collections.abc import Iterable
@@ -1006,7 +1007,10 @@ def test_main_reports_the_plan_when_every_reconstruction_agrees(
     # A bare run writes nothing, and hands the operator the exact invocation
     # that would - including the evidence count it just measured, so the
     # number in --expect-checked is one they read rather than one they guess.
-    assert "DRY RUN - nothing written. To write: --file sessions --apply --expect-checked 1" in out
+    assert (
+        "DRY RUN - nothing written. To write: python3 scripts/backfill-tokens-by-model.py "
+        "--file sessions --apply --expect-checked 1" in out
+    )
     assert not (tmp_path / "metrics" / "backups").exists()
 
 
@@ -1720,8 +1724,9 @@ def test_the_dry_run_prints_the_file_it_actually_read(script, tmp_path, monkeypa
     assert script.main() == 0
     subagents_line = capsys.readouterr().out
 
-    assert "To write: --file sessions --apply --expect-checked 2" in sessions_line
-    assert "To write: --file subagents --apply --expect-checked 1" in subagents_line
+    program = "python3 scripts/backfill-tokens-by-model.py"
+    assert f"To write: {program} --file sessions --apply --expect-checked 2" in sessions_line
+    assert f"To write: {program} --file subagents --apply --expect-checked 1" in subagents_line
 
 
 # ---------------------------------------------------------------------------
@@ -1930,6 +1935,24 @@ def _printed_command(output: str, marker: str, stop: str = "\n") -> list[str]:
     return shlex.split(rest[: rest.index(stop)] if stop in rest else rest)
 
 
+def _run_as_pasted(words: list[str], base: Path) -> subprocess.CompletedProcess[str]:
+    """Run a printed command the way an operator pastes it: from the
+    repository root, as its own process. `python3` becomes this
+    interpreter (a version-manager shim on PATH can resolve through HOME),
+    and the environment is only a PATH and a HOME that is not the real one."""
+    assert words[0] == "python3"
+    home = base / "home"
+    home.mkdir(exist_ok=True)
+    return subprocess.run(
+        [sys.executable, *words[1:]],
+        cwd=SCRIPT_PATH.parent.parent,
+        env={"PATH": "/usr/bin:/bin", "HOME": str(home)},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
 def _run_printed(
     script: types.ModuleType, monkeypatch: pytest.MonkeyPatch, words: list[str]
 ) -> int:
@@ -1988,17 +2011,47 @@ def test_the_dry_run_prints_commands_aimed_at_the_files_it_read(
     _applying_argv(monkeypatch, base, "--record-earlier-applies")
     assert script.main() == 0
     words = _printed_command(capsys.readouterr().out, "To record: ")
+    assert words[:2] == ["python3", "scripts/backfill-tokens-by-model.py"]
     assert words[words.index("--metrics-dir") + 1] == str(base / "metrics")
     assert words[words.index("--backup-dir") + 1] == str(base / "backups")
-    assert _run_printed(script, monkeypatch, words) == 0
+    recording = _run_as_pasted(words, base)
+    assert recording.returncode == 0, recording.stderr
     assert len(_recorded_ids(base)) == 2
 
     _argv(monkeypatch, base)
     assert script.main() == 0
     words = _printed_command(capsys.readouterr().out, "To write: ", " (and read")
-    assert words[:4] == ["--file", "sessions", "--apply", "--expect-checked"]
+    assert words[:6] == [
+        "python3",
+        "scripts/backfill-tokens-by-model.py",
+        "--file",
+        "sessions",
+        "--apply",
+        "--expect-checked",
+    ]
     assert words[words.index("--metrics-dir") + 1] == str(base / "metrics")
     assert words[words.index("--projects-dir") + 1] == str(base / "projects")
+    # Every row here already has its map: pasted, the command passes the
+    # evidence floor it names and finds nothing left to write.
+    writing = _run_as_pasted(words, base)
+    assert writing.returncode == 0, writing.stderr
+    assert "nothing to write; leaving the file untouched" in writing.stdout
+
+
+def test_the_printed_write_command_writes_when_pasted(script, tmp_path, monkeypatch, capsys):
+    base = tmp_path / "with space"
+    base.mkdir()
+    _one_writable_session(base)
+    _argv(monkeypatch, base)
+    assert script.main() == 0
+    words = _printed_command(capsys.readouterr().out, "To write: ", " (and read")
+    assert _refused_to_write(base)
+
+    writing = _run_as_pasted(words, base)
+
+    assert writing.returncode == 0, writing.stderr
+    assert f"backfill state recorded: {_state_path(base)}" in writing.stdout
+    assert not _refused_to_write(base)
 
 
 def test_an_explicit_metrics_file_and_state_file_carry_into_the_printed_command(
@@ -2034,7 +2087,8 @@ def test_an_explicit_metrics_file_and_state_file_carry_into_the_printed_command(
     assert words[words.index("--metrics-file") + 1] == str(renamed)
     assert words[words.index("--state-file") + 1] == str(state)
 
-    assert _run_printed(script, monkeypatch, words) == 0
+    recording = _run_as_pasted(words, base)
+    assert recording.returncode == 0, recording.stderr
     entry = json.loads(state.read_text())["fields"]["sessions.tokens_by_model"]
     assert entry["corrected_row_ids"] == sorted(script.row_identities(live, [0, 1], "session_id"))
     assert not _state_path(base).exists(), "never the state beside the default metrics file"

@@ -1098,6 +1098,12 @@ def print_plan_summary(
         print(f"Earliest snapshot that would be written: {earliest}")
 
 
+# How a printed command names this program: run by python3 from the
+# repository root, the way scripts/README.md runs its scripts - the file
+# is not executable, so a bare name would not run.
+PROGRAM = ("python3", f"scripts/{Path(__file__).name}")
+
+
 def shell_command(*words: str) -> str:
     """`words` as one line a shell reads back as the same words: every
     printed command is meant to be pasted, and a path with a space in it
@@ -1301,6 +1307,7 @@ def main() -> int:
         # survives casual reading: the subagent file's smaller count clears
         # the session file's floor and writes, while the reverse refuses.
         write_command = shell_command(
+            *PROGRAM,
             "--file",
             arguments.file,
             "--apply",
@@ -1432,6 +1439,7 @@ def record_earlier_applies(
         )
     if not arguments.apply:
         record_command = shell_command(
+            *PROGRAM,
             "--file",
             arguments.file,
             "--record-earlier-applies",
