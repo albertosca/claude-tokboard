@@ -143,6 +143,35 @@ class TestSameOrWithinLinuxBranch:
         assert conftest._same_or_within(candidate, base) is False
 
 
+class TestSameOrWithinDarwinBranch:
+    """The darwin branch, forced the same way on any machine. On macOS the
+    suite reaches it for real, but this repo's CI runs on Linux, where only
+    these tests measure it - without them the coverage gate fails there
+    and nowhere else."""
+
+    def test_a_differently_cased_child_matches(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(sys, "platform", "darwin")
+        base = Path("/Users/someone/.claude")
+        assert conftest._same_or_within(Path("/Users/someone/.CLAUDE/metrics"), base) is True
+
+    def test_the_base_itself_matches_in_any_case(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(sys, "platform", "darwin")
+        base = Path("/Users/someone/.claude")
+        assert conftest._same_or_within(Path("/Users/someone/.Claude"), base) is True
+
+    def test_a_sibling_sharing_the_prefix_does_not_match(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(sys, "platform", "darwin")
+        base = Path("/Users/someone/.claude")
+        assert conftest._same_or_within(Path("/Users/someone/.claude-backup"), base) is False
+
+    def test_an_unrelated_path_does_not_match(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(sys, "platform", "darwin")
+        base = Path("/Users/someone/.claude")
+        assert conftest._same_or_within(Path("/Users/someone/projects"), base) is False
+
+
 class TestResolveDirectoryFileDescriptorBothPlatformBranches:
     """_resolve_directory_file_descriptor's real macOS branch (fcntl
     F_GETPATH) and real Linux branch (/proc/self/fd readlink) are each
