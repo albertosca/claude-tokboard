@@ -723,13 +723,13 @@ class TestDirFdRelativeOperationsAreBlocked:
     name like "victim.txt", resolved against an already-open directory file
     descriptor instead of the current working directory) - and, confirmed
     in scratch, their audit events DO carry that dir_fd as a trailing
-    integer argument (unlike "open", which does not carry one at all - see
-    this module's own docstring for that honestly-undecidable case). Before
-    this fix, _inside_real_claude_dir resolved a bare relative name against
-    the test process's OWN current working directory, which is never the
-    real ~/.claude - so a dir_fd-relative mutation into the real dir would
-    have silently succeeded, guard or no guard. Every fixture here builds
-    its own FAKE guarded directory (monkeypatching conftest's own
+    integer argument (unlike "open" - see TestOsOpenDirFdRelativeWritesAreBlocked
+    below for that one, closed a different way). Before this fix,
+    _inside_real_claude_dir resolved a bare relative name against the test
+    process's OWN current working directory, which is never the real
+    ~/.claude - so a dir_fd-relative mutation into the real dir would have
+    silently succeeded, guard or no guard. Every fixture here builds its
+    own FAKE guarded directory (monkeypatching conftest's own
     _REAL_CLAUDE_DIR/_REAL_CLAUDE_DIR_LEXICAL) and creates any pre-existing
     victim file BEFORE that redirect - the same ordering
     TestCaseAndSymlinkEscapes above uses - so test setup itself never trips
@@ -738,9 +738,13 @@ class TestDirFdRelativeOperationsAreBlocked:
     macOS's os.readlink(f"/dev/fd/{fd}") does NOT resolve a directory fd
     (confirmed in scratch: OSError(22, "Invalid argument")) - the guard
     uses fcntl(fd, F_GETPATH, ...) there instead; these tests exercise that
-    production code path directly (they do not run on Linux CI, but the
-    guard's own fallback for that platform is a plain os.readlink on
-    /proc/self/fd, documented in _directory_from_dir_fd's own docstring).
+    production code path directly. No skipif on either platform: on this
+    repo's own ubuntu-latest CI (its only runner - see
+    .github/workflows/ci.yml) they exercise the OTHER branch for real
+    instead - a plain os.readlink on /proc/self/fd, documented in
+    _resolve_directory_file_descriptor's own docstring - confirmed by an
+    actual green CI run (backlog 2026-09-28 #3 was closed by that evidence,
+    not by a test added here).
     """
 
     def test_mkdir_dir_fd_relative_into_the_real_dir_is_blocked(
@@ -897,3 +901,101 @@ class TestDirFdRelativeOperationsAreBlocked:
         finally:
             os.close(directory_file_descriptor)
         assert (harmless_directory / "harmless-child").exists()
+
+
+class TestOsOpenDirFdRelativeWritesAreBlocked:
+    """Backlog 2026-09-28 #3 (Package N, second round): os.open's own
+    "open" audit event never carries a dir_fd (confirmed in scratch -
+    exactly (path, mode, flags), unlike every operation in
+    TestDirFdRelativeOperationsAreBlocked above), so
+    _audit_real_claude_dir_guard alone could never detect a dir_fd-relative
+    WRITE through os.open() itself - the plain open()/Path.open() builtins
+    do not even accept a dir_fd parameter, so os.open is the only entry
+    point such a write can ever go through. Confirmed BEFORE this fix, by a
+    throwaway scratch pytest test built exactly like these (never
+    committed): with only the audit hook installed, a dir_fd-relative
+    os.open() write into a fake guarded directory raised nothing and
+    created the file.
+
+    conftest.py's _install_real_claude_dir_guard now closes this by
+    replacing os.open itself with _guarded_os_open, which resolves a dir_fd
+    the same way os.mkdir/os.remove/... already do (see
+    _guarded_os_open's own docstring) - so these tests exercise THAT
+    wrapper directly, not the audit hook, even though the assertions look
+    identical to TestDirFdRelativeOperationsAreBlocked's. Same fake-
+    guarded-directory seam, same ordering (pre-existing files created
+    BEFORE the _REAL_CLAUDE_DIR/_REAL_CLAUDE_DIR_LEXICAL monkeypatch), no
+    skipif on either platform - _guarded_os_open's own dir_fd resolution
+    runs identically regardless of platform; only
+    _resolve_directory_file_descriptor underneath it branches by platform,
+    exactly as it already does for every other dir_fd-carrying operation.
+    """
+
+    def test_write_mode_open_dir_fd_relative_into_the_real_dir_is_blocked(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        fake_claude_directory = tmp_path / ".claude"
+        fake_claude_directory.mkdir()
+        monkeypatch.setattr(conftest, "_REAL_CLAUDE_DIR", fake_claude_directory.resolve())
+        monkeypatch.setattr(conftest, "_REAL_CLAUDE_DIR_LEXICAL", fake_claude_directory)
+        directory_file_descriptor = os.open(str(fake_claude_directory), os.O_RDONLY)
+        try:
+            with pytest.raises(RealClaudeDirWrite):
+                os.open(
+                    "canary.txt",
+                    os.O_WRONLY | os.O_CREAT,
+                    dir_fd=directory_file_descriptor,
+                )
+        finally:
+            os.close(directory_file_descriptor)
+        assert not (fake_claude_directory / "canary.txt").exists()
+        _assert_guard_hit_and_clear_it()
+
+    def test_read_only_open_dir_fd_relative_into_the_real_dir_remains_allowed(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        # A pre-existing file, created BEFORE the guarded-directory
+        # monkeypatch below - the same ordering every fixture in this
+        # module uses, so test setup itself never trips the guard. A
+        # read-only dir_fd-relative open must stay allowed: this proves
+        # _guarded_os_open is not over-broad, the same way the sibling
+        # "outside the guarded dir" test below proves it for location.
+        fake_claude_directory = tmp_path / ".claude"
+        fake_claude_directory.mkdir()
+        existing_file = fake_claude_directory / "existing.txt"
+        existing_file.write_text("already here")
+        monkeypatch.setattr(conftest, "_REAL_CLAUDE_DIR", fake_claude_directory.resolve())
+        monkeypatch.setattr(conftest, "_REAL_CLAUDE_DIR_LEXICAL", fake_claude_directory)
+        directory_file_descriptor = os.open(str(fake_claude_directory), os.O_RDONLY)
+        try:
+            opened_file_descriptor = os.open(
+                "existing.txt", os.O_RDONLY, dir_fd=directory_file_descriptor
+            )
+            os.close(opened_file_descriptor)
+        finally:
+            os.close(directory_file_descriptor)
+        assert existing_file.read_text() == "already here"
+
+    def test_a_dir_fd_relative_write_outside_the_fake_guarded_dir_remains_allowed(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        # Mirrors TestDirFdRelativeOperationsAreBlocked's own "outside"
+        # test: a dir_fd pointing OUTSIDE the (fake) guarded directory must
+        # not itself become a false positive.
+        fake_claude_directory = tmp_path / ".claude"
+        fake_claude_directory.mkdir()
+        harmless_directory = tmp_path / "harmless"
+        harmless_directory.mkdir()
+        monkeypatch.setattr(conftest, "_REAL_CLAUDE_DIR", fake_claude_directory.resolve())
+        monkeypatch.setattr(conftest, "_REAL_CLAUDE_DIR_LEXICAL", fake_claude_directory)
+        directory_file_descriptor = os.open(str(harmless_directory), os.O_RDONLY)
+        try:
+            opened_file_descriptor = os.open(
+                "harmless-child.txt",
+                os.O_WRONLY | os.O_CREAT,
+                dir_fd=directory_file_descriptor,
+            )
+            os.close(opened_file_descriptor)
+        finally:
+            os.close(directory_file_descriptor)
+        assert (harmless_directory / "harmless-child.txt").exists()

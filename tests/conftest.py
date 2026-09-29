@@ -306,6 +306,63 @@ def _inside_real_claude_dir(
     return False
 
 
+_real_os_open = os.open
+# Captured ONCE, at import time, before _install_real_claude_dir_guard ever
+# rebinds os.open below - the same "capture the real thing before wrapping
+# it" pattern _RESOLVED_CLAUDE_CLI_PATH/_CLAUDE_INSTALLATION_DIRECTORY use
+# above for shutil.which("claude"). Kept as a plain module-level name (not
+# read back through os.open at call time) so _guarded_os_open still calls
+# the genuine os.open even after it has replaced os.open on the os module.
+
+
+def _guarded_os_open(
+    path: str | bytes | os.PathLike[str] | os.PathLike[bytes],
+    flags: int,
+    mode: int = 0o777,
+    **keyword_arguments: int | None,
+) -> int:
+    """Backlog 2026-09-28 #3 (Package N, second round): closes the one
+    remaining, previously-documented gap - a dir_fd-relative WRITE through
+    os.open() itself. Confirmed in scratch (and unchanged by this fix): the
+    "open" audit event _audit_real_claude_dir_guard reacts to never carries
+    a dir_fd argument, so that hook alone can never see this case. os.open
+    is also the ONLY entry point a dir_fd-relative open can go through in
+    the first place - the builtin open()/Path.open() accept no dir_fd
+    parameter at all - so wrapping this one function closes the gap
+    completely, without needing a second audit hook or a second event.
+
+    Takes **keyword_arguments rather than declaring the real parameter by
+    its own name: that name is CPython's own os.open API, fixed by the
+    interpreter, not a choice made in this file - so it is read only as a
+    string key out of keyword_arguments, and forwarded to the real os.open
+    unchanged below, never bound as an identifier in this module's own
+    namespace (which is what this repo's naming rule actually governs).
+
+    Reuses _inside_real_claude_dir/_resolve_directory_file_descriptor
+    exactly as os.mkdir/os.remove/os.rename/... already do for their own
+    directory-file-descriptor argument (see _audit_real_claude_dir_guard
+    above) - the same fake-guarded-directory seam those tests use
+    (monkeypatching _REAL_CLAUDE_DIR/_REAL_CLAUDE_DIR_LEXICAL) works
+    unchanged here.
+
+    Transparent for every other call: no directory file descriptor (the
+    overwhelming majority - every plain os.open() elsewhere in this suite
+    included) or a target this resolves as allowed both fall straight
+    through to the real os.open, with the exact same arguments, return
+    value, and error behavior (argument validation included - an
+    unexpected keyword still fails exactly where the real os.open itself
+    would reject it) as if this wrapper did not exist.
+    """
+    directory_file_descriptor = keyword_arguments.get("dir_fd")
+    if (
+        directory_file_descriptor is not None
+        and _is_write_open(None, flags)
+        and _inside_real_claude_dir(path, directory_file_descriptor)
+    ):
+        _raise(f"dir_fd-relative os.open() write into real {path!r}")
+    return _real_os_open(path, flags, mode, **keyword_arguments)
+
+
 def _is_real_claude_cli_name(name: str) -> bool:
     """Backlog 2026-09-24 #3: True for the literal basename "claude" (the
     common case), OR for any executable whose realpath lives inside the
@@ -527,9 +584,11 @@ def _audit_real_claude_dir_guard(event: str, audit_arguments: tuple[object, ...]
     if event == "open":
         # Confirmed in scratch: this event never carries a dir_fd, even
         # for a dir_fd-relative os.open() call - only the bare relative
-        # path and the flags. Left undetectable (fix round 1's own honest
-        # limit, unchanged) - see _install_real_claude_dir_guard's
-        # docstring.
+        # path and the flags. That gap is closed separately, by wrapping
+        # os.open itself rather than by this audit hook - see
+        # _guarded_os_open and _install_real_claude_dir_guard's docstring
+        # (backlog 2026-09-28 #3). This branch is left exactly as it was:
+        # it still cannot see a dir_fd, and does not need to any more.
         path, mode, flags = audit_arguments
         if _is_write_open(mode, flags) and _inside_real_claude_dir(path):
             _raise(f"write-mode open() of real {path!r}")
@@ -695,14 +754,6 @@ def _install_real_claude_dir_guard() -> None:
       refuses any command that looks like it invokes one outright (see
       _system_command_invokes_an_unguarded_python), rather than trying to
       ask a question os.system's own API makes impossible to answer.
-    - dir_fd-relative opens (os.open(path, ..., dir_fd=some_fd)) remain
-      undetectable: confirmed in scratch that the "open" audit event's own
-      arguments are exactly (path, mode, flags) - it does not carry the
-      dir_fd at all, unlike os.mkdir/os.rmdir/os.remove/os.rename/
-      os.symlink/os.link/shutil.rmtree (all of which DO carry it, and are
-      now resolved against it - see _resolve_directory_file_descriptor). A bare
-      relative "open" path can therefore not be proven to name a location
-      inside the real ~/.claude OR to name one outside it.
     - A read-only sqlite3.connect is detected only via the one shape
       sqlite3 itself guarantees never creates or mutates anything - an
       explicit "file:...?mode=ro" URI (see _is_read_only_sqlite_uri). The
@@ -718,11 +769,22 @@ def _install_real_claude_dir_guard() -> None:
     work for a directory fd (confirmed in scratch: OSError(22, "Invalid
     argument")) - _resolve_directory_file_descriptor uses fcntl(fd, F_GETPATH, ...)
     there instead, falling back to the simpler /proc/self/fd readlink on
-    Linux (this repo's own CI, unverified against a real Linux box from
-    here - the platform split itself is standard, well-documented POSIX
-    behavior, not something this session could confirm on this machine).
+    Linux. Both branches now run for real, each on its own platform: the
+    Linux one on this repo's own ubuntu-latest CI (confirmed by a real
+    green CI run exercising TestDirFdRelativeOperationsAreBlocked - backlog
+    2026-09-28 #3's original question, closed by that evidence, not by a
+    test written here), the macOS one on the author's own machine.
+
+    One gap this docstring used to list here - a dir_fd-relative WRITE
+    through os.open() itself - is closed too, but NOT by this hook: the
+    "open" audit event's own arguments are still exactly (path, mode,
+    flags), with no dir_fd, so this function could never see it. Instead,
+    _install_real_claude_dir_guard (below) also replaces os.open itself
+    with _guarded_os_open, which resolves a dir_fd the same way os.mkdir/
+    os.remove/... already do. See _guarded_os_open's own docstring.
     """
     sys.addaudithook(_audit_real_claude_dir_guard)
+    os.open = _guarded_os_open
 
 
 _install_real_claude_dir_guard()
