@@ -295,7 +295,7 @@ def make_screenshot(home: Path, work: Path, lang: str) -> None:
     shutil.move(str(shot), str(ASSETS / f"dashboard-{lang}.png"))
 
 
-# Fixed 2026-09-24 (found while regenerating for backlog #9): MetricsTUIApp's
+# Fixed 2026-09-28 (found while regenerating for backlog #9): MetricsTUIApp's
 # third positional parameter is `arguments`, and load_data's is
 # `metrics_core_module` - this inline script still called them `args` and
 # `mr`, a rename in dashboard_tui.py this untested (see the module

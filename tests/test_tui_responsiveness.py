@@ -173,13 +173,13 @@ own).
 
 Ceiling, measured idle on this machine (three repeats, five presses each,
 this exact k=3/minimum construction, committed eight-record fixture,
-2026-09-24): the heaviest press's minimum-across-repeats wall time was
+2026-09-28): the heaviest press's minimum-across-repeats wall time was
 0.166s and 0.196s in two separate runs - call it ~0.2s. Backlog item #8
 specifies `max(1.5s, 10x idle min)` when no repeatable contention script
 is available to calibrate against (there was none left over in this
 session's scratchpad from the #1 responsiveness work) - 10x ~0.2s is
 ~2.0s, which is also comfortably above the 1.5s floor, so
-MAXIMUM_PRESS_WALL_SECONDS is 2.0. Canary-checked (2026-09-24): a
+MAXIMUM_PRESS_WALL_SECONDS is 2.0. Canary-checked (2026-09-28): a
 `threading.Event().wait(2)` injected into action_cycle_period in a
 throwaway copy of dashboard_tui.py pushed every press's wall time to
 ~2.15-2.3s (minimum-across-3-repeats: 2.167s) - comfortably over the
@@ -227,7 +227,7 @@ MAXIMUM_PRESS_CPU_SECONDS = 0.4
 # SOMETHING WITHOUT AN AUDIT EVENT" in the module docstring for why this is
 # a minimum (survives load inflating some runs) rather than a mean or a
 # single run (either of which a load spike can push over any fixed ceiling
-# on its own), and for the 2026-09-24 measurement (~0.2s idle) and canary
+# on its own), and for the 2026-09-28 measurement (~0.2s idle) and canary
 # (a 2s injected wait measured at 2.167s minimum-across-repeats) that
 # calibrate this number.
 MAXIMUM_PRESS_WALL_SECONDS = 2.0
