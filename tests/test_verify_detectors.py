@@ -328,6 +328,24 @@ def test_missing_evidence_reports_both_when_neither_appeared(tmp_path, script):
 
 
 # --------------------------------------------------------------------------
+# The real DEFECTS list
+# --------------------------------------------------------------------------
+
+
+def test_every_real_defect_anchor_still_matches_its_target(script):
+    # The class guard that would have caught the unscoped-totals anchor
+    # going stale after the mr -> metrics_core_module rename: the anchor
+    # matched 0 times and nothing here noticed until this test was written.
+    # Pure: reads each defect's real target off disk and calls patch() on
+    # the text in memory only - never writes anything back, never touches
+    # main() or run_suite(), never runs the suite.
+    for defect in script.DEFECTS:
+        original_text = defect.target.read_text()
+        patched_text = defect.patch(original_text)
+        assert patched_text != original_text
+
+
+# --------------------------------------------------------------------------
 # run_suite()
 # --------------------------------------------------------------------------
 

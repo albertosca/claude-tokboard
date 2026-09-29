@@ -199,8 +199,13 @@ DEFECTS = [
             "the original defect reported 29.3B under every period, "
             "'ontem' included, when 'ontem' was actually 5.9B."
         ),
-        anchor="mr.compute_token_type_totals(mr.filter_sessions_by_window(records, window))",
-        replacement="mr.compute_token_type_totals(records)",
+        # Anchored on the inner call, not the whole expression: the outer
+        # compute_token_type_totals(...) call now wraps its argument across
+        # three lines, so an anchor spanning both calls on one line matches
+        # 0 times after that reformat. This inner call still sits on its
+        # own line and occurs exactly once in the file.
+        anchor="metrics_core_module.filter_sessions_by_window(records, window)",
+        replacement="records",
         expected_tests=[
             "tests/test_dashboard_rendering.py::test_every_period_shows_exactly_the_sessions_that_belong",
         ],
