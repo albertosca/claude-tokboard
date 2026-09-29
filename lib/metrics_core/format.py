@@ -132,6 +132,14 @@ def assign_model_slots(models: Iterable[str], slots: int) -> dict[str, ModelColo
     the survivors, so a model that used to appear second can become first
     and take over slot 0. Colour stability is a property of an
     append-only history, not a promise that survives editing it.
+
+    The same is true the other way round: a repair script that writes a
+    model map onto an OLD row (e.g. scripts/backfill-tokens-by-model.py)
+    can give that model an earlier first appearance than it had before the
+    run, re-ranking colours once. Accepted rather than guarded against -
+    such runs are explicit and rare, and "first appearance" meaning true
+    historical time rather than whatever order records happen to load in
+    is the whole design (see order_models_by_first_appearance).
     """
     first_seen_order: dict[str, int] = {}
     for index, model in enumerate(models):
