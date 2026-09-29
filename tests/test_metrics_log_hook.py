@@ -303,6 +303,73 @@ def test_parse_transcript_last_entry_carrying_git_branch_wins(script, tmp_path):
     assert parsed["git_branch"] == "second-branch"
 
 
+# ---------------------------------------------------------------------------
+# parse_transcript: claude_code_version
+# ---------------------------------------------------------------------------
+
+
+def test_parse_transcript_claude_code_version_absent_when_no_entry_carries_one(script, tmp_path):
+    path = tmp_path / "t.jsonl"
+    _write_lines(path, [json.dumps({"type": "user"}), json.dumps({"type": "assistant"})])
+
+    parsed = script.parse_transcript(str(path))
+
+    assert parsed["claude_code_version"] is None
+    assert parsed["claude_code_version_first"] is None
+
+
+def test_parse_transcript_claude_code_version_read_from_any_entry_type(script, tmp_path):
+    # version sits at the same top level as gitBranch, not inside message -
+    # a "user" entry carries it exactly like an "assistant" one.
+    path = tmp_path / "t.jsonl"
+    _write_lines(path, [json.dumps({"type": "user", "version": "2.1.260"})])
+
+    parsed = script.parse_transcript(str(path))
+
+    assert parsed["claude_code_version"] == "2.1.260"
+
+
+def test_parse_transcript_claude_code_version_last_entry_wins_and_first_is_dropped_when_equal(
+    script, tmp_path
+):
+    # Every entry agrees on the version: claude_code_version_first would
+    # only ever repeat it, so it stays absent - "keep records small".
+    path = tmp_path / "t.jsonl"
+    _write_lines(
+        path,
+        [
+            json.dumps({"type": "user", "version": "2.1.260"}),
+            json.dumps({"type": "user"}),  # no version key: must not clear it
+            json.dumps({"type": "user", "version": "2.1.260"}),
+        ],
+    )
+
+    parsed = script.parse_transcript(str(path))
+
+    assert parsed["claude_code_version"] == "2.1.260"
+    assert parsed["claude_code_version_first"] is None
+
+
+def test_parse_transcript_claude_code_version_first_recorded_only_when_it_differs(script, tmp_path):
+    # A long session spanning an upgrade mid-way: the LAST version is what
+    # produced the tail end of the session's tokens (claude_code_version),
+    # and the FIRST is kept alongside it precisely because it differs.
+    path = tmp_path / "t.jsonl"
+    _write_lines(
+        path,
+        [
+            json.dumps({"type": "user", "version": "2.1.260"}),
+            json.dumps({"type": "user"}),  # no version key: must not clear either bound
+            json.dumps({"type": "user", "version": "2.1.284"}),
+        ],
+    )
+
+    parsed = script.parse_transcript(str(path))
+
+    assert parsed["claude_code_version"] == "2.1.284"
+    assert parsed["claude_code_version_first"] == "2.1.260"
+
+
 def test_parse_transcript_only_assistant_entries_count(script, tmp_path):
     path = tmp_path / "t.jsonl"
     _write_lines(
@@ -902,6 +969,8 @@ _PARSED_STUB = {
     "timestamp_end": "2026-01-01T00:01:00Z",
     "duration_seconds": 60.0,
     "git_branch": "main",
+    "claude_code_version": None,
+    "claude_code_version_first": None,
     "input_tokens": 1,
     "output_tokens": 2,
     "cache_read_tokens": 3,
@@ -1220,3 +1289,56 @@ def test_build_record_records_incomplete_usage_messages_only_when_there_are_some
 
     assert script.build_record({"session_id": "s"}, flagged)["incomplete_usage_messages"] == 3
     assert "incomplete_usage_messages" not in script.build_record({"session_id": "s"}, _PARSED_STUB)
+
+
+# --- claude_code_version -------------------------------------------------
+#
+# Backlog 2026-09-28 #5: absent means unknown, same reasoning as
+# incomplete_usage_messages above - the whole historical corpus predates
+# this key.
+
+
+def test_build_record_omits_claude_code_version_when_the_transcript_never_carried_one(
+    script, monkeypatch
+):
+    monkeypatch.setattr(script, "get_tmux_window", lambda: None)
+    monkeypatch.setattr(
+        script, "get_internal_name", lambda session_id, sessions_directory=None: None
+    )
+
+    record = script.build_record({"session_id": "s"}, _PARSED_STUB)
+
+    assert "claude_code_version" not in record
+    assert "claude_code_version_first" not in record
+
+
+def test_build_record_carries_claude_code_version_when_known(script, monkeypatch):
+    monkeypatch.setattr(script, "get_tmux_window", lambda: None)
+    monkeypatch.setattr(
+        script, "get_internal_name", lambda session_id, sessions_directory=None: None
+    )
+    parsed = dict(_PARSED_STUB, claude_code_version="2.1.284")
+
+    record = script.build_record({"session_id": "s"}, parsed)
+
+    assert record["claude_code_version"] == "2.1.284"
+    assert "claude_code_version_first" not in record
+
+
+def test_build_record_carries_claude_code_version_first_only_alongside_the_last(
+    script, monkeypatch
+):
+    # claude_code_version_first can only appear together with
+    # claude_code_version - parse_transcript already guarantees it is None
+    # whenever claude_code_version is, so there is no first-without-last
+    # case to defend against here; this pins the alongside case.
+    monkeypatch.setattr(script, "get_tmux_window", lambda: None)
+    monkeypatch.setattr(
+        script, "get_internal_name", lambda session_id, sessions_directory=None: None
+    )
+    parsed = dict(_PARSED_STUB, claude_code_version="2.1.284", claude_code_version_first="2.1.260")
+
+    record = script.build_record({"session_id": "s"}, parsed)
+
+    assert record["claude_code_version"] == "2.1.284"
+    assert record["claude_code_version_first"] == "2.1.260"

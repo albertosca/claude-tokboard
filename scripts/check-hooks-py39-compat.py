@@ -61,10 +61,15 @@ HOOKS: list[HookSpec] = [
 # first is what makes the first "over" and so counted - a lone unfinalised
 # message is always excluded as possibly still in progress. This is what
 # exercises the incomplete_usage_messages key end to end under 3.9, not
-# just the four token fields.
+# just the four token fields. Both entries also carry the same "version"
+# (backlog 2026-09-28 #5), so the check below exercises claude_code_version
+# too - the entry-level field parse_transcript now reads regardless of
+# entry type, same as it already does for gitBranch.
+SYNTHETIC_TRANSCRIPT_VERSION = "2.1.284"
 SYNTHETIC_TRANSCRIPT_ENTRY = {
     "type": "assistant",
     "timestamp": "2026-01-01T00:00:00.000Z",
+    "version": SYNTHETIC_TRANSCRIPT_VERSION,
     "message": {
         "id": "msg_check_1",
         "model": "claude-check",
@@ -79,6 +84,7 @@ SYNTHETIC_TRANSCRIPT_ENTRY = {
 SYNTHETIC_TRANSCRIPT_ENTRY_2 = {
     "type": "assistant",
     "timestamp": "2026-01-01T00:00:01.000Z",
+    "version": SYNTHETIC_TRANSCRIPT_VERSION,
     "message": {
         "id": "msg_check_2",
         "model": "claude-check",
@@ -144,6 +150,11 @@ def check_hook(
             return (
                 f"{hook_path.name} did not write incomplete_usage_messages=1 for a "
                 f"transcript with one over, unfinalised message: {record!r}"
+            )
+        if record.get("claude_code_version") != SYNTHETIC_TRANSCRIPT_VERSION:
+            return (
+                f"{hook_path.name} did not write claude_code_version="
+                f"{SYNTHETIC_TRANSCRIPT_VERSION!r}: {record!r}"
             )
         return None
 

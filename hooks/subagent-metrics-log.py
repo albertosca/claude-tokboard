@@ -51,6 +51,13 @@ def build_record(hook_input: dict[str, Any], parsed: dict[str, Any]) -> dict[str
     # Only when there are some, as in the sibling hook.
     if parsed["incomplete_usage_messages"]:
         record["incomplete_usage_messages"] = parsed["incomplete_usage_messages"]
+    # Backlog 2026-09-28 #5: see the sibling hook - absent when the
+    # transcript never carried a version, claude_code_version_first only
+    # when it differs from claude_code_version.
+    if parsed["claude_code_version"] is not None:
+        record["claude_code_version"] = parsed["claude_code_version"]
+        if parsed["claude_code_version_first"] is not None:
+            record["claude_code_version_first"] = parsed["claude_code_version_first"]
     # See the sibling hook: added, never set to None.
     if project_root is not None:
         record["project_root"] = project_root

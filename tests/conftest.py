@@ -174,17 +174,24 @@ def _lexical_abspath_or_none(path_argument: object) -> Path | None:
         # follows symlinks, which is exactly the behavior this lexical
         # form exists to avoid (see the docstring above).
         return Path(os.path.abspath(candidate))  # noqa: PTH100
-    except (OSError, ValueError):  # pragma: no cover - defensive
+    except (OSError, ValueError):
         # Confirmed in scratch: unlike _resolved_path_or_none's
         # Path.resolve(), neither os.path.abspath (pure string join with
         # os.getcwd(), no stat call) nor the bare Path(...) construction
         # that wraps it raises for an embedded null byte - the one input
-        # that DOES reach the analogous except clause above. The only
-        # real way this could still raise is os.getcwd() itself failing
-        # because the process's own current directory was deleted out
-        # from under it - not reproducible from a test without deleting
-        # this test PROCESS's cwd, which would corrupt every other test
-        # that runs after it in the same session.
+        # that DOES reach the analogous except clause above. The only real
+        # way this raises is os.getcwd() itself failing, e.g. because the
+        # process's own current directory was deleted out from under it -
+        # a reviewer reached exactly this in a CHILD process (chdir into a
+        # temp dir, rmdir it out from under the process, call
+        # os.path.abspath on a relative path -> FileNotFoundError, an
+        # OSError subclass). Not reproduced here by actually deleting this
+        # test PROCESS's cwd (would corrupt every other test that runs
+        # after it in the same session) - see
+        # tests/test_conftest_guard_direct_dispatch.py's
+        # test_lexical_abspath_or_none_returns_none_when_os_getcwd_fails,
+        # which monkeypatches os.getcwd to raise and so exercises this
+        # exact except clause for real.
         return None
 
 
@@ -368,10 +375,19 @@ def _guarded_os_open(
     Transparent for every other call: no directory file descriptor (the
     overwhelming majority - every plain os.open() elsewhere in this suite
     included) or a target this resolves as allowed both fall straight
-    through to the real os.open, with the exact same arguments, return
-    value, and error behavior (argument validation included - an
-    unexpected keyword still fails exactly where the real os.open itself
-    would reject it) as if this wrapper did not exist.
+    through to the real os.open, with the exact same arguments and return
+    value as if this wrapper did not exist. Rejection is transparent by
+    exception TYPE, not necessarily by message TEXT (Package P2, folded in
+    from Package N's review - the earlier docstring here overclaimed "exact
+    same error behavior"): an unexpected KEYWORD still raises TypeError
+    with the identical message, because that call fails inside the real
+    os.open() below, not against this wrapper's own signature - confirmed
+    in scratch. A malformed ARITY (e.g. an extra positional argument) is
+    different: Python binds the call against THIS wrapper's own signature
+    first, so the TypeError it raises names "_guarded_os_open" and this
+    wrapper's own positional range, not "open" and the real os.open's -
+    also confirmed in scratch, to differ in text from what the real
+    os.open() raises for the identical call. Both are still TypeError.
     """
     directory_file_descriptor = keyword_arguments.get("dir_fd")
     if (

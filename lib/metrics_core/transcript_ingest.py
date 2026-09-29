@@ -158,6 +158,8 @@ def parse_transcript(path: str) -> dict[str, Any]:
     first_timestamp = None
     last_timestamp = None
     git_branch = None
+    claude_code_version = None
+    claude_code_version_first = None
     tokens_by_model: dict[str, dict[str, int]] = {}
 
     with Path(path).open() as transcript_file:
@@ -179,6 +181,21 @@ def parse_transcript(path: str) -> dict[str, Any]:
             branch = entry.get("gitBranch")
             if branch:
                 git_branch = branch
+
+            # Backlog 2026-09-28 #5: every entry Claude Code writes (not
+            # just assistant ones) carries the CLI's own "version", e.g.
+            # "2.1.284" - present on the same top-level shape as gitBranch
+            # above, so it is captured the same way. A long session can
+            # span an upgrade, so the LAST entry with a version wins as
+            # `claude_code_version` (what the row's tokens were actually
+            # produced under, for the tail end of the session) and the
+            # FIRST is kept separately only long enough to compare against
+            # it after the loop.
+            version = entry.get("version")
+            if version:
+                if claude_code_version is None:
+                    claude_code_version_first = version
+                claude_code_version = version
 
             if entry.get("type") == "assistant":
                 message = entry.get("message") or {}
@@ -263,11 +280,20 @@ def parse_transcript(path: str) -> dict[str, Any]:
         except ValueError:
             duration_seconds = None
 
+    # claude_code_version_first is dropped back to None here when it never
+    # differed from the (last-wins) claude_code_version above - keeping the
+    # record small is the point (see the loop's own comment): a session
+    # that never spanned an upgrade has nothing extra to say.
+    if claude_code_version_first == claude_code_version:
+        claude_code_version_first = None
+
     return {
         "timestamp_start": first_timestamp,
         "timestamp_end": last_timestamp,
         "duration_seconds": duration_seconds,
         "git_branch": git_branch,
+        "claude_code_version": claude_code_version,
+        "claude_code_version_first": claude_code_version_first,
         "input_tokens": input_tokens,
         "output_tokens": output_tokens,
         "cache_read_tokens": cache_read_tokens,

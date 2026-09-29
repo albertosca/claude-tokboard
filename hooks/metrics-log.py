@@ -101,6 +101,16 @@ def build_record(hook_input: dict[str, Any], parsed: dict[str, Any]) -> dict[str
     # written before the key existed, and most rows have none.
     if parsed["incomplete_usage_messages"]:
         record["incomplete_usage_messages"] = parsed["incomplete_usage_messages"]
+    # Backlog 2026-09-28 #5: absent when the transcript never carried a
+    # version at all, same reasoning as incomplete_usage_messages above -
+    # the whole historical corpus predates this key. claude_code_version_first
+    # is added only when parse_transcript already determined it differs from
+    # claude_code_version (a session that spanned an upgrade); it can only
+    # be present alongside claude_code_version, never alone.
+    if parsed["claude_code_version"] is not None:
+        record["claude_code_version"] = parsed["claude_code_version"]
+        if parsed["claude_code_version_first"] is not None:
+            record["claude_code_version_first"] = parsed["claude_code_version_first"]
     # Added, never set to None: the whole historical corpus has no such
     # key, so "absent" already has to mean "unknown" - a null would be a
     # second spelling of the same thing for every reader to handle.

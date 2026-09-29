@@ -95,6 +95,31 @@ class TestResolvedPathOrNoneAndLexicalAbspathOrNone:
         # equivalent production line.
         assert result == Path(os.path.abspath(str(tmp_path)))  # noqa: PTH100
 
+    def test_lexical_abspath_or_none_returns_none_when_os_getcwd_fails(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Backlog 2026-09-28 #5 (Package P2, folded in from Package N's
+        # review): _lexical_abspath_or_none's `except (OSError, ValueError)`
+        # was marked `# pragma: no cover - defensive` because os.getcwd()
+        # failing was judged untestable in-process. A reviewer reached it
+        # for real in a CHILD process (chdir into a temp dir, rmdir it out
+        # from under the process, then call os.path.abspath on a relative
+        # path -> FileNotFoundError, an OSError subclass) - not reproduced
+        # here the same way (would corrupt every later test in this same
+        # session, same constraint as _resolved_path_or_none's identical
+        # branch, per this file's own module docstring). Monkeypatching
+        # os.getcwd to raise exercises the REAL except clause instead:
+        # os.path.abspath calls os.getcwd() itself for a relative argument
+        # (confirmed in scratch - posixpath.abspath joins os.getcwd() onto
+        # any non-absolute path before normalizing), so this is a genuine
+        # call into the function under test, not a fake dispatch.
+        def _raise_getcwd() -> str:
+            raise FileNotFoundError("simulated: cwd no longer exists")
+
+        monkeypatch.setattr(os, "getcwd", _raise_getcwd)
+
+        assert conftest._lexical_abspath_or_none("relative/path") is None
+
 
 class TestSameOrWithinLinuxBranch:
     """_same_or_within's own docstring says it is checked at CALL time, not
