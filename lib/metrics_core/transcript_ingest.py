@@ -284,6 +284,8 @@ def parse_transcript(path: str) -> dict[str, Any]:
     # differed from the (last-wins) claude_code_version above - keeping the
     # record small is the point (see the loop's own comment): a session
     # that never spanned an upgrade has nothing extra to say.
+    # Only first vs last are compared, so a session going A -> B -> A records
+    # no first; versions only increase in practice.
     if claude_code_version_first == claude_code_version:
         claude_code_version_first = None
 
