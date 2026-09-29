@@ -1125,25 +1125,15 @@ def row_identities(records: list[dict[str, Any]], indexes: Iterable[int], id_key
     return identities
 
 
-def write_field_state(
-    kind: str,
-    field: str,
-    cutoff: str | None,
-    applied_at: str,
-    identities: list[str],
-    path: str | None = None,
-) -> dict[str, Any]:
-    """Record a successful field pass under state["fields"]["<kind>.<field>"],
-    leaving the token entries - the ones the dashboards read - untouched.
+def cumulative_rows(previous: Any, identities: list[str]) -> dict[str, Any]:
+    """The row-count keys of a state entry, over every run so far.
 
-    `identities` names the rows this run changed (see row_identities). The
-    entry's keys:
+    `previous` is the entry an earlier run left (anything else counts as
+    no earlier run) and `identities` names the rows this run changed (see
+    row_identities). Returns:
 
-    - `cutoff`, `applied_at`: this run's. `cutoff` is None for a pass
-      that has none, such as scripts/backfill-tokens-by-model.py.
-    - `corrected_rows`: CUMULATIVE over every run of this kind and field -
-      the distinct rows ever corrected, counted by name, plus
-      `unidentified_earlier_rows` when there are any.
+    - `corrected_rows`: CUMULATIVE - the distinct rows ever changed,
+      counted by name, plus `unidentified_earlier_rows` when there are any.
     - `rows_changed_this_run`: how many rows this run changed.
     - `corrected_row_ids`: the names of every row any run changed, sorted.
     - `unidentified_earlier_rows`: present only when the entry was first
@@ -1158,14 +1148,6 @@ def write_field_state(
     rows where 2032 distinct ones had changed. An old entry that reported
     no rows (0 or no count) leaves nothing unidentified.
     """
-    path = path or BACKFILL_STATE_FILE
-    existing = load_backfill_state(path)
-    state: dict[str, Any] = existing if isinstance(existing, dict) else {}
-    fields = state.get("fields")
-    if not isinstance(fields, dict):
-        fields = state["fields"] = {}
-    key = f"{kind}.{field}"
-    previous = fields.get(key)
     names = set(identities)
     unidentified = 0
     if isinstance(previous, dict):
@@ -1176,15 +1158,44 @@ def write_field_state(
         else:
             unidentified = previous.get("corrected_rows") or 0
     entry: dict[str, Any] = {
-        "cutoff": cutoff,
-        "applied_at": applied_at,
         "corrected_rows": unidentified + len(names),
         "rows_changed_this_run": len(identities),
         "corrected_row_ids": sorted(names),
     }
     if unidentified:
         entry["unidentified_earlier_rows"] = unidentified
-    fields[key] = entry
+    return entry
+
+
+def write_field_state(
+    kind: str,
+    field: str,
+    cutoff: str | None,
+    applied_at: str,
+    identities: list[str],
+    path: str | None = None,
+) -> dict[str, Any]:
+    """Record a successful field pass under state["fields"]["<kind>.<field>"],
+    leaving the token entries - the ones the dashboards read - untouched.
+
+    `identities` names the rows this run changed (see row_identities). The
+    entry holds this run's `cutoff` and `applied_at` - `cutoff` is None for
+    a pass that has none, such as scripts/backfill-tokens-by-model.py - and
+    the row counts of cumulative_rows, over every run of this kind and
+    field.
+    """
+    path = path or BACKFILL_STATE_FILE
+    existing = load_backfill_state(path)
+    state: dict[str, Any] = existing if isinstance(existing, dict) else {}
+    fields = state.get("fields")
+    if not isinstance(fields, dict):
+        fields = state["fields"] = {}
+    key = f"{kind}.{field}"
+    fields[key] = {
+        "cutoff": cutoff,
+        "applied_at": applied_at,
+        **cumulative_rows(fields.get(key), identities),
+    }
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
     with target.open("w") as handle:
@@ -1341,7 +1352,7 @@ def load_backfill_state(path: str | None = None) -> dict[str, Any] | None:
 def write_backfill_state(
     cutoff: str,
     applied_at: str,
-    corrected_rows: int,
+    identities: list[str],
     uncorrectable_rows: int = 0,
     earliest_corrected: str | None = None,
     path: str | None = None,
@@ -1356,9 +1367,12 @@ def write_backfill_state(
     only its own entry, so neither run erases the other's record. A file that
     does not hold a dict is replaced rather than merged into.
 
-    A later run on a kind that already has an entry EXTENDS it: it corrects
-    only what earlier runs left, so its rows are added to theirs and the
-    retention boundary stays at the earliest row any run corrected. An
+    `identities` names the rows this run corrected (see row_identities).
+    A later run on a kind that already has an entry EXTENDS it: its rows
+    join theirs by name, counted once however many runs corrected them
+    (see cumulative_rows - an entry written before 2026-09-29 holds a
+    count and no names, carried as unidentified), and the retention
+    boundary stays at the earliest row any run corrected. An
     earlier entry that never recorded that boundary (the state predates the
     key) makes it unknown for good - the later run's own earliest row is not
     the boundary of rows it never saw. Cutoff, time and the uncorrectable
@@ -1369,16 +1383,17 @@ def write_backfill_state(
     state: dict[str, Any] = existing if isinstance(existing, dict) else {}
     previous = state.get("subagents") if kind == "subagents" else state
     if isinstance(previous, dict) and isinstance(previous.get("applied_at"), str):
-        corrected_rows += previous.get("corrected_rows") or 0
         earlier = previous.get("earliest_corrected")
         if not isinstance(earlier, str):
             earliest_corrected = None
         elif earliest_corrected is None or earlier < earliest_corrected:
             earliest_corrected = earlier
+    else:
+        previous = None
     entry = {
         "cutoff": cutoff,
         "applied_at": applied_at,
-        "corrected_rows": corrected_rows,
+        **cumulative_rows(previous, identities),
         # Rows that plan_corrections() could never touch for lack of a
         # transcript on disk, and the earliest timestamp_end actually
         # corrected - together they mark WHERE the correction boundary
@@ -1390,6 +1405,9 @@ def write_backfill_state(
     if kind == "subagents":
         state["subagents"] = entry
     else:
+        # The flat sessions entry shares the top level with other keys, so
+        # a count this run no longer carries must go, not linger.
+        state.pop("unidentified_earlier_rows", None)
         state.update(entry)
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)

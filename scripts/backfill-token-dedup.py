@@ -665,7 +665,7 @@ def main() -> int:
         write_backfill_state(
             arguments.cutoff,
             datetime.now().isoformat(),
-            len(plan),
+            row_identities(records, plan, id_key),
             uncorrectable_rows=stats.get("untouched: no transcript on disk", 0),
             earliest_corrected=earliest_corrected,
             path=arguments.state_file,

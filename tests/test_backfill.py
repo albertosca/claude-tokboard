@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Any
 
 import metrics_core as mr
+import pytest
 
 
 def write_transcript(path: Path, entries: list[tuple[str, str | None, dict[str, int]]]) -> None:
@@ -1145,17 +1146,24 @@ def test_verify_fields_flags_a_key_order_change_with_the_same_key_set():
 # --- backfill state file ------------------------------------------------
 
 
+def _names(count: int, prefix: str = "row") -> list[str]:
+    """`count` distinct row names, standing in for row_identities."""
+    return [f"{prefix}{number}" for number in range(count)]
+
+
 def test_load_backfill_state_returns_none_when_no_file_exists(tmp_path):
     assert mr.load_backfill_state(str(tmp_path / "missing.json")) is None
 
 
 def test_write_then_load_backfill_state_round_trips(tmp_path):
     path = str(tmp_path / "state.json")
-    written = mr.write_backfill_state("2026-08-19", "2026-08-19T12:00:00", 3411, path=path)
+    written = mr.write_backfill_state("2026-08-19", "2026-08-19T12:00:00", _names(3411), path=path)
     loaded = mr.load_backfill_state(path)
     assert loaded == written
     assert loaded["cutoff"] == "2026-08-19"
     assert loaded["corrected_rows"] == 3411
+    assert loaded["rows_changed_this_run"] == 3411
+    assert loaded["corrected_row_ids"] == sorted(_names(3411))
 
 
 def test_load_backfill_state_returns_none_on_corrupt_json(tmp_path):
@@ -1170,7 +1178,7 @@ def test_write_backfill_state_creates_missing_parent_directories(tmp_path):
     # atomic-write discipline - the real path lives under ~/.claude/metrics,
     # which is not guaranteed to exist yet on a fresh machine.
     path = str(tmp_path / "nested" / "does" / "not" / "exist" / "state.json")
-    mr.write_backfill_state("2026-08-19", "2026-08-19T12:00:00", 1, path=path)
+    mr.write_backfill_state("2026-08-19", "2026-08-19T12:00:00", _names(1), path=path)
     assert mr.load_backfill_state(path) is not None
 
 
@@ -1179,7 +1187,7 @@ def test_write_backfill_state_records_uncorrectable_rows_and_earliest_corrected(
     written = mr.write_backfill_state(
         "2026-08-19",
         "2026-08-19T12:00:00",
-        3411,
+        _names(3411),
         uncorrectable_rows=42,
         earliest_corrected="2026-07-22T09:00:00",
         path=path,
@@ -1196,12 +1204,16 @@ def test_write_backfill_state_for_subagents_keeps_the_sessions_entry(tmp_path):
     # its own entry under "subagents" and must not overwrite the sessions one.
     path = str(tmp_path / "state.json")
     mr.write_backfill_state(
-        "2026-08-21", "2026-08-21T19:49:23", 2798, earliest_corrected="2026-07-22", path=path
+        "2026-08-21",
+        "2026-08-21T19:49:23",
+        _names(2798),
+        earliest_corrected="2026-07-22",
+        path=path,
     )
     written = mr.write_backfill_state(
         "2026-08-21",
         "2026-09-23T20:00:00",
-        150,
+        _names(150),
         uncorrectable_rows=7,
         earliest_corrected="2026-07-10T00:00:00",
         path=path,
@@ -1216,6 +1228,8 @@ def test_write_backfill_state_for_subagents_keeps_the_sessions_entry(tmp_path):
         "cutoff": "2026-08-21",
         "applied_at": "2026-09-23T20:00:00",
         "corrected_rows": 150,
+        "rows_changed_this_run": 150,
+        "corrected_row_ids": sorted(_names(150)),
         "uncorrectable_rows": 7,
         "earliest_corrected": "2026-07-10T00:00:00",
     }
@@ -1225,8 +1239,10 @@ def test_write_backfill_state_for_subagents_keeps_the_sessions_entry(tmp_path):
 
 def test_write_backfill_state_for_sessions_keeps_the_subagents_entry(tmp_path):
     path = str(tmp_path / "state.json")
-    mr.write_backfill_state("2026-08-21", "2026-09-23T20:00:00", 150, path=path, kind="subagents")
-    mr.write_backfill_state("2026-08-25", "2026-09-24T09:00:00", 12, path=path)
+    mr.write_backfill_state(
+        "2026-08-21", "2026-09-23T20:00:00", _names(150), path=path, kind="subagents"
+    )
+    mr.write_backfill_state("2026-08-25", "2026-09-24T09:00:00", _names(12), path=path)
     loaded = mr.load_backfill_state(path)
     assert loaded is not None
     assert loaded["cutoff"] == "2026-08-25"
@@ -1242,18 +1258,43 @@ def test_a_second_apply_extends_the_record_instead_of_replacing_it(tmp_path):
     # boundary moved from July to 2026-08-12.
     path = str(tmp_path / "state.json")
     mr.write_backfill_state(
-        "2026-08-21", "2026-08-21T19:49:23", 2798, 10, earliest_corrected="2026-07-22", path=path
+        "2026-08-21",
+        "2026-08-21T19:49:23",
+        _names(2798),
+        10,
+        earliest_corrected="2026-07-22",
+        path=path,
     )
     written = mr.write_backfill_state(
-        "2026-09-23", "2026-09-23T21:00:00", 41, 8695, earliest_corrected="2026-08-12", path=path
+        "2026-09-23",
+        "2026-09-23T21:00:00",
+        _names(41, "later"),
+        8695,
+        earliest_corrected="2026-08-12",
+        path=path,
     )
     assert written == {
         "cutoff": "2026-09-23",
         "applied_at": "2026-09-23T21:00:00",
         "corrected_rows": 2839,
+        "rows_changed_this_run": 41,
+        "corrected_row_ids": sorted(_names(2798) + _names(41, "later")),
         "uncorrectable_rows": 8695,
         "earliest_corrected": "2026-07-22",
     }
+
+
+def test_a_row_two_token_runs_corrected_is_counted_once(tmp_path):
+    # Adding each run's count, as the entry did before 2026-09-29, counted
+    # a row corrected by two runs twice - the double count the field
+    # entries were fixed for. The token entry keeps names the same way.
+    path = str(tmp_path / "state.json")
+    mr.write_backfill_state("2026-08-21", "a", ["e1", "e2"], path=path)
+    written = mr.write_backfill_state("2026-09-23", "b", ["e2", "e3"], path=path)
+    assert written["corrected_rows"] == 3
+    assert written["rows_changed_this_run"] == 2
+    assert written["corrected_row_ids"] == ["e1", "e2", "e3"]
+    assert "unidentified_earlier_rows" not in written
 
 
 def test_a_second_apply_over_a_record_without_a_boundary_keeps_it_unknown(tmp_path):
@@ -1264,24 +1305,135 @@ def test_a_second_apply_over_a_record_without_a_boundary_keeps_it_unknown(tmp_pa
         json.dumps({"cutoff": "2026-08-21", "applied_at": "2026-08-21T19:49", "corrected_rows": 5})
     )
     written = mr.write_backfill_state(
-        "2026-09-23", "2026-09-23T21:00:00", 41, 0, earliest_corrected="2026-08-12", path=str(path)
+        "2026-09-23",
+        "2026-09-23T21:00:00",
+        _names(41),
+        0,
+        earliest_corrected="2026-08-12",
+        path=str(path),
     )
     assert written["corrected_rows"] == 46
     assert written["earliest_corrected"] is None
 
 
+def test_a_token_apply_over_an_old_shape_entry_keeps_its_count_unidentified(tmp_path):
+    # The real state's token entries hold a count and no names (2839
+    # sessions rows). Which of those a later run touches again cannot be
+    # told, so the count is carried as unidentified, and a third run still
+    # carries it rather than dropping it.
+    path = tmp_path / "state.json"
+    old = {
+        "cutoff": "2026-09-23",
+        "applied_at": "2026-09-23T21:38:39",
+        "corrected_rows": 2839,
+        "uncorrectable_rows": 8695,
+        "earliest_corrected": None,
+        "subagents": {
+            "cutoff": "2026-09-25",
+            "applied_at": "2026-09-29T10:58:01",
+            "corrected_rows": 1192,
+            "uncorrectable_rows": 1391,
+            "earliest_corrected": "2026-08-11T20:45:41.010Z",
+        },
+    }
+    path.write_text(json.dumps(old))
+    note_before = {
+        lang: mr.describe_backfill_state(mr.load_backfill_state(str(path)), lang=lang)
+        for lang in ("en", "pt")
+    }
+
+    mr.write_backfill_state("2026-09-28", "2026-09-28T10:00", ["e1", "e2"], 8000, path=str(path))
+    written = mr.write_backfill_state(
+        "2026-09-29", "2026-09-29T10:00", ["e2", "e3"], 7000, path=str(path)
+    )
+    subagents = mr.write_backfill_state(
+        "2026-09-29", "2026-09-29T11:00", ["a1"], 3, "2026-08-20", path=str(path), kind="subagents"
+    )
+
+    assert written["corrected_rows"] == 2839 + 3
+    assert written["rows_changed_this_run"] == 2
+    assert written["unidentified_earlier_rows"] == 2839
+    assert written["corrected_row_ids"] == ["e1", "e2", "e3"]
+    assert subagents["subagents"]["corrected_rows"] == 1192 + 1
+    assert subagents["subagents"]["unidentified_earlier_rows"] == 1192
+    assert subagents["subagents"]["earliest_corrected"] == "2026-08-11T20:45:41.010Z"
+    # The note both dashboards render reads none of the new keys.
+    for lang, note in note_before.items():
+        loaded = mr.load_backfill_state(str(path))
+        assert mr.describe_backfill_state(loaded, lang=lang) == note.replace(
+            "2026-09-23", "2026-09-29"
+        )
+
+
+@pytest.mark.parametrize("earlier", [{"corrected_rows": 0}, {}], ids=["zero", "missing"])
+def test_an_old_token_entry_that_corrected_nothing_leaves_nothing_unidentified(tmp_path, earlier):
+    path = tmp_path / "state.json"
+    path.write_text(json.dumps({"cutoff": "2026-08-21", "applied_at": "a", **earlier}))
+    written = mr.write_backfill_state("2026-09-23", "b", ["e1"], path=str(path))
+    assert written["corrected_rows"] == 1
+    assert "unidentified_earlier_rows" not in written
+
+
+def test_a_sessions_entry_drops_an_unidentified_count_left_by_no_real_run(tmp_path):
+    # The sessions entry lives at the top level beside other keys. A count
+    # left there without a run to own it (no applied_at, so not merged)
+    # must not survive a write that carries no unidentified rows.
+    path = tmp_path / "state.json"
+    path.write_text(json.dumps({"unidentified_earlier_rows": 7}))
+    written = mr.write_backfill_state("2026-09-23", "2026-09-23T10:00", ["e1"], path=str(path))
+    assert written["corrected_rows"] == 1
+    assert "unidentified_earlier_rows" not in written
+
+
+def test_a_new_shape_token_state_renders_the_same_note_as_the_old_shape(tmp_path):
+    old = {
+        "cutoff": "2026-09-23",
+        "applied_at": "2026-09-23T21:38:39",
+        "corrected_rows": 2839,
+        "uncorrectable_rows": 8695,
+        "earliest_corrected": "2026-07-22T09:00:00",
+    }
+    path = tmp_path / "state.json"
+    written = mr.write_backfill_state(
+        "2026-09-23",
+        "2026-09-23T21:38:39",
+        _names(2839),
+        8695,
+        "2026-07-22T09:00:00",
+        path=str(path),
+    )
+    for lang in ("en", "pt"):
+        assert mr.describe_backfill_state(written, lang=lang) == mr.describe_backfill_state(
+            old, lang=lang
+        )
+
+
 def test_a_second_subagents_apply_extends_the_subagents_record(tmp_path):
     path = str(tmp_path / "state.json")
     mr.write_backfill_state(
-        "2026-08-21", "a", 42, 7, earliest_corrected="2026-08-11", path=path, kind="subagents"
+        "2026-08-21",
+        "a",
+        _names(42),
+        7,
+        earliest_corrected="2026-08-11",
+        path=path,
+        kind="subagents",
     )
     written = mr.write_backfill_state(
-        "2026-09-23", "b", 820, 3, earliest_corrected="2026-08-24", path=path, kind="subagents"
+        "2026-09-23",
+        "b",
+        _names(820, "later"),
+        3,
+        earliest_corrected="2026-08-24",
+        path=path,
+        kind="subagents",
     )
     assert written["subagents"] == {
         "cutoff": "2026-09-23",
         "applied_at": "b",
         "corrected_rows": 862,
+        "rows_changed_this_run": 820,
+        "corrected_row_ids": sorted(_names(42) + _names(820, "later")),
         "uncorrectable_rows": 3,
         "earliest_corrected": "2026-08-11",
     }
@@ -1291,9 +1443,11 @@ def test_a_later_apply_that_reaches_further_back_moves_the_boundary_back(tmp_pat
     # A unit an earlier run skipped (it spanned that run's cutoff) can hold
     # rows older than anything that run corrected.
     path = str(tmp_path / "state.json")
-    mr.write_backfill_state("2026-08-21", "a", 10, earliest_corrected="2026-08-01", path=path)
+    mr.write_backfill_state(
+        "2026-08-21", "a", _names(10), earliest_corrected="2026-08-01", path=path
+    )
     written = mr.write_backfill_state(
-        "2026-09-23", "b", 3, earliest_corrected="2026-07-15", path=path
+        "2026-09-23", "b", _names(3, "later"), earliest_corrected="2026-07-15", path=path
     )
     assert written["earliest_corrected"] == "2026-07-15"
     assert written["corrected_rows"] == 13
@@ -1306,7 +1460,7 @@ def test_write_backfill_state_for_subagents_over_a_malformed_file(tmp_path):
     path = tmp_path / "state.json"
     path.write_text("[1, 2]")
     mr.write_backfill_state(
-        "2026-08-21", "2026-09-23T20:00:00", 1, path=str(path), kind="subagents"
+        "2026-08-21", "2026-09-23T20:00:00", _names(1), path=str(path), kind="subagents"
     )
     loaded = mr.load_backfill_state(str(path))
     assert loaded is not None

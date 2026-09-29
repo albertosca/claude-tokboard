@@ -175,7 +175,7 @@ def stage_showcase(home: Path, now: datetime) -> None:
     mr.write_backfill_state(
         cutoff_before_every_session,
         (now - timedelta(days=2)).isoformat(),
-        0,
+        [],
         uncorrectable_rows=0,
         earliest_corrected=None,
         path=str(state),

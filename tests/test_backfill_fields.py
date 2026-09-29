@@ -360,7 +360,9 @@ def test_row_identities_name_a_row_by_unit_moment_and_ordinal_not_by_its_values(
 
 def test_write_field_state_counts_a_row_two_runs_corrected_once(tmp_path):
     path = str(tmp_path / "state.json")
-    mr.write_backfill_state("2026-09-23", "2026-09-23T12:00:00", 5, path=path)
+    mr.write_backfill_state(
+        "2026-09-23", "2026-09-23T12:00:00", ["t1", "t2", "t3", "t4", "t5"], path=path
+    )
     records = identified_rows("e1", "e2", "e3")
     first_run = mr.row_identities(records, [0, 1], "session_id")
     second_run = mr.row_identities(records, [1, 2], "session_id")

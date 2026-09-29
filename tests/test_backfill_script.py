@@ -403,6 +403,10 @@ def test_main_records_uncorrectable_rows_beside_the_corrected_ones(tmp_path, scr
     state = json.loads(state_path.read_text())
     assert state["corrected_rows"] == 1
     assert state["uncorrectable_rows"] == 1
+    # Named, not just counted, so a later run that corrects the same row
+    # again does not count it twice.
+    assert state["rows_changed_this_run"] == 1
+    assert state["corrected_row_ids"] == script.row_identities(rows, [0], "session_id")
 
 
 def test_main_rejects_a_malformed_cutoff(script, monkeypatch, capsys):
