@@ -98,6 +98,15 @@ copy off the dry run they just read, rather than a number the run gets to
 shrink on its own. Vacuous checks - empty on both sides - are excluded from
 that count on purpose: they agree and prove nothing.
 
+So are maps this script wrote itself. They carry the field like a native
+map but were rebuilt by this same code, so re-checking them proves nothing,
+and after the 2026-09-21 and 2026-09-29 applies they were 1648 of the 3409
+session maps. Each --apply records the rows it wrote in the backfill state
+beside the metrics file (the row names write_field_state keeps for the
+field passes), and the oracle reports them apart as "written by an earlier
+backfill". The two applies that predate the record are found once, from
+the backups they left, by --record-earlier-applies.
+
 The write itself reuses the machinery scripts/backfill-token-dedup.py
 already proved: back up and verify the copy by sha256, re-verify at rename
 time that the rows the plan was built from are still the file's prefix,
@@ -134,13 +143,16 @@ from metrics_core.backfill import (
     carry_late_appends,
     index_subagent_transcripts,
     index_transcripts,
+    load_backfill_state,
     model_totals_at_row_cut,
     resolve_transcript,
+    row_identities,
     scan_unit,
     sha256_bytes,
     sha256_of,
     token_sum,
     verify_fields,
+    write_field_state,
 )
 from metrics_core.records import load_records
 from metrics_core.transcript_ingest import TOKEN_FIELDS
@@ -209,6 +221,7 @@ class OracleReport(NamedTuple):
     tolerated: int
     vacuous: int
     unverified: int
+    backfilled: int
 
 
 class NativeRows(NamedTuple):
@@ -222,6 +235,7 @@ class NativeRows(NamedTuple):
     checkable: list[tuple[int, str]]
     undated: list[int]
     unreachable: list[int]
+    backfilled: list[int]
 
 
 def index_for_file(file_name: str, projects_directory: str) -> tuple[dict[str, str], list[str]]:
@@ -538,8 +552,88 @@ def diff_against_native(native: ModelMap, rebuilt: ModelMap) -> tuple[list[str],
     return complaints, tolerated
 
 
+def state_key(file_name: str) -> str:
+    """This file's entry under the backfill state's "fields" (see
+    write_field_state): the rows by-model applies wrote to it."""
+    return f"{file_name}.{FIELD}"
+
+
+def backfilled_rows(
+    records: list[dict[str, Any]], id_key: str, state: Any, file_name: str
+) -> set[int]:
+    """The rows whose map an earlier by-model apply wrote, not the hook.
+
+    Such a map was rebuilt by this same code, so checking it against a
+    fresh reconstruction proves nothing about the reconstruction, yet it
+    carries the field exactly like a native one: after the 2026-09-21 and
+    2026-09-29 applies, 1648 of the 3409 session maps were this script's
+    own output, all counted as native evidence. They are named in the
+    state by row_identities. The key order would tell them apart on the
+    real file today (the hook writes the map right after
+    tool_call_count, an apply appends it last), but 1299 map-less session
+    rows END in tool_call_count, so a later apply to one of them would
+    look native - hence the recorded names, not the shape.
+
+    A state entry this cannot read excludes nothing: the oracle then
+    counts more rows as native, which the operator sees in the counts,
+    rather than the run failing over a hand-edited file.
+    """
+    fields = state.get("fields") if isinstance(state, dict) else None
+    entry = fields.get(state_key(file_name)) if isinstance(fields, dict) else None
+    names = entry.get("corrected_row_ids") if isinstance(entry, dict) else None
+    if not isinstance(names, list):
+        return set()
+    wanted = {name for name in names if isinstance(name, str)}
+    identities = row_identities(records, range(len(records)), id_key)
+    return {
+        index for index, name in enumerate(identities) if name in wanted and FIELD in records[index]
+    }
+
+
+class NotAPrefix(Exception):
+    """A by-model backup whose rows are not the metrics file's prefix."""
+
+
+def earlier_apply_identities(
+    backups: Path, file_name: str, records: list[dict[str, Any]], id_key: str
+) -> tuple[list[str], int]:
+    """(names of the rows earlier by-model applies wrote, backups read).
+
+    Applies before 2026-09-29 recorded nothing, but each left the backup
+    it took just before writing. The file is append-only and no other
+    pass adds this field, so a row that had no map in any such backup and
+    has one now was written by an apply. Row i of a backup is row i of
+    the file - checked by unit id and timestamp_end, since the dedup
+    passes may have changed its token values since - which is also what
+    makes its row_identities name the same row in both.
+    """
+    identities = row_identities(records, range(len(records)), id_key)
+    written: set[str] = set()
+    sources = sorted(backups.glob(f"{file_name}.jsonl.{FIELD.replace('_', '-')}-*.bak"))
+    for source in sources:
+        earlier = load_records(str(source))
+        moments = [(record.get(id_key), record.get("timestamp_end")) for record in records]
+        if len(earlier) > len(records) or any(
+            (record.get(id_key), record.get("timestamp_end")) != moments[index]
+            for index, record in enumerate(earlier)
+        ):
+            raise NotAPrefix(
+                f"{source} is not a prefix of the metrics file: its rows name different "
+                "units or moments, so its row positions cannot name rows of this file"
+            )
+        written.update(
+            identities[index]
+            for index, record in enumerate(earlier)
+            if FIELD not in record and FIELD in records[index]
+        )
+    return sorted(written), len(sources)
+
+
 def classify_native_rows(
-    records: list[dict[str, Any]], transcript_key: str, transcripts: dict[str, str] | None = None
+    records: list[dict[str, Any]],
+    transcript_key: str,
+    transcripts: dict[str, str] | None = None,
+    backfilled: set[int] | None = None,
 ) -> NativeRows:
     """Split the rows that already carry a native map by what can be done
     with them, keeping the reasons apart.
@@ -559,13 +653,20 @@ def classify_native_rows(
     subagent transcripts did the same). Without the index those rows drop out
     of the oracle silently, and a gate that quietly stops checking the hard
     cases reports a pass it has not earned.
+
+    `backfilled` (see backfilled_rows) are rows whose map this script
+    wrote; they are set apart as themselves and never checked.
     """
     id_key = ID_KEY_FOR_TRANSCRIPT_KEY[transcript_key]
     checkable: list[tuple[int, str]] = []
     undated: list[int] = []
     unreachable: list[int] = []
+    written: list[int] = []
     for index, record in enumerate(records):
         if FIELD not in record:
+            continue
+        if backfilled and index in backfilled:
+            written.append(index)
             continue
         if not record.get("timestamp_end"):
             undated.append(index)
@@ -575,7 +676,7 @@ def classify_native_rows(
             unreachable.append(index)
         else:
             checkable.append((index, path))
-    return NativeRows(checkable, undated, unreachable)
+    return NativeRows(checkable, undated, unreachable, written)
 
 
 def checkable_native_rows(
@@ -586,7 +687,10 @@ def checkable_native_rows(
 
 
 def check_against_native(
-    records: list[dict[str, Any]], transcript_key: str, transcripts: dict[str, str] | None = None
+    records: list[dict[str, Any]],
+    transcript_key: str,
+    transcripts: dict[str, str] | None = None,
+    backfilled: set[int] | None = None,
 ) -> OracleReport:
     """The acceptance gate: every snapshot that already carries a natively
     written tokens_by_model, reconstructed and compared against it.
@@ -604,7 +708,8 @@ def check_against_native(
     counting them as evidence inflates the total with checks that could not
     have failed. `unverified` holds the native rows the gate never reached
     at all - unreconstructable or unfindable - which belong in the report,
-    not in silence.
+    not in silence. `backfilled` counts the maps an earlier apply wrote,
+    which are not native and not checked (see backfilled_rows).
     """
     id_key = ID_KEY_FOR_TRANSCRIPT_KEY[transcript_key]
     scans: dict[str, Scanned] = {}
@@ -612,7 +717,7 @@ def check_against_native(
     exact = 0
     tolerated = 0
     vacuous = 0
-    native_rows = classify_native_rows(records, transcript_key, transcripts)
+    native_rows = classify_native_rows(records, transcript_key, transcripts, backfilled)
     for index, path in native_rows.checkable:
         record = records[index]
         rebuilt = model_totals_at_row_cut(*scanned(scans, path), record)
@@ -635,6 +740,7 @@ def check_against_native(
         tolerated,
         vacuous,
         len(native_rows.undated) + len(native_rows.unreachable),
+        len(native_rows.backfilled),
     )
 
 
@@ -885,6 +991,16 @@ def main() -> int:
             "read off the dry run; --apply refuses below it. Required with --apply"
         ),
     )
+    parser.add_argument(
+        "--record-earlier-applies",
+        action="store_true",
+        help=(
+            "instead of planning, find the rows earlier by-model applies wrote - from the "
+            "tokens-by-model backups they left in the backup directory - and, with --apply, "
+            "record them in the backfill state beside the metrics file, so the oracle "
+            "stops counting them as native. Never touches the metrics file"
+        ),
+    )
     arguments = parser.parse_args()
 
     id_key, transcript_key = UNIT_KEYS[arguments.file]
@@ -895,6 +1011,11 @@ def main() -> int:
 
     records = load_records(str(path))
     print(f"read {len(records)} rows from {path}")
+    # Beside the metrics file, never the default ~/.claude state: a run
+    # pointed at a copy records into the copy.
+    state_path = str(Path(arguments.metrics_dir) / "backfill_state.json")
+    if arguments.record_earlier_applies:
+        return record_earlier_applies(arguments, records, id_key, state_path)
 
     # Indexed before the gate runs, not after: the oracle needs it to follow
     # a transcript that has moved between project slugs, and a row it cannot
@@ -919,7 +1040,8 @@ def main() -> int:
     # subagent rows were skipped, and was false for every one of them - the
     # files were on disk and the index was the thing that could not reach
     # them.
-    native_rows = classify_native_rows(records, transcript_key, transcripts)
+    backfilled = backfilled_rows(records, id_key, load_backfill_state(state_path), arguments.file)
+    native_rows = classify_native_rows(records, transcript_key, transcripts, backfilled)
     native = len(native_rows.checkable) + len(native_rows.undated) + len(native_rows.unreachable)
     print(
         f"oracle: {native} natively written snapshots - "
@@ -927,7 +1049,11 @@ def main() -> int:
         f"{len(native_rows.unreachable)} with no transcript found anywhere, "
         f"{len(native_rows.undated)} with no timestamp_end"
     )
-    report = check_against_native(records, transcript_key, transcripts)
+    print(
+        f"oracle: maps written by an earlier backfill: {len(native_rows.backfilled)} "
+        "(named in the backfill state; not native, so neither checked nor counted)"
+    )
+    report = check_against_native(records, transcript_key, transcripts, backfilled)
     print(
         f"oracle: {report.exact} exact, {report.tolerated} within the "
         f"{ORACLE_TOLERANCE:.0%} downward tolerance, "
@@ -1003,6 +1129,49 @@ def main() -> int:
         print("\nnothing to write; leaving the file untouched")
         return 0
     apply_backfill(str(path), plan, records, arguments.backup_dir)
+    write_field_state(
+        arguments.file,
+        FIELD,
+        None,
+        datetime.now().isoformat(),
+        row_identities(records, sorted(plan), id_key),
+        path=state_path,
+    )
+    print(f"  backfill state recorded: {state_path}")
+    return 0
+
+
+def record_earlier_applies(
+    arguments: argparse.Namespace, records: list[dict[str, Any]], id_key: str, state_path: str
+) -> int:
+    """The one-time --record-earlier-applies run: see earlier_apply_identities."""
+    backups = (
+        Path(arguments.backup_dir)
+        if arguments.backup_dir
+        else Path(arguments.metrics_dir) / "backups"
+    )
+    try:
+        identities, sources = earlier_apply_identities(backups, arguments.file, records, id_key)
+    except NotAPrefix as problem:
+        print(f"refusing to record: {problem}", file=sys.stderr)
+        return 1
+    print(
+        f"{len(identities)} row(s) written by earlier by-model applies, "
+        f"found in {sources} backup(s) under {backups}"
+    )
+    if not arguments.apply:
+        print(
+            f"\nDRY RUN - nothing recorded. To record: --file {arguments.file} "
+            "--record-earlier-applies --apply"
+        )
+        return 0
+    if not identities:
+        print("nothing to record; leaving the backfill state untouched")
+        return 0
+    write_field_state(
+        arguments.file, FIELD, None, datetime.now().isoformat(), identities, path=state_path
+    )
+    print(f"backfill state recorded: {state_path}")
     return 0
 
 

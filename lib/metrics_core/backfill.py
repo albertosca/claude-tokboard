@@ -1128,7 +1128,7 @@ def row_identities(records: list[dict[str, Any]], indexes: Iterable[int], id_key
 def write_field_state(
     kind: str,
     field: str,
-    cutoff: str,
+    cutoff: str | None,
     applied_at: str,
     identities: list[str],
     path: str | None = None,
@@ -1139,7 +1139,8 @@ def write_field_state(
     `identities` names the rows this run changed (see row_identities). The
     entry's keys:
 
-    - `cutoff`, `applied_at`: this run's.
+    - `cutoff`, `applied_at`: this run's. `cutoff` is None for a pass
+      that has none, such as scripts/backfill-tokens-by-model.py.
     - `corrected_rows`: CUMULATIVE over every run of this kind and field -
       the distinct rows ever corrected, counted by name, plus
       `unidentified_earlier_rows` when there are any.

@@ -1720,3 +1720,175 @@ def test_the_dry_run_prints_the_file_it_actually_read(script, tmp_path, monkeypa
 
     assert "To write: --file sessions --apply --expect-checked 2" in sessions_line
     assert "To write: --file subagents --apply --expect-checked 1" in subagents_line
+
+
+# ---------------------------------------------------------------------------
+# The oracle counts only NATIVE maps. A map an earlier by-model apply wrote
+# was rebuilt by this same code, so re-checking it proves nothing - yet it
+# carries the field exactly like a native one. After the 2026-09-21 and
+# 2026-09-29 applies, 1648 of the 3409 session maps were the script's own
+# output, and all of them counted as "exact" evidence toward
+# --expect-checked. An apply now records the rows it wrote in the backfill
+# state, and the oracle leaves them out.
+# ---------------------------------------------------------------------------
+
+
+def _state_path(tmp_path: Path) -> Path:
+    return tmp_path / "metrics" / "backfill_state.json"
+
+
+def _recorded_ids(tmp_path: Path, kind: str = "sessions") -> list[str]:
+    state = json.loads(_state_path(tmp_path).read_text())
+    ids: list[str] = state["fields"][f"{kind}.tokens_by_model"]["corrected_row_ids"]
+    return ids
+
+
+def test_an_apply_records_the_rows_it_wrote_and_the_next_oracle_leaves_them_out(
+    script, tmp_path, monkeypatch, capsys
+):
+    _one_writable_session(tmp_path)
+    _applying_argv(monkeypatch, tmp_path, "--apply", "--expect-checked", "1")
+    assert script.main() == 0
+    capsys.readouterr()
+    records = [json.loads(line) for line in _metrics_text(tmp_path).splitlines()]
+    assert _recorded_ids(tmp_path) == script.row_identities(records, [0], "session_id")
+
+    _argv(monkeypatch, tmp_path)
+    assert script.main() == 0
+    out = capsys.readouterr().out
+    # Both rows now carry a map, and only one of them is the hook's.
+    assert "oracle: 1 natively written snapshots - 1 checked" in out
+    assert "written by an earlier backfill: 1" in out
+    assert "oracle: 1 exact," in out
+    assert "--expect-checked 1" in out
+
+
+def test_the_state_goes_beside_the_metrics_file_it_describes(script, tmp_path, monkeypatch):
+    # Never the default ~/.claude/metrics state: a run pointed at a copy
+    # must record into the copy's state.
+    _one_writable_session(tmp_path)
+    _applying_argv(monkeypatch, tmp_path, "--apply", "--expect-checked", "1")
+    assert script.main() == 0
+    assert _state_path(tmp_path).exists()
+
+
+def test_a_later_apply_keeps_the_rows_earlier_applies_recorded(
+    script, tmp_path, monkeypatch, capsys
+):
+    _one_writable_session(tmp_path)
+    earlier = ["0123456789abcdef"]
+    _state_path(tmp_path).write_text(
+        json.dumps(
+            {
+                "fields": {
+                    "sessions.tokens_by_model": {
+                        "cutoff": None,
+                        "applied_at": "2026-09-21T10:30:42",
+                        "corrected_rows": 1,
+                        "rows_changed_this_run": 1,
+                        "corrected_row_ids": earlier,
+                    }
+                }
+            }
+        )
+    )
+    _applying_argv(monkeypatch, tmp_path, "--apply", "--expect-checked", "1")
+    assert script.main() == 0
+    assert set(earlier) < set(_recorded_ids(tmp_path))
+    assert len(_recorded_ids(tmp_path)) == 2
+
+
+def test_an_unreadable_state_entry_excludes_nothing_and_does_not_crash(
+    script, tmp_path, monkeypatch, capsys
+):
+    _two_native_session_rows(tmp_path)
+    shapes: list[Any] = [
+        {"fields": []},
+        {"fields": {"sessions.tokens_by_model": "yes"}},
+        {"fields": {"sessions.tokens_by_model": {"corrected_row_ids": "abc"}}},
+        {"fields": {"sessions.tokens_by_model": {"corrected_row_ids": [1, None]}}},
+        [],
+    ]
+    for broken in shapes:
+        _state_path(tmp_path).write_text(json.dumps(broken))
+        _argv(monkeypatch, tmp_path)
+        assert script.main() == 0
+        out = capsys.readouterr().out
+        assert "oracle: 2 natively written snapshots - 2 checked" in out, broken
+        assert "written by an earlier backfill: 0" in out, broken
+
+
+def _by_model_backup(tmp_path: Path, stamp: str, records: list[dict[str, Any]]) -> None:
+    backups = tmp_path / "backups"
+    backups.mkdir(exist_ok=True)
+    (backups / f"sessions.jsonl.tokens-by-model-{stamp}.bak").write_text(
+        "".join(json.dumps(record) + "\n" for record in records)
+    )
+
+
+def _backfilled_history(tmp_path: Path) -> list[dict[str, Any]]:
+    """A live file whose rows 0 and 1 got their maps from two earlier
+    by-model applies, each backed up just before it ran: the first wrote
+    row 0, which is why it already carries its map in the second backup,
+    and the second wrote row 1, which did not exist yet at the first. Row
+    2 is native, and row 3 was appended after the last backup and never
+    had a map."""
+    _two_native_session_rows(tmp_path)
+    live = [json.loads(line) for line in _metrics_text(tmp_path).splitlines()]
+    no_map = {key: value for key, value in live[1].items() if key != "tokens_by_model"}
+    without_first = {key: value for key, value in live[0].items() if key != "tokens_by_model"}
+    live[0]["tokens_by_model"] = {"model-alpha": _bucket(input_tokens=10)}
+    _by_model_backup(tmp_path, "2026-09-21-103042", [without_first])
+    _by_model_backup(tmp_path, "2026-09-29-125049", [live[0], no_map, live[2]])
+    tail = {**no_map, "timestamp_end": "2026-08-01T13:00:00Z"}
+    _metrics_file(tmp_path, "sessions", [*live, tail])
+    return [*live, tail]
+
+
+def test_record_earlier_applies_derives_the_rows_from_the_by_model_backups(
+    script, tmp_path, monkeypatch, capsys
+):
+    live = _backfilled_history(tmp_path)
+    before = _metrics_text(tmp_path)
+
+    _applying_argv(monkeypatch, tmp_path, "--record-earlier-applies")
+    assert script.main() == 0
+    out = capsys.readouterr().out
+    assert "2 row(s) written by earlier by-model applies" in out
+    assert "DRY RUN" in out
+    assert not _state_path(tmp_path).exists(), "a dry run records nothing"
+
+    _applying_argv(monkeypatch, tmp_path, "--record-earlier-applies", "--apply")
+    assert script.main() == 0
+    capsys.readouterr()
+    assert _recorded_ids(tmp_path) == sorted(script.row_identities(live, [0, 1], "session_id"))
+    assert _metrics_text(tmp_path) == before, "recording never touches the metrics file"
+
+    _argv(monkeypatch, tmp_path)
+    assert script.main() == 0
+    out = capsys.readouterr().out
+    assert "oracle: 1 natively written snapshots - 1 checked" in out
+    assert "written by an earlier backfill: 2" in out
+
+
+def test_record_earlier_applies_with_no_backups_records_nothing(
+    script, tmp_path, monkeypatch, capsys
+):
+    _two_native_session_rows(tmp_path)
+    _applying_argv(monkeypatch, tmp_path, "--record-earlier-applies", "--apply")
+    assert script.main() == 0
+    assert "0 row(s) written by earlier by-model applies" in capsys.readouterr().out
+    assert not _state_path(tmp_path).exists()
+
+
+def test_record_earlier_applies_refuses_a_backup_that_is_not_a_prefix_of_the_file(
+    script, tmp_path, monkeypatch, capsys
+):
+    # Identities are positional among a unit's same-moment rows; a backup
+    # whose rows are not the file's prefix names different rows.
+    _backfilled_history(tmp_path)
+    _by_model_backup(tmp_path, "2026-09-30-000000", [{"session_id": "other", "timestamp_end": "x"}])
+    _applying_argv(monkeypatch, tmp_path, "--record-earlier-applies", "--apply")
+    assert script.main() == 1
+    assert "is not a prefix" in capsys.readouterr().err
+    assert not _state_path(tmp_path).exists()
