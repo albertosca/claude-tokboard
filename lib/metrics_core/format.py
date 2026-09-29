@@ -62,6 +62,10 @@ class ModelColorSlot:
     is_overflow: bool
 
 
+def _lowest_free_slot(taken: set[int], slots: int, *, start: int) -> int | None:
+    return next((candidate for candidate in range(start, slots) if candidate not in taken), None)
+
+
 def assign_model_slots(models: Iterable[str], slots: int) -> dict[str, ModelColorSlot]:
     """A colour slot per model id, permanent once given.
 
@@ -85,21 +89,43 @@ def assign_model_slots(models: Iterable[str], slots: int) -> dict[str, ModelColo
     caller, since a model id is only ever "first seen" once - the ordering
     here exists to make that explicit, not to break a tie.
 
-    The four well-known families (opus/sonnet/haiku/fable) still reserve
-    slots 0-3 ahead of everything else, because that reservation is what
-    lets someone recognise "opus is always the same swatch" across
-    projects and renders without reading a legend first - it costs
-    nothing when a family model is actually first to appear (the common
-    case), and only stops applying once that reservation has already gone
-    to an earlier-appearing sibling version or, this being a soft
-    preference rather than a hard one, a generic model that happened to
-    appear first and claimed it as an ordinary free slot.
+    Models are processed in that first-appearance order and NOTHING ELSE -
+    fix round 1 (backlog sweep 3 / package M) found that an earlier version
+    sorted by (family_rank, first_seen_order), which put family_rank FIRST:
+    every family model was processed before every non-family one regardless
+    of when it actually first appeared, so a family model arriving LATER
+    than an existing model could still go first here and take a slot the
+    existing model already held. Reproduced through the real caller path
+    (order_models_by_first_appearance -> assign_model_slots): a lone
+    "local-llama" given the only slot there is, then "claude-opus-4-8"
+    added afterwards, used to bump local-llama out of the slot it already
+    held. Sorting purely by arrival order (ties, which cannot occur for a
+    real caller, broken by id) is what makes "an existing model never
+    moves" hold for every model, family or not - see
+    test_assign_model_slots_is_a_monotonic_subset_over_hundreds_of_random_histories
+    for this checked as a property, not just at the two hand-picked
+    scenarios above.
 
-    Every other model - and any family model whose reserved slot is
-    already gone - takes the lowest-numbered slot still free at the moment
-    it is processed, in first-appearance order. Once every slot is taken,
-    the palette is reused rather than left unclaimed - see
-    ModelColorSlot.is_overflow.
+    The four well-known families (opus/sonnet/haiku/fable) still reserve
+    slots 0-3 as a SOFT preference: when a family model is processed (in
+    its true arrival order) and its own rank is still free, it takes that
+    slot - which is free of charge whenever a family model is actually
+    first to appear (the common case for this project, since the history
+    is Claude Code's own token usage). A non-family model, when its turn
+    comes, actively SKIPS those reserved-but-open slots in favour of a
+    higher, non-reserved one - keeping slots 0-3 available for a family
+    model that has not appeared yet is what makes the reservation still
+    mean something beyond "whichever model happened to be first". A
+    non-family model only falls back into a reserved slot once every
+    non-reserved one is already taken (still better than jumping straight
+    to overflow while a real slot sits open). Once a slot is taken by
+    EITHER kind of model, it is never reassigned - a family model whose own
+    reserved rank has already gone to an earlier-arriving model (family or
+    not) falls into this same non-reserved-first search, exactly like a
+    generic model would.
+
+    Once every slot is taken, the palette is reused rather than left
+    unclaimed - see ModelColorSlot.is_overflow.
 
     If the author deletes part of the history, the next render only knows
     about what remains: a model's "first appearance" is recomputed from
@@ -111,14 +137,11 @@ def assign_model_slots(models: Iterable[str], slots: int) -> dict[str, ModelColo
     for index, model in enumerate(models):
         first_seen_order.setdefault(model, index)
 
-    ordered = sorted(
-        first_seen_order, key=lambda model: (_family_rank(model), first_seen_order[model])
-    )
+    ordered = sorted(first_seen_order, key=lambda model: (first_seen_order[model], model))
 
     assignment: dict[str, ModelColorSlot] = {}
     taken: set[int] = set()
     family_slot_count = min(len(_MODEL_FAMILIES), slots)
-    next_free_slot = 0
     overflow_count = 0
     for model in ordered:
         rank = _family_rank(model)
@@ -126,12 +149,12 @@ def assign_model_slots(models: Iterable[str], slots: int) -> dict[str, ModelColo
             assignment[model] = ModelColorSlot(palette_index=rank, is_overflow=False)
             taken.add(rank)
             continue
-        while next_free_slot < slots and next_free_slot in taken:
-            next_free_slot += 1
-        if next_free_slot < slots:
-            assignment[model] = ModelColorSlot(palette_index=next_free_slot, is_overflow=False)
-            taken.add(next_free_slot)
-            next_free_slot += 1
+        slot = _lowest_free_slot(taken, slots, start=family_slot_count)
+        if slot is None:
+            slot = _lowest_free_slot(taken, slots, start=0)
+        if slot is not None:
+            assignment[model] = ModelColorSlot(palette_index=slot, is_overflow=False)
+            taken.add(slot)
             continue
         assignment[model] = ModelColorSlot(palette_index=overflow_count % slots, is_overflow=True)
         overflow_count += 1

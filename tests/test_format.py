@@ -1,4 +1,5 @@
 import os
+import random
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -171,6 +172,41 @@ def test_assign_model_slots_keeps_an_existing_models_slot_when_a_new_one_sorts_b
         assert after[model] == before[model], model
 
 
+def test_assign_model_slots_keeps_a_non_family_model_that_already_holds_a_reserved_slot():
+    # Fix round 1 Critical: the test above only tried a NON-family
+    # newcomer. `ordered` used to sort by (_family_rank(model),
+    # first_seen_order[model]) - family_rank FIRST - so every family model
+    # was processed before every non-family one regardless of when it
+    # actually first appeared. Reproduced through the real caller path
+    # (order_models_by_first_appearance -> assign_model_slots): a history
+    # with only "local-llama" gives it slot 0 (with a single slot total,
+    # it has no other choice); adding "claude-opus-4-8" afterwards made
+    # opus claim slot 0 - the slot it reserves - and bump local-llama to
+    # slot 1, even though local-llama held it first.
+    before = mr.assign_model_slots(["local-llama"], 1)
+    after = mr.assign_model_slots(["local-llama", "claude-opus-4-8"], 1)
+    assert before["local-llama"] == mr.ModelColorSlot(palette_index=0, is_overflow=False)
+    assert after["local-llama"] == before["local-llama"], (
+        "an existing model must never move, family arrival or not"
+    )
+    # opus cannot have the slot it reserves once another model already
+    # holds it - it reuses that colour as overflow instead.
+    assert after["claude-opus-4-8"] == mr.ModelColorSlot(palette_index=0, is_overflow=True)
+
+
+def test_assign_model_slots_generic_block_is_unmoved_by_later_family_arrivals():
+    # Same Critical, the reviewer's second repro shape: "7 generic models
+    # all shift by 2 when two opus versions arrive later" - family_rank as
+    # the primary sort key gave the family arrivals first pick of the low
+    # slot numbers regardless of arrival order, shoving every earlier
+    # generic model down.
+    generics = [f"model-{index}" for index in range(5)]
+    before = mr.assign_model_slots(generics, 7)
+    after = mr.assign_model_slots([*generics, "claude-opus-4-8", "claude-sonnet-4-5"], 7)
+    for model in generics:
+        assert after[model] == before[model], model
+
+
 def test_assign_model_slots_never_gives_two_models_one_slot_while_slots_remain():
     # Two versions of one family want the same slot - the opus that
     # appears later in this call falls through to an ordinary free slot
@@ -231,3 +267,42 @@ def test_assign_model_slots_is_the_same_in_every_process(tmp_path: Path) -> None
         for seed in ("1", "2")
     }
     assert len(outputs) == 1, outputs
+
+
+def test_assign_model_slots_is_a_monotonic_subset_over_hundreds_of_random_histories():
+    # The property fix round 1 asked for, checked directly rather than
+    # through hand-picked scenarios: for ANY order models are appended in
+    # (family and non-family mixed arbitrarily), every PREFIX's slot map
+    # must be a subset of every LONGER prefix's - an existing model's
+    # ModelColorSlot is never revised once given, no matter what arrives
+    # after it. A fixed seed keeps this reproducible rather than a flaky
+    # once-in-a-while failure.
+    pool = [
+        "claude-opus-4-8",
+        "claude-opus-4-1",
+        "claude-sonnet-4-5",
+        "claude-sonnet-4-1",
+        "claude-haiku-4-5",
+        "claude-fable-1",
+        "claude-fable-2",
+        "gpt-x",
+        "local-llama",
+        "mistral-7b",
+        *(f"model-{index}" for index in range(10)),
+    ]
+    random_generator = random.Random(20260929)
+    trial_count = 300
+    for trial in range(trial_count):
+        history_length = random_generator.randint(1, len(pool))
+        history = random_generator.sample(pool, history_length)
+        slot_count = random_generator.choice([1, 2, 3, 4, 5, 7, 9, 30])
+        previous_assignment: dict[str, mr.ModelColorSlot] = {}
+        for prefix_length in range(1, len(history) + 1):
+            assignment = mr.assign_model_slots(history[:prefix_length], slot_count)
+            for model, slot in previous_assignment.items():
+                assert assignment[model] == slot, (
+                    f"trial {trial}, slots={slot_count}, history={history}: "
+                    f"{model!r} moved from {slot} to {assignment[model]} once "
+                    f"{history[prefix_length - 1]!r} was appended"
+                )
+            previous_assignment = assignment
