@@ -82,7 +82,9 @@ Limits
                              first-entry count, and may only fall or rise
                              accordingly - or, at a file cut, the time-cut
                              count this pass itself wrote before
-                             2026-09-29, which moves to the file cut's.
+                             2026-09-29, which moves to the file cut's
+                             only when the entries between the two cuts
+                             explain the difference.
   --fields incomplete_usage  adds incomplete_usage_messages (see
                              transcript_ingest.count_incomplete) to rows
                              written before the hooks recorded it, only
