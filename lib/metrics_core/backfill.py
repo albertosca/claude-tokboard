@@ -512,6 +512,35 @@ def model_totals_as_of(timeline: list[TimelineEntry], end_timestamp: str | None)
     return totals
 
 
+def model_totals_at_row_cut(
+    scan: TranscriptScan, file_sums: PrefixSums, record: dict[str, Any]
+) -> ModelMap:
+    """A row's per-model map at the cut its tokens say the hook made.
+
+    That is the file cut (see scan_cut_points) whose PEAK equals the row's
+    stored tokens - a per-model map is a peak-rule map, so it only belongs
+    beside peak totals - when every such cut gives the same map. Otherwise
+    (no such cut, or cuts that disagree on the map) it is the time cut, as
+    model_totals_as_of gives it, and the caller's gates judge the result.
+    Measured 2026-09-29: 12 native session maps the time cut over-counted,
+    by the 1-3 entries written after the hook's last read, or at the wrong
+    one of two cuts sharing a stamp, all matched exactly at this cut.
+
+    `file_sums` is build_file_order_sums(scan.timeline), taken once per
+    transcript by the caller.
+    """
+    end = record["timestamp_end"]
+    stored = [record.get(field, 0) or 0 for field in TOKEN_FIELDS]
+    maps = [
+        model_totals_as_of(scan.timeline[:count], None)
+        for count in scan.cut_points.get(end, ())
+        if file_sums.peak[count] == stored
+    ]
+    if maps and all(item == maps[0] for item in maps):
+        return maps[0]
+    return model_totals_as_of(scan.timeline, end)
+
+
 def token_sum(record: dict[str, Any]) -> int:
     return sum(record.get(field, 0) or 0 for field in TOKEN_FIELDS)
 

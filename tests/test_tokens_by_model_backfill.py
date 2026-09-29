@@ -575,13 +575,13 @@ def test_a_transcript_shared_by_many_snapshots_is_scanned_once(script, tmp_path,
     native = {"model-alpha": _bucket(input_tokens=10)}
     stamps = [f"2026-08-01T1{hour}:00:00Z" for hour in (1, 2, 3)]
     scans: list[str] = []
-    real_scan = script.scan_transcript
+    real_scan = script.scan_unit
 
     def counting_scan(path: str) -> Any:
         scans.append(path)
         return real_scan(path)
 
-    monkeypatch.setattr(script, "scan_transcript", counting_scan)
+    monkeypatch.setattr(script, "scan_unit", counting_scan)
 
     native_rows = [
         {
@@ -603,6 +603,83 @@ def test_a_transcript_shared_by_many_snapshots_is_scanned_once(script, tmp_path,
 
     assert len(plan) == 3
     assert scans == [transcript_path, transcript_path]
+
+
+def _lines(path: Path, lines: Iterable[dict[str, Any]]) -> str:
+    path.write_text("".join(json.dumps(line) + "\n" for line in lines))
+    return str(path)
+
+
+def _entry(stamp: str, message_id: str, model: str, input_tokens: int) -> dict[str, Any]:
+    return {
+        "type": "assistant",
+        "timestamp": stamp,
+        "message": {"id": message_id, "model": model, "usage": {"input_tokens": input_tokens}},
+    }
+
+
+# The hook stopped reading at the queue-operation line; the model-beta entry
+# is stamped before it but was written below it, so the hook never read it.
+# Measured 2026-09-29: 12 native rows refused by the oracle as over-counts
+# (or an extra bucket) all matched exactly at the cut their tokens reproduce.
+LATE_WRITTEN = [
+    _entry("2026-08-01T10:00:00Z", "a1", "model-alpha", 100),
+    {"type": "queue-operation", "timestamp": "2026-08-01T10:00:05Z"},
+    _entry("2026-08-01T10:00:03Z", "a2", "model-beta", 50),
+]
+
+
+def _row(transcript_path: str, **extra: Any) -> dict[str, Any]:
+    row = {
+        "session_id": "s1",
+        "transcript_path": transcript_path,
+        "timestamp_end": "2026-08-01T10:00:05Z",
+        "input_tokens": 100,
+        "output_tokens": 0,
+        "cache_read_tokens": 0,
+        "cache_creation_tokens": 0,
+    }
+    row.update(extra)
+    return row
+
+
+def test_the_oracle_rebuilds_at_the_cut_the_rows_tokens_say_the_hook_made(script, tmp_path):
+    transcript_path = _lines(tmp_path / "t.jsonl", LATE_WRITTEN)
+    records = [_row(transcript_path, tokens_by_model={"model-alpha": _bucket(input_tokens=100)})]
+
+    report = script.check_against_native(records, "transcript_path")
+
+    assert report.problems == []
+    assert report.exact == 1
+
+
+def test_the_plan_writes_the_map_at_the_cut_the_rows_tokens_say_the_hook_made(script, tmp_path):
+    transcript_path = _lines(tmp_path / "t.jsonl", LATE_WRITTEN)
+
+    plan, _stats = script.plan_backfill([_row(transcript_path)], {}, "transcript_path")
+
+    assert plan == {0: {"model-alpha": _bucket(input_tokens=100)}}
+
+
+def test_file_cuts_whose_maps_disagree_fall_back_to_the_time_cut(script, tmp_path):
+    # Both cuts at 10:00:05 reproduce the tokens (model-beta's entry adds
+    # none), but only the second has a model-beta bucket: nothing tells
+    # which the hook read, so the time cut is used and the oracle judges it.
+    transcript_path = _lines(
+        tmp_path / "t.jsonl",
+        [
+            _entry("2026-08-01T10:00:00Z", "a1", "model-alpha", 100),
+            {"type": "attachment", "timestamp": "2026-08-01T10:00:05Z"},
+            _entry("2026-08-01T10:00:00Z", "a2", "model-beta", 0),
+            {"type": "attachment", "timestamp": "2026-08-01T10:00:05Z"},
+        ],
+    )
+    records = [_row(transcript_path, tokens_by_model={"model-alpha": _bucket(input_tokens=100)})]
+
+    report = script.check_against_native(records, "transcript_path")
+
+    assert len(report.problems) == 1
+    assert "only in the reconstruction ['model-beta']" in report.problems[0]
 
 
 def test_plan_summary_of_an_empty_plan_over_a_file_with_no_tokens(script, capsys):

@@ -10,7 +10,7 @@ four token totals: model id -> {input_tokens, output_tokens,
 cache_read_tokens, cache_creation_tokens}. Every row written before that
 deploy has the four totals and no map. Where the transcript a row was
 parsed from still exists on disk, the map can be rebuilt from it, by the
-same attribution rules the hooks use - scan_transcript() and
+same attribution rules the hooks use - scan_unit() and
 model_totals_as_of() in lib/metrics_core/backfill.py are shared with the
 capture path on purpose, so the message.id dedup, the `<synthetic>` rule
 and the "unknown" fallback exist once rather than twice.
@@ -51,13 +51,18 @@ is wrong about one snapshot where the answer is known has no claim on the
 thousands where it is not.
 
 "Disagreement" is bounded, and bounded in one direction only. A record stores
-`timestamp_end`, never the line number the hook actually summed to, so in a
-transcript whose timestamps run backwards against file order no
-timestamp-derived cut can reproduce the hook exactly - and the error it makes
-can only be a SHORTFALL, never an invention. As this gate itself reported on
-2026-09-16: 126 of 128 sessions exact, worst residue 0.792% downward, and
-93 of 93 subagents exact. So the gate accepts equality or a
-shortfall of at most 1%, and refuses an over-count of any size at all. See
+`timestamp_end`, never the line number the hook actually summed to, and
+Claude Code does not write a transcript in timestamp order, so "every entry
+stamped at or before timestamp_end" (the time cut) can hold an entry the
+hook had not read yet - an OVER-count - or miss one it had. An earlier
+version of this text said the error could only be a shortfall; on
+2026-09-29 the time cut over-counted 12 native session maps, every one of
+which matched exactly at the file cut its tokens reproduce. So each row is
+rebuilt at that cut (model_totals_at_row_cut), and at the time cut only
+when no file cut decides; after the change the same copy gave 2625
+sessions exact, 0 tolerated, 0 disagreements. The gate still accepts
+equality or a shortfall of at most 1% and refuses an over-count of any
+size: a fabricated bar is loud, a small shortfall is not. See
 diff_against_native.
 
 Why the oracle is not the only gate
@@ -123,13 +128,15 @@ from typing import Any, NamedTuple, NoReturn
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
 from metrics_core.backfill import (
-    TimelineEntry,
+    PrefixSums,
+    TranscriptScan,
+    build_file_order_sums,
     carry_late_appends,
     index_subagent_transcripts,
     index_transcripts,
-    model_totals_as_of,
+    model_totals_at_row_cut,
     resolve_transcript,
-    scan_transcript,
+    scan_unit,
     sha256_bytes,
     sha256_of,
     token_sum,
@@ -161,7 +168,9 @@ ID_KEY_FOR_TRANSCRIPT_KEY: dict[str, str] = {
 }
 
 ModelMap = dict[str, dict[str, int]]
-Timeline = list[TimelineEntry]
+# One read of a transcript and its file-order sums, shared by every row
+# of the unit (see model_totals_at_row_cut).
+Scanned = tuple[TranscriptScan, PrefixSums]
 
 # How far BELOW a natively written value a reconstruction may land and still
 # be accepted, per model and per token field. Strictly one-directional: see
@@ -227,6 +236,15 @@ def index_for_file(file_name: str, projects_directory: str) -> tuple[dict[str, s
     return index_transcripts(projects_directory), []
 
 
+def scanned(scans: dict[str, Scanned], path: str) -> Scanned:
+    """The transcript at `path` read once and cached in `scans`."""
+    found = scans.get(path)
+    if found is None:
+        scan = scan_unit(path)
+        found = scans[path] = (scan, build_file_order_sums(scan.timeline))
+    return found
+
+
 def rows_by_unit(records: list[dict[str, Any]], id_key: str) -> dict[Any, list[int]]:
     """Row indexes grouped by the unit whose growing series they are."""
     grouped: dict[Any, list[int]] = collections.defaultdict(list)
@@ -274,7 +292,7 @@ def plan_backfill(
     id_key = ID_KEY_FOR_TRANSCRIPT_KEY[transcript_key]
     stats: collections.Counter[str] = collections.Counter()
     plan: dict[int, ModelMap] = {}
-    timelines: dict[str, Timeline] = {}
+    scans: dict[str, Scanned] = {}
 
     for unit_id, indexes in rows_by_unit(records, id_key).items():
         pending = [index for index in indexes if FIELD not in records[index]]
@@ -295,10 +313,7 @@ def plan_backfill(
 
         for index in pending:
             path = resolved[index]
-            timeline = timelines.get(path)
-            if timeline is None:
-                timeline = timelines[path] = scan_transcript(path)
-            plan[index] = model_totals_as_of(timeline, records[index]["timestamp_end"])
+            plan[index] = model_totals_at_row_cut(*scanned(scans, path), records[index])
         stats["planned"] += len(pending)
         if native:
             # Guarded so the disposition table never prints a reason with a
@@ -325,8 +340,10 @@ def reconcile_against_totals(record: dict[str, Any], rebuilt: ModelMap) -> list[
     disjoint in AGE from the defect, which no amount of sampling fixes.
 
     The bound is the oracle's, for the oracle's reason: equal, or short by at
-    most ORACLE_TOLERANCE, and never above by any amount. An as-of cut can
-    miss entries the totals counted; it can never invent ones they did not.
+    most ORACLE_TOLERANCE, and never above by any amount. A map rebuilt at
+    the cut the row's tokens reproduce sums to them exactly; one rebuilt at
+    the time cut, when no file cut decides, can land either side, and only
+    the shortfall side is forgiven.
 
     Needs no transcript and no index - the row carries both halves.
     """
@@ -465,11 +482,12 @@ def diff_against_native(native: ModelMap, rebuilt: ModelMap) -> tuple[list[str],
     That is not a double standard, it is the lesson this repo already paid
     for: the dedup backfill's worst outcome was INVENTING 1.9 billion tokens
     on a single day, and a per-model bar chart shows a fabricated bar
-    loudly while a sub-1% shortfall is invisible. The measured residue is
-    also structurally one-directional - a record stores `timestamp_end`, not
-    the line the hook actually summed to, so in a transcript whose timestamps
-    run backwards against file order an as-of cut can only ever MISS entries
-    the hook counted, never add ones it did not.
+    loudly while a sub-1% shortfall is invisible. The residue is NOT
+    structurally one-directional, as an earlier version of this docstring
+    said: the time cut can hold entries the hook had not read yet. That is
+    why the reconstruction is taken at the cut the row's tokens reproduce
+    (see model_totals_at_row_cut), where it measured exact on every native
+    session and subagent row it could reach on 2026-09-29.
 
     A model bucket present on one side and absent on the other is never a
     tolerance case: that is a missing or invented series, not a rounding
@@ -589,7 +607,7 @@ def check_against_native(
     not in silence.
     """
     id_key = ID_KEY_FOR_TRANSCRIPT_KEY[transcript_key]
-    timelines: dict[str, Timeline] = {}
+    scans: dict[str, Scanned] = {}
     problems: list[str] = []
     exact = 0
     tolerated = 0
@@ -597,10 +615,7 @@ def check_against_native(
     native_rows = classify_native_rows(records, transcript_key, transcripts)
     for index, path in native_rows.checkable:
         record = records[index]
-        timeline = timelines.get(path)
-        if timeline is None:
-            timeline = timelines[path] = scan_transcript(path)
-        rebuilt = model_totals_as_of(timeline, record["timestamp_end"])
+        rebuilt = model_totals_at_row_cut(*scanned(scans, path), record)
         if not record[FIELD] and not rebuilt:
             vacuous += 1
             continue
