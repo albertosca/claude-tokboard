@@ -220,6 +220,12 @@ def test_a_model_past_the_colour_palette_highlights_independently_of_its_donor(
     fragment_path.write_text(page)
     result = subprocess.run(
         [node, str(HERE / "js" / "drive_model_overflow.js"), str(fragment_path)],
+        # A minimal explicit env, not the inherited process one: this
+        # script reads nothing from the environment (the fragment path
+        # travels as an argv, not an env var, unlike drive_dashboard.js's
+        # DASHBOARD) - PATH is only here in case node itself needs it to
+        # resolve a shared library.
+        env={"PATH": os.environ.get("PATH", "")},
         cwd=str((HERE / "..").resolve()),
         capture_output=True,
         text=True,
