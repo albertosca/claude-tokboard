@@ -585,3 +585,46 @@ def test_session_tree_group_header_formats_a_large_session_count():
     label = str(tree.root.children[0].label)
     assert mr.format_tokens(1234) in label, label
     assert "1234 sessões" not in label, label
+
+
+# ---------------------------------------------------------------------------
+# The "others" bucket's key used to be the string "__outros__" - a value a
+# real project key can hold. A project literally named that, ranked among
+# the top ones, put the same key in the series list twice, and the pane
+# chart raised ValueError (duplicate series key); short of that, it would
+# have been labelled "outros" and painted gray.
+# ---------------------------------------------------------------------------
+
+
+def _outros_named_project_on_top() -> list[dict[str, Any]]:
+    """9 projects, the heaviest one literally named "__outros__", so 7 go
+    into top_keys and the other 2 collapse into the bucket."""
+    names = ["__outros__", *(f"/projects/p{index:02d}" for index in range(1, 9))]
+    return [_daily(name, day, (9 - rank) * 10) for rank, name in enumerate(names) for day in (1, 2)]
+
+
+def test_a_project_named_like_the_others_bucket_is_its_own_series(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    chart = tui.TrendChart(mr, _outros_named_project_on_top(), lang="pt")
+    captured = _capture_stacked_bar_color(monkeypatch)
+
+    chart.render_chart()
+
+    keys = chart.pane_series_keys
+    assert len(keys) == 8
+    assert len({id(key) for key in keys}) == 8
+    assert keys[0] == "__outros__"
+    assert keys[-1] is tui.PANE_OTHER_KEY
+    assert captured["color"][0] == tui.PANE_COLORS[0], "the real project keeps its colour"
+    assert captured["color"][-1] == tui.PANE_OTHER_COLOR, "the bucket stays gray by key"
+
+
+def test_the_legend_labels_the_project_and_the_bucket_apart() -> None:
+    legend = tui.ProjectLegend(mr, _outros_named_project_on_top(), lang="en")
+
+    chips = legend.render().split("   ")
+
+    assert chips[0] == mr.project_display_label("__outros__", lang="en")
+    assert chips[-1] == mr.t("others", "en")
+    assert tui.pane_series_label(mr, "__outros__", lang="en") != mr.t("others", "en")

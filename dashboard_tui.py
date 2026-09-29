@@ -625,7 +625,25 @@ PANE_COLORS: list[PlotColor] = [
     (255, 30, 0),
 ]
 PANE_OTHER_COLOR = "gray"
-PANE_OTHER_KEY = "__outros__"
+
+
+class OthersBucket:
+    """The type of PANE_OTHER_KEY, the pane chart's "others" series key.
+
+    Not a string on purpose: a project key is whatever project_path a
+    row carries, so any string can be one. The key used to be
+    "__outros__", and a project by that name ranked among the top ones
+    put the same key in the series list twice - the chart raised
+    ValueError, and the legend would have called the project "outros"
+    and painted it gray. An instance of this class equals nothing but
+    itself, so the bucket's label (from the catalog) and its gray (by
+    key) can never land on a real project.
+    """
+
+
+PANE_OTHER_KEY = OthersBucket()
+# A pane series: a project's color group key, or the "others" bucket.
+PaneKey = str | None | OthersBucket
 
 
 def compute_pane_projects(
@@ -648,8 +666,8 @@ def compute_pane_projects(
     return top_keys, has_other
 
 
-def pane_series_label(metrics_core_module: ModuleType, key: str | None, *, lang: str) -> str:
-    if key == PANE_OTHER_KEY:
+def pane_series_label(metrics_core_module: ModuleType, key: PaneKey, *, lang: str) -> str:
+    if isinstance(key, OthersBucket):
         others: str = metrics_core_module.t("others", lang)
         return others
     label: str = metrics_core_module.project_display_label(key, lang=lang)
@@ -856,7 +874,7 @@ class TrendChart(PlotextPlot):
         # over this chart's records instead.
         self.model_slots = model_slots
         self.highlighted: set[str] | None = None
-        self.project_highlighted: set[str | None] | None = None
+        self.project_highlighted: set[PaneKey] | None = None
         self._now: datetime | None = None
         self._drawn_width = 0
         self._too_narrow = False
@@ -878,7 +896,7 @@ class TrendChart(PlotextPlot):
         if self.mode == "tokens":
             self.render_chart()
 
-    def set_project_highlight(self, projects: set[str | None] | None) -> None:
+    def set_project_highlight(self, projects: set[PaneKey] | None) -> None:
         self.project_highlighted = projects
         if self.mode == "pane":
             self.render_chart()
@@ -944,18 +962,16 @@ class TrendChart(PlotextPlot):
             top_keys, has_other = compute_pane_projects(
                 self.metrics_core_module, self.chart_records
             )
-            series_keys = list(top_keys) + ([PANE_OTHER_KEY] if has_other else [])
+            series_keys: list[PaneKey] = [*top_keys, *([PANE_OTHER_KEY] if has_other else [])]
             self.pane_series_keys = series_keys
-            series_data: dict[str | None, list[int]] = {
-                series_key: [] for series_key in series_keys
-            }
+            series_data: dict[PaneKey, list[int]] = {series_key: [] for series_key in series_keys}
             for day in days:
                 day_totals = dict.fromkeys(series_keys, 0)
                 for record in day["records"]:
                     record_key = self.metrics_core_module.color_group_key(
                         record.get("project_path")
                     )
-                    bucket = record_key if record_key in top_keys else PANE_OTHER_KEY
+                    bucket: PaneKey = record_key if record_key in top_keys else PANE_OTHER_KEY
                     day_totals[bucket] += self.metrics_core_module.record_token_total(record)
                 for series_key in series_keys:
                     series_data[series_key].append(day_totals[series_key])
@@ -969,7 +985,7 @@ class TrendChart(PlotextPlot):
             # model chart needed more colours, so the bucket's index is now a
             # real colour.
             palette = [
-                PANE_OTHER_COLOR if series_key == PANE_OTHER_KEY else PANE_COLORS[palette_index]
+                PANE_OTHER_COLOR if series_key is PANE_OTHER_KEY else PANE_COLORS[palette_index]
                 for palette_index, series_key in enumerate(series_keys)
             ]
             if self.project_highlighted:
@@ -1108,10 +1124,10 @@ class TrendChart(PlotextPlot):
 
 
 class ProjectLegend(Static):
-    highlighted: reactive[set[str | None] | None] = reactive(None)
+    highlighted: reactive[set[PaneKey] | None] = reactive(None)
 
     class Highlight(Message):
-        def __init__(self, projects: set[str | None] | None) -> None:
+        def __init__(self, projects: set[PaneKey] | None) -> None:
             self.projects = projects
             super().__init__()
 
@@ -1128,9 +1144,9 @@ class ProjectLegend(Static):
         self.chart_records = chart_records
         self.lang = lang
 
-    def _series_keys(self) -> list[str | None]:
+    def _series_keys(self) -> list[PaneKey]:
         top_keys, has_other = compute_pane_projects(self.metrics_core_module, self.chart_records)
-        return list(top_keys) + ([PANE_OTHER_KEY] if has_other else [])
+        return [*top_keys, *([PANE_OTHER_KEY] if has_other else [])]
 
     def render(self) -> str:
         series_keys = self._series_keys()
@@ -1152,7 +1168,7 @@ class ProjectLegend(Static):
         chip_width = self.size.width // len(series_keys) if self.size.width else 0
         index = min(event.x // max(chip_width, 1), len(series_keys) - 1) if chip_width else 0
         key = series_keys[index]
-        current: set[str | None] = self.highlighted or set()
+        current: set[PaneKey] = self.highlighted or set()
         if event.shift:
             self.highlighted = current | {key}
         elif event.ctrl:
