@@ -15,6 +15,9 @@ import metrics_core as mr
 from conftest import DashboardPage
 from js_runtime import require_node_with_jsdom
 
+import dashboard_html
+import dashboard_html_assets
+
 HERE = Path(__file__).resolve().parent
 
 # A ratchet, not a guess: the harness currently makes exactly this many
@@ -152,4 +155,77 @@ def test_the_harness_reports_which_periods_it_checked(dashboard_page):
     assert int(total.group(1)) >= MINIMUM_ASSERTIONS, (
         f"the harness made {total.group(1)} assertions, down from {MINIMUM_ASSERTIONS} - "
         f"coverage was removed, not added\n{result.stdout}"
+    )
+
+
+def _model_bucket(**fields: int) -> dict[str, int]:
+    bucket = {
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "cache_read_tokens": 0,
+        "cache_creation_tokens": 0,
+    }
+    bucket.update(fields)
+    return bucket
+
+
+def test_a_model_past_the_colour_palette_highlights_independently_of_its_donor(
+    tmp_path: Path,
+) -> None:
+    # M1's markup-level tests (test_dashboard_html_charts.py) prove the
+    # overflow band and its donor carry DIFFERENT class names - which is
+    # necessary but not sufficient. This is the same lesson this whole
+    # module exists for (see its docstring): a CSS rule can still light
+    # both classes together despite the markup being perfectly correct,
+    # and that is exactly the bug this test caught on first implementation
+    # - a selector list long enough to enumerate every model-overflow-N
+    # class silently stopped matching in jsdom's CSS engine, dimming
+    # nothing at all. Only asking getComputedStyle for the real, cascaded
+    # opacity - not reading the stylesheet source - can catch that.
+    node = require_node_with_jsdom()
+    by_model = {f"claude-match{index}": _model_bucket(input_tokens=10) for index in range(31)}
+    records = [
+        {
+            "session_id": "day1",
+            "project_path": "/proj/a",
+            "timestamp_start": "2026-01-01T10:00:00Z",
+            "input_tokens": 310,
+            "output_tokens": 0,
+            "cache_read_tokens": 0,
+            "cache_creation_tokens": 0,
+            "tokens_by_model": by_model,
+        },
+        {
+            "session_id": "day2",
+            "project_path": "/proj/a",
+            "timestamp_start": "2026-01-02T10:00:00Z",
+            "input_tokens": 100,
+            "output_tokens": 0,
+            "cache_read_tokens": 0,
+            "cache_creation_tokens": 0,
+        },
+    ]
+    fragment = dashboard_html.render_trend_chart(
+        records, {"/proj/a": "group-color-1"}, "p1", lang="pt"
+    )
+    page = (
+        "<!doctype html><html><head>"
+        + dashboard_html_assets.STYLE
+        + "</head><body>"
+        + fragment
+        + dashboard_html_assets.SCRIPT
+        + "</body></html>"
+    )
+    fragment_path = tmp_path / "model_overflow.html"
+    fragment_path.write_text(page)
+    result = subprocess.run(
+        [node, str(HERE / "js" / "drive_model_overflow.js"), str(fragment_path)],
+        cwd=str((HERE / "..").resolve()),
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert result.returncode == 0, (
+        f"the overflow model's band/chip did not highlight independently of its "
+        f"donor's\n{result.stdout}\n{result.stderr}"
     )

@@ -365,6 +365,33 @@ def render_detail_panel(
 MODEL_COLOR_SLOTS = 30
 
 
+def model_color_css_class(slot: metrics_core_module.ModelColorSlot) -> str:
+    """The chart-bar/legend-swatch class for one model's colour slot.
+
+    A slot past the palette (is_overflow) never renders as the plain
+    "group-color-N" class its colour's original owner uses: the two would
+    then share a data-highlight token, and clicking either one would light
+    up both, despite being otherwise unrelated. model-overflow-N is its own
+    class, styled to the SAME fill (dashboard_html_assets.py mirrors every
+    group-color-N rule for it) but with its own spotlight rule, so overflow
+    models are visually grouped with their colour's owner yet stay
+    independently clickable.
+
+    Every model this chart draws IS in `slots` - it is either the model_order
+    passed to assign_model_slots directly (render_trend_chart's own
+    fallback) or a subset of the full-history model set assign_model_slots
+    was called with in render_html (a window can only narrow which records
+    are visible, never introduce a model absent from the unfiltered
+    history) - so callers index `slots` directly rather than calling this
+    with an Optional and a "no slot at all" fallback that could never run.
+    The genuinely unattributed "no model" band is a separate, always-known
+    class (see unattributed_class in render_trend_chart), never routed
+    through here.
+    """
+    prefix = "model-overflow" if slot.is_overflow else "group-color"
+    return f"{prefix}-{slot.palette_index + 1}"
+
+
 def render_trend_chart(
     records: list[dict[str, Any]],
     group_colors: dict[str | None, str],
@@ -372,7 +399,7 @@ def render_trend_chart(
     now: datetime | None = None,
     *,
     lang: str,
-    model_slots: dict[str, int | None] | None = None,
+    model_slots: dict[str, metrics_core_module.ModelColorSlot] | None = None,
 ) -> str:
     granularity, days = metrics_core_module.aggregate_by_day(records)
     parse_format = metrics_core_module.GRANULARITY_CONFIG[granularity]["parse_fmt"]
@@ -628,20 +655,17 @@ def render_trend_chart(
     # whenever another one outspent it. render_html settles the slots once,
     # over the whole history, so every period's chart agrees; a chart
     # rendered on its own settles them over its own records. A model past
-    # the last slot shares the unattributed colour, the same "other" the
-    # TUI gives it.
+    # the last slot reuses an earlier model's colour rather than the
+    # unattributed one - see model_color_css_class and
+    # ModelColorSlot.is_overflow - so it stays visually distinct from the
+    # "no model" remainder band and independently clickable.
     slots = (
         model_slots
         if model_slots is not None
         else metrics_core_module.assign_model_slots(model_order, MODEL_COLOR_SLOTS)
     )
     unattributed_class = "group-color-none"
-    model_class = {
-        model: unattributed_class
-        if (slot := slots.get(model)) is None
-        else f"group-color-{slot + 1}"
-        for model in model_order
-    }
+    model_class = {model: model_color_css_class(slots[model]) for model in model_order}
 
     def bars_for_model() -> str:
         bars = []
@@ -1104,8 +1128,13 @@ def render_html(
     group_colors = build_group_colors(chart_records, daily_chart_records)
     # Over the whole history, not per period, so a model keeps its colour
     # in every period's chart - see metrics_core_module.assign_model_slots.
+    # Ordered by first appearance, not compute_model_totals' dict order (not
+    # guaranteed chronological across sessions - see
+    # order_models_by_first_appearance) - that order is what makes a
+    # model's slot permanent as the history grows.
     model_slots = metrics_core_module.assign_model_slots(
-        metrics_core_module.compute_model_totals(daily_chart_records)[0], MODEL_COLOR_SLOTS
+        metrics_core_module.order_models_by_first_appearance(daily_chart_records),
+        MODEL_COLOR_SLOTS,
     )
 
     def periods_for(record: dict[str, Any]) -> tuple[str, ...]:

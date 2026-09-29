@@ -197,6 +197,41 @@ STYLE = """
       .chart-bar.group-color-29 { fill: var(--group-29); }
       .chart-bar.group-color-30 { fill: var(--group-30); }
       .chart-bar.group-color-none { fill: var(--group-none); }
+      /* A model past the colour palette (ModelColorSlot.is_overflow, see
+         lib/metrics_core/format.py) reuses an earlier slot's fill instead
+         of going uncoloured - same colour var, own class name, so its
+         highlight rules below never fire together with the class the
+         colour's original owner wears. */
+      .chart-bar.model-overflow-1 { fill: var(--group-1); }
+      .chart-bar.model-overflow-2 { fill: var(--group-2); }
+      .chart-bar.model-overflow-3 { fill: var(--group-3); }
+      .chart-bar.model-overflow-4 { fill: var(--group-4); }
+      .chart-bar.model-overflow-5 { fill: var(--group-5); }
+      .chart-bar.model-overflow-6 { fill: var(--group-6); }
+      .chart-bar.model-overflow-7 { fill: var(--group-7); }
+      .chart-bar.model-overflow-8 { fill: var(--group-8); }
+      .chart-bar.model-overflow-9 { fill: var(--group-9); }
+      .chart-bar.model-overflow-10 { fill: var(--group-10); }
+      .chart-bar.model-overflow-11 { fill: var(--group-11); }
+      .chart-bar.model-overflow-12 { fill: var(--group-12); }
+      .chart-bar.model-overflow-13 { fill: var(--group-13); }
+      .chart-bar.model-overflow-14 { fill: var(--group-14); }
+      .chart-bar.model-overflow-15 { fill: var(--group-15); }
+      .chart-bar.model-overflow-16 { fill: var(--group-16); }
+      .chart-bar.model-overflow-17 { fill: var(--group-17); }
+      .chart-bar.model-overflow-18 { fill: var(--group-18); }
+      .chart-bar.model-overflow-19 { fill: var(--group-19); }
+      .chart-bar.model-overflow-20 { fill: var(--group-20); }
+      .chart-bar.model-overflow-21 { fill: var(--group-21); }
+      .chart-bar.model-overflow-22 { fill: var(--group-22); }
+      .chart-bar.model-overflow-23 { fill: var(--group-23); }
+      .chart-bar.model-overflow-24 { fill: var(--group-24); }
+      .chart-bar.model-overflow-25 { fill: var(--group-25); }
+      .chart-bar.model-overflow-26 { fill: var(--group-26); }
+      .chart-bar.model-overflow-27 { fill: var(--group-27); }
+      .chart-bar.model-overflow-28 { fill: var(--group-28); }
+      .chart-bar.model-overflow-29 { fill: var(--group-29); }
+      .chart-bar.model-overflow-30 { fill: var(--group-30); }
       .chart-bar.series-1 { fill: var(--series-1); }
       .chart-bar.series-2 { fill: var(--series-2); }
       .chart-bar.series-3 { fill: var(--series-3); }
@@ -368,6 +403,38 @@ STYLE = """
       .legend-swatch.group-color-29 { background: var(--group-29); }
       .legend-swatch.group-color-30 { background: var(--group-30); }
       .legend-swatch.group-color-none { background: var(--group-none); }
+      /* Mirrors the model-overflow-N chart-bar fills above, for the "por
+         modelo" legend chip's own swatch. */
+      .legend-swatch.model-overflow-1 { background: var(--group-1); }
+      .legend-swatch.model-overflow-2 { background: var(--group-2); }
+      .legend-swatch.model-overflow-3 { background: var(--group-3); }
+      .legend-swatch.model-overflow-4 { background: var(--group-4); }
+      .legend-swatch.model-overflow-5 { background: var(--group-5); }
+      .legend-swatch.model-overflow-6 { background: var(--group-6); }
+      .legend-swatch.model-overflow-7 { background: var(--group-7); }
+      .legend-swatch.model-overflow-8 { background: var(--group-8); }
+      .legend-swatch.model-overflow-9 { background: var(--group-9); }
+      .legend-swatch.model-overflow-10 { background: var(--group-10); }
+      .legend-swatch.model-overflow-11 { background: var(--group-11); }
+      .legend-swatch.model-overflow-12 { background: var(--group-12); }
+      .legend-swatch.model-overflow-13 { background: var(--group-13); }
+      .legend-swatch.model-overflow-14 { background: var(--group-14); }
+      .legend-swatch.model-overflow-15 { background: var(--group-15); }
+      .legend-swatch.model-overflow-16 { background: var(--group-16); }
+      .legend-swatch.model-overflow-17 { background: var(--group-17); }
+      .legend-swatch.model-overflow-18 { background: var(--group-18); }
+      .legend-swatch.model-overflow-19 { background: var(--group-19); }
+      .legend-swatch.model-overflow-20 { background: var(--group-20); }
+      .legend-swatch.model-overflow-21 { background: var(--group-21); }
+      .legend-swatch.model-overflow-22 { background: var(--group-22); }
+      .legend-swatch.model-overflow-23 { background: var(--group-23); }
+      .legend-swatch.model-overflow-24 { background: var(--group-24); }
+      .legend-swatch.model-overflow-25 { background: var(--group-25); }
+      .legend-swatch.model-overflow-26 { background: var(--group-26); }
+      .legend-swatch.model-overflow-27 { background: var(--group-27); }
+      .legend-swatch.model-overflow-28 { background: var(--group-28); }
+      .legend-swatch.model-overflow-29 { background: var(--group-29); }
+      .legend-swatch.model-overflow-30 { background: var(--group-30); }
       .legend-swatch.series-1 { background: var(--series-1); }
       .legend-swatch.series-2 { background: var(--series-2); }
       .legend-swatch.series-3 { background: var(--series-3); }
@@ -486,6 +553,16 @@ STYLE = """
       body[data-highlight] .chart-bar.group-color-29,
       body[data-highlight] .chart-bar.group-color-30,
       body[data-highlight] .chart-bar.group-color-none {
+        opacity: 0.25;
+      }
+      /* model-overflow-N's dimming, kept OUT of the combined list above on
+         purpose: jsdom's CSS engine (measured 2026-09-29, backlog sweep 3 /
+         M1) silently stops matching a handful of selectors in a comma list
+         once it grows long enough - doubling that list from 31 to 61
+         entries by appending model-overflow-1..30 there left "group-color-
+         none" undimmed in the rendering test. A substring attribute match
+         says the same thing in one selector instead of thirty. */
+      body[data-highlight] .chart-bar[class*="model-overflow-"] {
         opacity: 0.25;
       }
       body[data-highlight~="group-color-1"] .chart-bar.group-color-1 {
@@ -643,6 +720,161 @@ STYLE = """
         stroke: var(--group-none);
         stroke-width: 1.5px;
       }
+      /* model-overflow-N's own spotlight rule - deliberately separate from
+         group-color-N's above, even though N shares a fill colour with it,
+         so clicking an overflow model's band or chip never also lights up
+         the real model whose colour it borrowed (or another overflow
+         model that happens to share the same cycled colour). */
+      body[data-highlight~="model-overflow-1"] .chart-bar.model-overflow-1 {
+        opacity: 1;
+        stroke: var(--group-1);
+        stroke-width: 1.5px;
+      }
+      body[data-highlight~="model-overflow-2"] .chart-bar.model-overflow-2 {
+        opacity: 1;
+        stroke: var(--group-2);
+        stroke-width: 1.5px;
+      }
+      body[data-highlight~="model-overflow-3"] .chart-bar.model-overflow-3 {
+        opacity: 1;
+        stroke: var(--group-3);
+        stroke-width: 1.5px;
+      }
+      body[data-highlight~="model-overflow-4"] .chart-bar.model-overflow-4 {
+        opacity: 1;
+        stroke: var(--group-4);
+        stroke-width: 1.5px;
+      }
+      body[data-highlight~="model-overflow-5"] .chart-bar.model-overflow-5 {
+        opacity: 1;
+        stroke: var(--group-5);
+        stroke-width: 1.5px;
+      }
+      body[data-highlight~="model-overflow-6"] .chart-bar.model-overflow-6 {
+        opacity: 1;
+        stroke: var(--group-6);
+        stroke-width: 1.5px;
+      }
+      body[data-highlight~="model-overflow-7"] .chart-bar.model-overflow-7 {
+        opacity: 1;
+        stroke: var(--group-7);
+        stroke-width: 1.5px;
+      }
+      body[data-highlight~="model-overflow-8"] .chart-bar.model-overflow-8 {
+        opacity: 1;
+        stroke: var(--group-8);
+        stroke-width: 1.5px;
+      }
+      body[data-highlight~="model-overflow-9"] .chart-bar.model-overflow-9 {
+        opacity: 1;
+        stroke: var(--group-9);
+        stroke-width: 1.5px;
+      }
+      body[data-highlight~="model-overflow-10"] .chart-bar.model-overflow-10 {
+        opacity: 1;
+        stroke: var(--group-10);
+        stroke-width: 1.5px;
+      }
+      body[data-highlight~="model-overflow-11"] .chart-bar.model-overflow-11 {
+        opacity: 1;
+        stroke: var(--group-11);
+        stroke-width: 1.5px;
+      }
+      body[data-highlight~="model-overflow-12"] .chart-bar.model-overflow-12 {
+        opacity: 1;
+        stroke: var(--group-12);
+        stroke-width: 1.5px;
+      }
+      body[data-highlight~="model-overflow-13"] .chart-bar.model-overflow-13 {
+        opacity: 1;
+        stroke: var(--group-13);
+        stroke-width: 1.5px;
+      }
+      body[data-highlight~="model-overflow-14"] .chart-bar.model-overflow-14 {
+        opacity: 1;
+        stroke: var(--group-14);
+        stroke-width: 1.5px;
+      }
+      body[data-highlight~="model-overflow-15"] .chart-bar.model-overflow-15 {
+        opacity: 1;
+        stroke: var(--group-15);
+        stroke-width: 1.5px;
+      }
+      body[data-highlight~="model-overflow-16"] .chart-bar.model-overflow-16 {
+        opacity: 1;
+        stroke: var(--group-16);
+        stroke-width: 1.5px;
+      }
+      body[data-highlight~="model-overflow-17"] .chart-bar.model-overflow-17 {
+        opacity: 1;
+        stroke: var(--group-17);
+        stroke-width: 1.5px;
+      }
+      body[data-highlight~="model-overflow-18"] .chart-bar.model-overflow-18 {
+        opacity: 1;
+        stroke: var(--group-18);
+        stroke-width: 1.5px;
+      }
+      body[data-highlight~="model-overflow-19"] .chart-bar.model-overflow-19 {
+        opacity: 1;
+        stroke: var(--group-19);
+        stroke-width: 1.5px;
+      }
+      body[data-highlight~="model-overflow-20"] .chart-bar.model-overflow-20 {
+        opacity: 1;
+        stroke: var(--group-20);
+        stroke-width: 1.5px;
+      }
+      body[data-highlight~="model-overflow-21"] .chart-bar.model-overflow-21 {
+        opacity: 1;
+        stroke: var(--group-21);
+        stroke-width: 1.5px;
+      }
+      body[data-highlight~="model-overflow-22"] .chart-bar.model-overflow-22 {
+        opacity: 1;
+        stroke: var(--group-22);
+        stroke-width: 1.5px;
+      }
+      body[data-highlight~="model-overflow-23"] .chart-bar.model-overflow-23 {
+        opacity: 1;
+        stroke: var(--group-23);
+        stroke-width: 1.5px;
+      }
+      body[data-highlight~="model-overflow-24"] .chart-bar.model-overflow-24 {
+        opacity: 1;
+        stroke: var(--group-24);
+        stroke-width: 1.5px;
+      }
+      body[data-highlight~="model-overflow-25"] .chart-bar.model-overflow-25 {
+        opacity: 1;
+        stroke: var(--group-25);
+        stroke-width: 1.5px;
+      }
+      body[data-highlight~="model-overflow-26"] .chart-bar.model-overflow-26 {
+        opacity: 1;
+        stroke: var(--group-26);
+        stroke-width: 1.5px;
+      }
+      body[data-highlight~="model-overflow-27"] .chart-bar.model-overflow-27 {
+        opacity: 1;
+        stroke: var(--group-27);
+        stroke-width: 1.5px;
+      }
+      body[data-highlight~="model-overflow-28"] .chart-bar.model-overflow-28 {
+        opacity: 1;
+        stroke: var(--group-28);
+        stroke-width: 1.5px;
+      }
+      body[data-highlight~="model-overflow-29"] .chart-bar.model-overflow-29 {
+        opacity: 1;
+        stroke: var(--group-29);
+        stroke-width: 1.5px;
+      }
+      body[data-highlight~="model-overflow-30"] .chart-bar.model-overflow-30 {
+        opacity: 1;
+        stroke: var(--group-30);
+        stroke-width: 1.5px;
+      }
       body[data-highlight~="group-color-1"] .legend-chip:has(.legend-swatch.group-color-1),
       body[data-highlight~="group-color-2"] .legend-chip:has(.legend-swatch.group-color-2),
       body[data-highlight~="group-color-3"] .legend-chip:has(.legend-swatch.group-color-3),
@@ -673,6 +905,159 @@ STYLE = """
       body[data-highlight~="group-color-28"] .legend-chip:has(.legend-swatch.group-color-28),
       body[data-highlight~="group-color-29"] .legend-chip:has(.legend-swatch.group-color-29),
       body[data-highlight~="group-color-30"] .legend-chip:has(.legend-swatch.group-color-30) {
+        opacity: 1;
+        font-weight: 700;
+      }
+      /* model-overflow-N's own legend-chip rule, one PER slot rather than
+         appended to the combined list above: jsdom's CSS engine (measured
+         2026-09-29, backlog sweep 3 / M1) silently stops matching a
+         handful of selectors once a comma list grows long enough, and
+         appending 30 more here reproduced the exact same failure the
+         chart-bar dim rule had (see the .chart-bar[class*="model-
+         overflow-"] rule above) - a legend chip staying dim instead of
+         bolding when its own model was clicked. Thirty small rules avoid
+         the list-length cliff entirely; :has() still needs to be
+         PER-N, this one cannot collapse into a single substring selector
+         the way the DIM rule did, since every N must pair with its own
+         data-highlight token, not any overflow token. */
+      body[data-highlight~="model-overflow-1"] .legend-chip:has(.legend-swatch.model-overflow-1) {
+        opacity: 1;
+        font-weight: 700;
+      }
+      body[data-highlight~="model-overflow-2"] .legend-chip:has(.legend-swatch.model-overflow-2) {
+        opacity: 1;
+        font-weight: 700;
+      }
+      body[data-highlight~="model-overflow-3"] .legend-chip:has(.legend-swatch.model-overflow-3) {
+        opacity: 1;
+        font-weight: 700;
+      }
+      body[data-highlight~="model-overflow-4"] .legend-chip:has(.legend-swatch.model-overflow-4) {
+        opacity: 1;
+        font-weight: 700;
+      }
+      body[data-highlight~="model-overflow-5"] .legend-chip:has(.legend-swatch.model-overflow-5) {
+        opacity: 1;
+        font-weight: 700;
+      }
+      body[data-highlight~="model-overflow-6"] .legend-chip:has(.legend-swatch.model-overflow-6) {
+        opacity: 1;
+        font-weight: 700;
+      }
+      body[data-highlight~="model-overflow-7"] .legend-chip:has(.legend-swatch.model-overflow-7) {
+        opacity: 1;
+        font-weight: 700;
+      }
+      body[data-highlight~="model-overflow-8"] .legend-chip:has(.legend-swatch.model-overflow-8) {
+        opacity: 1;
+        font-weight: 700;
+      }
+      body[data-highlight~="model-overflow-9"] .legend-chip:has(.legend-swatch.model-overflow-9) {
+        opacity: 1;
+        font-weight: 700;
+      }
+      body[data-highlight~="model-overflow-10"]
+        .legend-chip:has(.legend-swatch.model-overflow-10) {
+        opacity: 1;
+        font-weight: 700;
+      }
+      body[data-highlight~="model-overflow-11"]
+        .legend-chip:has(.legend-swatch.model-overflow-11) {
+        opacity: 1;
+        font-weight: 700;
+      }
+      body[data-highlight~="model-overflow-12"]
+        .legend-chip:has(.legend-swatch.model-overflow-12) {
+        opacity: 1;
+        font-weight: 700;
+      }
+      body[data-highlight~="model-overflow-13"]
+        .legend-chip:has(.legend-swatch.model-overflow-13) {
+        opacity: 1;
+        font-weight: 700;
+      }
+      body[data-highlight~="model-overflow-14"]
+        .legend-chip:has(.legend-swatch.model-overflow-14) {
+        opacity: 1;
+        font-weight: 700;
+      }
+      body[data-highlight~="model-overflow-15"]
+        .legend-chip:has(.legend-swatch.model-overflow-15) {
+        opacity: 1;
+        font-weight: 700;
+      }
+      body[data-highlight~="model-overflow-16"]
+        .legend-chip:has(.legend-swatch.model-overflow-16) {
+        opacity: 1;
+        font-weight: 700;
+      }
+      body[data-highlight~="model-overflow-17"]
+        .legend-chip:has(.legend-swatch.model-overflow-17) {
+        opacity: 1;
+        font-weight: 700;
+      }
+      body[data-highlight~="model-overflow-18"]
+        .legend-chip:has(.legend-swatch.model-overflow-18) {
+        opacity: 1;
+        font-weight: 700;
+      }
+      body[data-highlight~="model-overflow-19"]
+        .legend-chip:has(.legend-swatch.model-overflow-19) {
+        opacity: 1;
+        font-weight: 700;
+      }
+      body[data-highlight~="model-overflow-20"]
+        .legend-chip:has(.legend-swatch.model-overflow-20) {
+        opacity: 1;
+        font-weight: 700;
+      }
+      body[data-highlight~="model-overflow-21"]
+        .legend-chip:has(.legend-swatch.model-overflow-21) {
+        opacity: 1;
+        font-weight: 700;
+      }
+      body[data-highlight~="model-overflow-22"]
+        .legend-chip:has(.legend-swatch.model-overflow-22) {
+        opacity: 1;
+        font-weight: 700;
+      }
+      body[data-highlight~="model-overflow-23"]
+        .legend-chip:has(.legend-swatch.model-overflow-23) {
+        opacity: 1;
+        font-weight: 700;
+      }
+      body[data-highlight~="model-overflow-24"]
+        .legend-chip:has(.legend-swatch.model-overflow-24) {
+        opacity: 1;
+        font-weight: 700;
+      }
+      body[data-highlight~="model-overflow-25"]
+        .legend-chip:has(.legend-swatch.model-overflow-25) {
+        opacity: 1;
+        font-weight: 700;
+      }
+      body[data-highlight~="model-overflow-26"]
+        .legend-chip:has(.legend-swatch.model-overflow-26) {
+        opacity: 1;
+        font-weight: 700;
+      }
+      body[data-highlight~="model-overflow-27"]
+        .legend-chip:has(.legend-swatch.model-overflow-27) {
+        opacity: 1;
+        font-weight: 700;
+      }
+      body[data-highlight~="model-overflow-28"]
+        .legend-chip:has(.legend-swatch.model-overflow-28) {
+        opacity: 1;
+        font-weight: 700;
+      }
+      body[data-highlight~="model-overflow-29"]
+        .legend-chip:has(.legend-swatch.model-overflow-29) {
+        opacity: 1;
+        font-weight: 700;
+      }
+      body[data-highlight~="model-overflow-30"]
+        .legend-chip:has(.legend-swatch.model-overflow-30) {
         opacity: 1;
         font-weight: 700;
       }

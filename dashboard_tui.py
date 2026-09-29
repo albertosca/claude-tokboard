@@ -20,7 +20,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
 from types import ModuleType
-from typing import Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from rich.text import Text
 from textual.app import App, ComposeResult, RenderResult
@@ -31,6 +31,14 @@ from textual.message import Message
 from textual.reactive import reactive
 from textual.widgets import Footer, Static, TabbedContent, TabPane, Tree
 from textual_plotext import PlotextPlot
+
+if TYPE_CHECKING:
+    # Only for annotations below (model_slots' value type): the real
+    # import stays the runtime-injected ModuleType parameter every
+    # function here already takes, resolved via import_metrics_report()
+    # after sys.path is set up, not this static one - mypy_path="lib" in
+    # pyproject.toml lets mypy resolve this without that path munging.
+    import metrics_core
 
 
 def import_metrics_report() -> ModuleType:
@@ -266,9 +274,14 @@ def load_base_data(
     project_last_seen = metrics_core_module.compute_project_last_seen(all_time_records)
     open_projects = metrics_core_module.get_open_projects()
     # Over the whole history, not per period, so a model keeps its colour
-    # whichever period is on screen - see assign_model_slots.
+    # whichever period is on screen - see assign_model_slots. Ordered by
+    # first appearance, not compute_model_totals' dict order (not
+    # guaranteed chronological across sessions - see
+    # order_models_by_first_appearance) - that order is what makes a
+    # model's slot permanent as the history grows.
     model_slots = metrics_core_module.assign_model_slots(
-        metrics_core_module.compute_model_totals(daily_chart_records)[0], len(PANE_COLORS)
+        metrics_core_module.order_models_by_first_appearance(daily_chart_records),
+        len(PANE_COLORS),
     )
 
     return {
@@ -812,7 +825,7 @@ class TrendChart(PlotextPlot):
         mode: str = "pane",
         *,
         lang: str,
-        model_slots: dict[str, int | None] | None = None,
+        model_slots: dict[str, metrics_core.ModelColorSlot] | None = None,
         **keyword_arguments: Any,
     ) -> None:
         super().__init__(**keyword_arguments)
@@ -980,8 +993,19 @@ class TrendChart(PlotextPlot):
                 if self.model_slots is not None
                 else self.metrics_core_module.assign_model_slots(model_keys, len(PANE_COLORS))
             )
+            # An overflow model reuses an earlier model's colour rather than
+            # going uncoloured (see ModelColorSlot.is_overflow) - the TUI has
+            # no click-to-highlight to keep the two apart visually the way
+            # the HTML dashboard's separate CSS class does, so the legend
+            # label itself carries the marker instead.
+            for index, model in enumerate(model_keys):
+                slot = slots.get(model)
+                if slot is not None and slot.is_overflow:
+                    series_labels[index] = f"{series_labels[index]} *"
             color = [
-                PANE_OTHER_COLOR if (slot := slots.get(model)) is None else PANE_COLORS[slot]
+                PANE_OTHER_COLOR
+                if (slot := slots.get(model)) is None
+                else PANE_COLORS[slot.palette_index]
                 for model in model_keys
             ]
             color.append(PANE_OTHER_COLOR)

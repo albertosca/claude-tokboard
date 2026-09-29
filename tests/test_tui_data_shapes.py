@@ -1139,9 +1139,13 @@ def _dated_model_session(
 
 
 OPUS, SONNET = "claude-opus-4-8", "claude-sonnet-4-5"
-# Two ids that hash to the same one of seven slots. Only the older sessions
-# have "model-0", so a tie settled per period would hand "model-1" the slot
-# both want in the last fifteen days and a different one over everything.
+# Two generic (non-family) ids whose slot comes from how many OTHER models
+# already claimed one before them, not from their own id. EARLY only
+# appears in the oldest session; a slot map settled over just the last
+# fifteen days (where EARLY never appears) would have one fewer model
+# ahead of LATE there than over the whole history, and hand it a
+# different slot - which is exactly what a per-period recomputation
+# would do wrong.
 EARLY, LATE = "model-0", "model-1"
 
 # Opus leads the whole history; sonnet leads the last fifteen days. Ranked,
@@ -1193,7 +1197,7 @@ def test_the_dashboard_hands_its_chart_the_slots_settled_over_the_whole_history(
     _write_sessions(tmp_path, _RANKINGS_DIFFER)
     arguments = tui.build_arg_parser().parse_args(["--label-budget", "0"])
 
-    async def drive() -> list[dict[str, int | None] | None]:
+    async def drive() -> list[dict[str, mr.ModelColorSlot] | None]:
         app = tui.MetricsTUIApp(
             mr, tui.load_data(arguments, metrics_core_module=mr), arguments=arguments
         )
@@ -1210,10 +1214,14 @@ def test_the_dashboard_hands_its_chart_the_slots_settled_over_the_whole_history(
     assert asyncio.run(drive()) == [expected, expected]
 
 
-def test_a_model_past_the_last_colour_is_drawn_in_the_other_colour():
-    # Eight models, seven colours: the one left without a slot shares the
-    # "other" colour with the unattributed band rather than reusing a
-    # model's colour.
+def test_a_model_past_the_last_colour_reuses_an_earlier_one_and_is_marked():
+    # Eight models, seven colours: the eighth REUSES an earlier model's
+    # colour (backlog sweep 3 package M) rather than sharing the "other"
+    # colour with the unattributed band - the two would otherwise be
+    # visually indistinguishable from "no model" data. The TUI has no
+    # click-to-highlight, so the marker in its legend label is what a
+    # reader has instead to tell an overflow model apart from the one
+    # whose colour it borrowed.
     models = [f"model-{index}" for index in range(8)]
     records = [
         _model_session(f"s{index}", 1 + index % 2, {model: _m(input_tokens=100)}, total=200)
@@ -1223,5 +1231,8 @@ def test_a_model_past_the_last_colour_is_drawn_in_the_other_colour():
     chart.render_chart(now=datetime(2026, 8, 12, 0, 0).astimezone())
     raw = chart.plt.build()
     colours = [_legend_colour(raw, model) for model in models]
-    assert len(set(colours)) == 8
-    assert _legend_colour(raw, mr.t("no_model", "pt")) in colours
+    assert len(set(colours)) == 7, colours
+    assert colours.count(colours[-1]) == 2, "the eighth model must land on an already-used colour"
+    assert "model-7 *" in raw, "the overflow marker must reach the rendered legend"
+    unattributed_colour = _legend_colour(raw, mr.t("no_model", "pt"))
+    assert unattributed_colour not in colours, "no model must stay a colour no real model wears"

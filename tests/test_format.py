@@ -149,40 +149,75 @@ def test_assign_model_slots_gives_the_known_families_fixed_slots():
         ["claude-haiku-4-5-20251001", "claude-fable-1", "claude-sonnet-4-5", "claude-opus-4-8"], 7
     )
     assert slots == {
-        "claude-opus-4-8": 0,
-        "claude-sonnet-4-5": 1,
-        "claude-haiku-4-5-20251001": 2,
-        "claude-fable-1": 3,
+        "claude-opus-4-8": mr.ModelColorSlot(palette_index=0, is_overflow=False),
+        "claude-sonnet-4-5": mr.ModelColorSlot(palette_index=1, is_overflow=False),
+        "claude-haiku-4-5-20251001": mr.ModelColorSlot(palette_index=2, is_overflow=False),
+        "claude-fable-1": mr.ModelColorSlot(palette_index=3, is_overflow=False),
     }
 
 
-def test_assign_model_slots_does_not_depend_on_the_order_models_arrive_in():
-    models = ["claude-opus-4-8", "claude-sonnet-4-5", "gpt-x", "local-llama", "claude-opus-4-1"]
-    assert mr.assign_model_slots(models, 7) == mr.assign_model_slots(list(reversed(models)), 7)
+def test_assign_model_slots_keeps_an_existing_models_slot_when_a_new_one_sorts_before_it():
+    # The bug this fixes (backlog sweep 3, package M / M1): slots used to
+    # be settled by sorting every model's id from scratch on every call,
+    # so a model newly added to the history could win a slot away from an
+    # existing one just by sorting before it. Order now comes from the
+    # CALLER - first-appearance in the real history, oldest first - never
+    # from the id, so appending a model to the end, however its id sorts,
+    # can only ever claim a slot nothing already holds.
+    established = ["gpt-x", "local-llama", "mistral-7b"]
+    before = mr.assign_model_slots(established, 5)
+    after = mr.assign_model_slots([*established, "aaa-newcomer"], 5)
+    for model in established:
+        assert after[model] == before[model], model
 
 
 def test_assign_model_slots_never_gives_two_models_one_slot_while_slots_remain():
-    # Two versions of one family want the same slot; so, by construction,
-    # do nine models hashed into nine slots more often than not.
+    # Two versions of one family want the same slot - the opus that
+    # appears later in this call falls through to an ordinary free slot
+    # exactly like a non-family model would.
     models = [f"model-{index}" for index in range(7)] + ["claude-opus-4-1", "claude-opus-4-8"]
     slots = mr.assign_model_slots(models, 9)
     assert len(slots) == 9
-    assert sorted(slot for slot in slots.values() if slot is not None) == list(range(9))
+    assert not any(slot.is_overflow for slot in slots.values())
+    assert sorted(slot.palette_index for slot in slots.values()) == list(range(9))
 
 
-def test_assign_model_slots_leaves_the_overflow_without_a_slot():
+def test_assign_model_slots_gives_overflow_models_a_reused_but_marked_slot():
+    # Once every slot is taken, a model past the palette is NOT left
+    # without one (that used to collapse it into the shared "no model"
+    # colour and highlight, backlog sweep 3 / M1) - it reuses an earlier
+    # model's palette_index, marked is_overflow so the caller can render
+    # it with its own, distinct highlight identity instead.
     slots = mr.assign_model_slots([f"model-{index}" for index in range(10)], 7)
-    assert sorted(slot for slot in slots.values() if slot is not None) == list(range(7))
-    assert sum(slot is None for slot in slots.values()) == 3
+    real = {model: slot for model, slot in slots.items() if not slot.is_overflow}
+    overflow = {model: slot for model, slot in slots.items() if slot.is_overflow}
+    assert sorted(slot.palette_index for slot in real.values()) == list(range(7))
+    assert len(overflow) == 3
+    assert all(slot.palette_index in range(7) for slot in overflow.values())
+
+
+def test_assign_model_slots_gives_different_overflow_models_different_palette_indices():
+    # As long as overflow itself does not exceed a full second pass over
+    # the palette, two overflow models never reuse the SAME colour as
+    # each other - only a real slot holder's.
+    slots = mr.assign_model_slots([f"model-{index}" for index in range(9)], 7)
+    overflow_indices = [slot.palette_index for slot in slots.values() if slot.is_overflow]
+    assert len(overflow_indices) == 2
+    assert len(set(overflow_indices)) == 2
 
 
 def test_assign_model_slots_is_the_same_in_every_process(tmp_path: Path) -> None:
-    # Python's own hash() of a str changes with every interpreter start
-    # (PYTHONHASHSEED); a colour that followed it would change per run.
-    # HOME is a throwaway: importing metrics_core aims its paths at HOME.
+    # Nothing here depends on Python's own hash() of a str, which is
+    # salted per interpreter start (PYTHONHASHSEED) - but the whole point
+    # of this function is a colour that never changes on its own, so it
+    # is pinned against that anyway. HOME is a throwaway: importing
+    # metrics_core aims its paths at HOME.
     script = (
         "import json, sys; sys.path.insert(0, 'lib'); import metrics_core as mr; "
-        "print(json.dumps(mr.assign_model_slots(['gpt-x', 'local-llama', 'mistral-7b'], 30)))"
+        "slots = mr.assign_model_slots(['gpt-x', 'local-llama', 'mistral-7b'], 30); "
+        "print(json.dumps("
+        "{model: [slot.palette_index, slot.is_overflow] for model, slot in slots.items()}"
+        "))"
     )
     outputs = {
         subprocess.run(

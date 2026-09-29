@@ -44,6 +44,7 @@ from .backfill import (
     write_field_state,
 )
 from .format import (
+    ModelColorSlot,
     assign_model_slots,
     format_date,
     format_duration,
@@ -114,6 +115,7 @@ from .records import (
     is_ephemeral_path,
     load_records,
     normalize_project_paths,
+    order_models_by_first_appearance,
     record_token_total,
 )
 from .transcript_ingest import TOKEN_FIELDS, append_record, parse_transcript
@@ -140,6 +142,7 @@ __all__ = [
     "FieldPlan",
     "LabelBudget",
     "LabelCache",
+    "ModelColorSlot",
     "Period",
     "ToolCounts",
     "aggregate_by_day",
@@ -197,6 +200,7 @@ __all__ = [
     "model_display_label",
     "model_totals_as_of",
     "normalize_project_paths",
+    "order_models_by_first_appearance",
     "parse_transcript",
     "partial_bucket_fraction",
     "period_label",

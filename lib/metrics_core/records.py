@@ -7,7 +7,7 @@ from __future__ import annotations
 import collections
 import json
 from collections.abc import Sequence
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, cast
 
@@ -340,6 +340,39 @@ def record_token_total(record: dict[str, Any]) -> int:
         + (record.get("cache_read_tokens", 0) or 0)
         + (record.get("cache_creation_tokens", 0) or 0)
     )
+
+
+# A sentinel later than any real record, for a model whose every
+# occurrence carries an unparseable timestamp (only possible on corrupted
+# input - every genuine record's timestamp already round-trips through
+# _parse_moment). Placed here rather than compared as None so
+# order_models_by_first_appearance's sort key stays one consistent type.
+_NEVER_SEEN = datetime.max.replace(tzinfo=timezone.utc)
+
+
+def order_models_by_first_appearance(records: list[dict[str, Any]]) -> list[str]:
+    """Every model in these records' tokens_by_model maps, oldest first.
+
+    assign_model_slots (format.py) keeps a model's colour forever once
+    given - the caller only has to hand it models in the order they
+    genuinely first appeared. That is NOT insertion order for
+    expand_records_to_daily_deltas' output: snapshots are sorted
+    chronologically WITHIN one session/subagent, but the outer loop over
+    different sessions follows raw_records' own order, which is not
+    guaranteed to be chronological across sessions. This walks every
+    record instead and keeps each model's earliest timestamp_start,
+    exactly the "earliest record timestamp carrying that model" the design
+    calls for - ties (including two models with no parseable timestamp at
+    all) settled by model id, same tie-break assign_model_slots documents.
+    """
+    first_seen: dict[str, datetime] = {}
+    for record in records:
+        moment = _parse_moment(record.get("timestamp_start")) or _NEVER_SEEN
+        for model in record.get("tokens_by_model") or {}:
+            existing = first_seen.get(model)
+            if existing is None or moment < existing:
+                first_seen[model] = moment
+    return sorted(first_seen, key=lambda model: (first_seen[model], model))
 
 
 def compute_token_type_totals(records: list[dict[str, Any]]) -> dict[str, int]:

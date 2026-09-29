@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import re
-import zlib
 from collections.abc import Iterable
+from dataclasses import dataclass
 
 from .i18n import session_date
 
@@ -43,52 +43,98 @@ def _family_rank(model: str) -> int:
     return _MODEL_FAMILIES.index(match.group(1)) if match else len(_MODEL_FAMILIES)
 
 
-def _preferred_model_slot(model: str, slots: int) -> int:
-    rank = _family_rank(model)
-    if rank < min(len(_MODEL_FAMILIES), slots):
-        return rank
-    # crc32, not hash(): Python salts str hashes per process, and a colour
-    # that followed hash() would change every time the dashboard starts.
-    return zlib.crc32(model.encode()) % slots
+@dataclass(frozen=True)
+class ModelColorSlot:
+    """One model's place in the shared, history-wide colour palette.
+
+    palette_index always points at a real palette colour (0-based), even
+    once every slot is claimed: a model that appears after the palette is
+    full is not left uncoloured, it reuses an earlier model's colour
+    instead (cycling through the palette in the order overflow models
+    themselves appeared). is_overflow marks that reuse, and the caller
+    must give an overflow model its OWN highlight identity - never the
+    class its colour's original owner renders with, and never the shared
+    "no model" class either - or clicking one would light up an unrelated
+    band that merely happens to share a colour.
+    """
+
+    palette_index: int
+    is_overflow: bool
 
 
-def assign_model_slots(models: Iterable[str], slots: int) -> dict[str, int | None]:
-    """A colour slot per model id, the same whichever period is on screen.
+def assign_model_slots(models: Iterable[str], slots: int) -> dict[str, ModelColorSlot]:
+    """A colour slot per model id, permanent once given.
 
     Both dashboards used to colour the "by model" chart by each model's
     rank in the period being shown, so a model changed colour whenever
-    another one outspent it (backlog 2026-09-24 #6). Here a model's slot
-    comes from its id: the four known families take slots 0-3, anything
-    else a stable hash of its id.
+    another one outspent it (backlog 2026-09-24 #6). Then a model's slot
+    came from a stable hash of its id, which fixed that but introduced a
+    subtler break: every render recomputed the WHOLE assignment from
+    scratch over the current model set, sorted by id, so a model newly
+    added to the history could sort before an existing one and win a slot
+    the existing model had already been given render after render.
 
-    Two models can want one slot - two versions of a family always do - so
-    the ties are settled over the WHOLE set of models passed in, which is
-    why callers pass every model in the history rather than those in one
-    period: in id order (families first), the first to want a slot gets it,
-    and each of the rest takes the next free one after the slot it wanted.
-    A model's slot therefore only moves when a model new to the history
-    competes for it - wants the same slot and sorts first, or takes a slot
-    the model had probed its way to. Once every slot is taken, the rest get
-    None - the caller's shared "other" colour.
+    The fix is to stop deriving order from the id at all. `models` here is
+    walked in the order its caller iterates it, and each model's FIRST
+    occurrence in that order is its "first appearance" - callers pass every
+    model in the full history (not just one period) in the order its
+    earliest record appears there, which is what makes this permanent: the
+    history only grows, so a model already assigned a slot is never
+    revisited by a later call, only skipped past. Ties (two models with no
+    prior occurrence competing in the same call) cannot happen for a real
+    caller, since a model id is only ever "first seen" once - the ordering
+    here exists to make that explicit, not to break a tie.
+
+    The four well-known families (opus/sonnet/haiku/fable) still reserve
+    slots 0-3 ahead of everything else, because that reservation is what
+    lets someone recognise "opus is always the same swatch" across
+    projects and renders without reading a legend first - it costs
+    nothing when a family model is actually first to appear (the common
+    case), and only stops applying once that reservation has already gone
+    to an earlier-appearing sibling version or, this being a soft
+    preference rather than a hard one, a generic model that happened to
+    appear first and claimed it as an ordinary free slot.
+
+    Every other model - and any family model whose reserved slot is
+    already gone - takes the lowest-numbered slot still free at the moment
+    it is processed, in first-appearance order. Once every slot is taken,
+    the palette is reused rather than left unclaimed - see
+    ModelColorSlot.is_overflow.
+
+    If the author deletes part of the history, the next render only knows
+    about what remains: a model's "first appearance" is recomputed from
+    the survivors, so a model that used to appear second can become first
+    and take over slot 0. Colour stability is a property of an
+    append-only history, not a promise that survives editing it.
     """
-    ordered = sorted(set(models), key=lambda model: (_family_rank(model), model))
-    assignment: dict[str, int | None] = {}
+    first_seen_order: dict[str, int] = {}
+    for index, model in enumerate(models):
+        first_seen_order.setdefault(model, index)
+
+    ordered = sorted(
+        first_seen_order, key=lambda model: (_family_rank(model), first_seen_order[model])
+    )
+
+    assignment: dict[str, ModelColorSlot] = {}
     taken: set[int] = set()
-    waiting: list[str] = []
+    family_slot_count = min(len(_MODEL_FAMILIES), slots)
+    next_free_slot = 0
+    overflow_count = 0
     for model in ordered:
-        preferred = _preferred_model_slot(model, slots)
-        if preferred in taken:
-            waiting.append(model)
+        rank = _family_rank(model)
+        if rank < family_slot_count and rank not in taken:
+            assignment[model] = ModelColorSlot(palette_index=rank, is_overflow=False)
+            taken.add(rank)
             continue
-        assignment[model] = preferred
-        taken.add(preferred)
-    for model in waiting:
-        preferred = _preferred_model_slot(model, slots)
-        free = [(preferred + step) % slots for step in range(1, slots)]
-        slot = next((candidate for candidate in free if candidate not in taken), None)
-        assignment[model] = slot
-        if slot is not None:
-            taken.add(slot)
+        while next_free_slot < slots and next_free_slot in taken:
+            next_free_slot += 1
+        if next_free_slot < slots:
+            assignment[model] = ModelColorSlot(palette_index=next_free_slot, is_overflow=False)
+            taken.add(next_free_slot)
+            next_free_slot += 1
+            continue
+        assignment[model] = ModelColorSlot(palette_index=overflow_count % slots, is_overflow=True)
+        overflow_count += 1
     return assignment
 
 

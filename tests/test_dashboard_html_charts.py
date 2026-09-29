@@ -1248,3 +1248,55 @@ def test_render_trend_chart_model_bands_never_share_a_colour_with_each_other():
     swatches = re.findall(r'<span class="legend-swatch ([^"]*)"></span>', pane_fragment)
     assert len(swatches) == 5  # four models plus the unattributed remainder
     assert len(set(swatches)) == 5, swatches
+
+
+def test_render_trend_chart_model_mode_gives_an_overflow_model_its_own_highlight_class():
+    # More models (31) than the palette has slots (30, MODEL_COLOR_SLOTS -
+    # backlog sweep 3 / M1): the model past the palette must NOT collapse
+    # into "group-color-none", the class the true "no model" remainder
+    # wears below - sharing it would mean clicking either one highlights
+    # both, despite one being a real, named model and the other genuinely
+    # unattributed data.
+    by_model = {f"claude-match{index}": _model_bucket(input_tokens=10) for index in range(31)}
+    records = [
+        _model_day_record("2026-01-01", 310, by_model),
+        _model_day_record("2026-01-02", 100),
+    ]
+    out = dashboard_html.render_trend_chart(records, {"/proj/a": "group-color-1"}, "p1", lang="pt")
+    pane_fragment = out.split('id="trend-pane-model-p1"')[1]
+    swatches = re.findall(r'<span class="legend-swatch ([^"]*)"></span>', pane_fragment)
+    assert len(swatches) == 32, swatches  # 31 models plus the unattributed remainder
+    overflow_swatches = [swatch for swatch in swatches if swatch.startswith("model-overflow-")]
+    assert len(overflow_swatches) == 1, swatches
+    assert overflow_swatches[0] != "group-color-none"
+    # It reuses a real slot holder's colour (model-overflow-N mirrors
+    # group-color-N's fill in the stylesheet) but never that class itself.
+    assert overflow_swatches[0].replace("model-overflow-", "group-color-") in swatches
+
+
+def test_render_trend_chart_model_mode_overflow_band_and_chip_agree_and_stay_independent():
+    by_model = {f"claude-match{index}": _model_bucket(input_tokens=10) for index in range(31)}
+    records = [
+        _model_day_record("2026-01-01", 310, by_model),
+        _model_day_record("2026-01-02", 100),
+    ]
+    out = dashboard_html.render_trend_chart(records, {"/proj/a": "group-color-1"}, "p1", lang="pt")
+    svg = _svg_block(out, "chart-model-")
+    bands = re.findall(
+        r"<rect [^>]*class=\"chart-bar ([^\"]*)\" onclick=\"highlightModel\('([^']*)', event\)\">",
+        svg,
+    )
+    overflow_bands = [
+        (css_class, onclick_class)
+        for css_class, onclick_class in bands
+        if css_class.startswith("model-overflow-")
+    ]
+    assert overflow_bands, bands
+    for css_class, onclick_class in overflow_bands:
+        assert onclick_class == css_class, (css_class, onclick_class)
+    # The colour it reuses still has its OWN band, drawn with the plain
+    # group-color-N class - clicking the overflow model's band or chip must
+    # never carry that other, unrelated model's class.
+    borrowed_class = overflow_bands[0][0].replace("model-overflow-", "group-color-")
+    assert any(css_class == borrowed_class for css_class, _ in bands), bands
+    assert overflow_bands[0][0] != borrowed_class
