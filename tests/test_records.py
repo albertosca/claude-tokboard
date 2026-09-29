@@ -5,6 +5,7 @@ filter_sessions_by_window, filter_deltas_by_window, and _parse_moment are
 covered by tests/test_period_filters.py and are NOT duplicated here.
 """
 
+import random
 from datetime import datetime, timedelta, tzinfo
 from typing import Any
 
@@ -454,6 +455,129 @@ def test_compute_model_totals_never_reports_a_negative_remainder():
 
     assert by_model == {"model-a": 999}
     assert unattributed == 0
+
+
+# --- order_models_by_first_appearance ---------------------------------------
+
+
+def _row_at(timestamp: str, by_model: dict[str, dict[str, int]]) -> dict[str, Any]:
+    record = _row((0, 0, 0, 0), by_model)
+    record["timestamp_start"] = timestamp
+    return record
+
+
+def test_order_models_by_first_appearance_orders_by_earliest_timestamp():
+    records = [
+        _row_at("2026-01-02T00:00:00Z", {"later": _bucket_for(input_tokens=1)}),
+        _row_at("2026-01-01T00:00:00Z", {"earlier": _bucket_for(input_tokens=1)}),
+    ]
+    assert mr.order_models_by_first_appearance(records) == ["earlier", "later"]
+
+
+def test_order_models_by_first_appearance_same_timestamp_breaks_the_tie_by_record_position_not_id():
+    # Fix round 2 Critical (re-review of backlog sweep 3 / package M): the
+    # tie-break used to be the model id alone, so a model appearing LATER
+    # in the file - but sharing an earlier model's timestamp - could sort
+    # into the MIDDLE of the arrival order just by having a smaller id.
+    # "bbb" sorts before "ccc" alphabetically but arrives in a THIRD,
+    # later record than "ccc" and "eee" (both in the second record) - the
+    # order must still put bbb LAST, matching real file order, not
+    # alphabetical order.
+    records = [
+        _row_at("2026-01-01T00:00:00Z", {"aaa": _bucket_for(input_tokens=1)}),
+        _row_at(
+            "2026-01-01T00:12:00Z",
+            {"ccc": _bucket_for(input_tokens=1), "eee": _bucket_for(input_tokens=1)},
+        ),
+        _row_at("2026-01-01T00:12:00Z", {"bbb": _bucket_for(input_tokens=1)}),
+    ]
+    assert mr.order_models_by_first_appearance(records) == ["aaa", "ccc", "eee", "bbb"]
+
+
+def test_order_models_by_first_appearance_same_record_breaks_the_tie_by_map_position():
+    # Two models tied at the exact same timestamp AND the same record: the
+    # one listed first in that record's own tokens_by_model map (a real,
+    # stable property of the record) wins over alphabetical id order.
+    records = [
+        _row_at(
+            "2026-01-01T00:00:00Z",
+            {"zzz": _bucket_for(input_tokens=1), "aaa": _bucket_for(input_tokens=1)},
+        )
+    ]
+    assert mr.order_models_by_first_appearance(records) == ["zzz", "aaa"]
+
+
+def test_order_models_by_first_appearance_through_assign_model_slots_keeps_slots():
+    # The reviewer's repro, through the REAL caller path
+    # (order_models_by_first_appearance -> assign_model_slots), not just
+    # order_models_by_first_appearance in isolation: appending a
+    # same-timestamp record must never change an existing model's slot,
+    # including turning a real slot into an overflow one.
+    records_before = [
+        _row_at("2026-01-01T00:00:00Z", {"aaa": _bucket_for(input_tokens=1)}),
+        _row_at(
+            "2026-01-01T00:12:00Z",
+            {"ccc": _bucket_for(input_tokens=1), "eee": _bucket_for(input_tokens=1)},
+        ),
+    ]
+    records_after = [
+        *records_before,
+        _row_at("2026-01-01T00:12:00Z", {"bbb": _bucket_for(input_tokens=1)}),
+    ]
+    slot_count = 2  # forces overflow with 3+ non-family ids
+    before = mr.assign_model_slots(mr.order_models_by_first_appearance(records_before), slot_count)
+    after = mr.assign_model_slots(mr.order_models_by_first_appearance(records_after), slot_count)
+    for model, slot in before.items():
+        assert after[model] == slot, model
+
+
+def test_order_models_by_first_appearance_is_a_monotonic_subset_over_random_histories():
+    # Fix round 2's requested property check, extending
+    # test_format.py's assign_model_slots one to the REAL caller path:
+    # random histories of RECORDS (not bare model lists). Timestamps are
+    # drawn NON-DECREASING as records are appended - "the history grows"
+    # means genuinely new, chronologically later (or same-instant) events
+    # arrive, matching what both dashboards' own pipeline documents
+    # (order_models_by_first_appearance's docstring); a record with an
+    # EARLIER timestamp than something already processed is a different,
+    # out-of-scope question (e.g. a retroactive backfill rewriting an old
+    # row's tokens_by_model), not "appending". Repeats are frequent by
+    # construction, which is exactly what stresses the same-timestamp
+    # tie-break the Critical above lives in. For every prefix of every
+    # random history, walking order_models_by_first_appearance ->
+    # assign_model_slots must never revise a slot a shorter prefix
+    # already gave a model.
+    model_pool = ["aaa", "bbb", "ccc", "ddd", "eee", "fff", "ggg", "hhh"]
+    timestamp_pool = [
+        "2026-01-01T00:00:00Z",
+        "2026-01-01T00:12:00Z",
+        "2026-01-02T00:00:00Z",
+        "2026-01-03T00:00:00Z",
+    ]
+    random_generator = random.Random(20261001)
+    trial_count = 300
+    for trial in range(trial_count):
+        record_count = random_generator.randint(1, 10)
+        # Non-decreasing on purpose (see docstring above) - repeats are
+        # exactly what forces same-timestamp ties.
+        timestamps = sorted(random_generator.choices(timestamp_pool, k=record_count))
+        records: list[dict[str, Any]] = []
+        for timestamp in timestamps:
+            models_in_record = random_generator.sample(model_pool, random_generator.randint(1, 3))
+            by_model = {model: _bucket_for(input_tokens=1) for model in models_in_record}
+            records.append(_row_at(timestamp, by_model))
+        slot_count = random_generator.choice([1, 2, 3, 5])
+        previous_assignment: dict[str, mr.ModelColorSlot] = {}
+        for prefix_length in range(1, len(records) + 1):
+            ordered = mr.order_models_by_first_appearance(records[:prefix_length])
+            assignment = mr.assign_model_slots(ordered, slot_count)
+            for model, slot in previous_assignment.items():
+                assert assignment[model] == slot, (
+                    f"trial {trial}, slots={slot_count}: {model!r} moved from "
+                    f"{slot} to {assignment[model]} once record "
+                    f"{records[prefix_length - 1]!r} was appended"
+                )
+            previous_assignment = assignment
 
 
 # --- compute_quota_totals ---------------------------------------------------

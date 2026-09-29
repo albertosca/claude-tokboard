@@ -360,19 +360,62 @@ def order_models_by_first_appearance(records: list[dict[str, Any]]) -> list[str]
     chronologically WITHIN one session/subagent, but the outer loop over
     different sessions follows raw_records' own order, which is not
     guaranteed to be chronological across sessions. This walks every
-    record instead and keeps each model's earliest timestamp_start,
-    exactly the "earliest record timestamp carrying that model" the design
-    calls for - ties (including two models with no parseable timestamp at
-    all) settled by model id, same tie-break assign_model_slots documents.
+    record instead and keeps each model's earliest timestamp_start.
+
+    Fix round 2 (backlog sweep 3 / package M): timestamp alone is not a
+    total order - two models attributed at the exact same instant used to
+    have their tie settled by model id, which let a model that only
+    appears in a LATER record (in `records`' own order - see below for
+    what that order actually is) sort into the MIDDLE of the arrival
+    order just by having a smaller id, moving a model that already held a
+    slot the id-sort now placed the newcomer ahead of. Reproduced through
+    the real caller path
+    (order_models_by_first_appearance -> assign_model_slots): appending a
+    record whose model's id sorts alphabetically early, but which is
+    genuinely the LAST of three models sharing one timestamp, bumped an
+    existing model out of a real slot into overflow.
+
+    The fix makes "first appearance" a total order that can only ever
+    APPEND as `records` grows, never insert into the middle:
+    (timestamp, the position within `records` of the first record that
+    gives the model its earliest timestamp, the model's own position
+    within THAT record's tokens_by_model map, and the model id only as a
+    last resort - which cannot actually be reached: a `(timestamp,
+    record index, position-within-record)` triple already uniquely
+    identifies one dict entry in one record, so two different models can
+    never produce an equal triple. It stays in the sort key anyway,
+    exactly as assign_model_slots documents its own equivalent
+    last-resort tie-break, to make that guarantee explicit rather than
+    load-bearing by accident).
+
+    This relies on `records` itself being in a stable, meaningful order -
+    specifically, that an earlier index here means "encountered earlier
+    when the underlying files were scanned". Both dashboards build the
+    list passed here (daily_chart_records) the same way:
+    load_records() reads each JSONL file by iterating its lines in
+    on-disk order (the hooks only ever APPEND a line, never rewrite one),
+    normalize_project_paths/filter_records/filter_by_days are plain
+    order-preserving maps/filters over that list, and
+    expand_records_to_daily_deltas groups the result by session/agent id
+    in the order each id is FIRST ENCOUNTERED in its input (a session's
+    own snapshots are re-sorted chronologically WITHIN that group, but
+    the groups themselves keep the relative order their ids first
+    appeared in) - both dashboard_html.py and dashboard_tui.py run this
+    exact pipeline (load_records -> normalize_project_paths ->
+    filter_records -> expand_records_to_daily_deltas, concatenated with
+    the same pipeline over the subagents file) before calling this
+    function, so the two dashboards agree on one deterministic order
+    without either of them needing to know why.
     """
-    first_seen: dict[str, datetime] = {}
-    for record in records:
+    first_seen: dict[str, tuple[datetime, int, int]] = {}
+    for record_index, record in enumerate(records):
         moment = _parse_moment(record.get("timestamp_start")) or _NEVER_SEEN
-        for model in record.get("tokens_by_model") or {}:
+        for model_position, model in enumerate(record.get("tokens_by_model") or {}):
+            candidate = (moment, record_index, model_position)
             existing = first_seen.get(model)
-            if existing is None or moment < existing:
-                first_seen[model] = moment
-    return sorted(first_seen, key=lambda model: (first_seen[model], model))
+            if existing is None or candidate < existing:
+                first_seen[model] = candidate
+    return sorted(first_seen, key=lambda model: (*first_seen[model], model))
 
 
 def compute_token_type_totals(records: list[dict[str, Any]]) -> dict[str, int]:
