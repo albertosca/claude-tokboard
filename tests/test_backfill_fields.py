@@ -380,18 +380,18 @@ def test_write_field_state_counts_a_row_two_runs_corrected_once(tmp_path):
     assert state["fields"]["sessions.tool_calls"] == {
         "cutoff": "2026-09-29",
         "applied_at": "2026-09-29T10:00:00",
-        "corrected_rows": 2,  # this run's
-        "total_distinct_rows": 3,  # row e2 was corrected by both runs
+        "corrected_rows": 3,  # every run's, row e2 once though both corrected it
+        "rows_changed_this_run": 2,
         "corrected_row_ids": sorted(mr.row_identities(records, [0, 1, 2], "session_id")),
     }
-    assert state["fields"]["subagents.tool_calls"]["total_distinct_rows"] == 2
+    assert state["fields"]["subagents.tool_calls"]["corrected_rows"] == 2
     # The dashboards' note still reads the token entry only.
     assert mr.describe_backfill_state(state, lang="en") == mr.describe_backfill_state(
         mr.load_backfill_state(path), lang="en"
     )
 
 
-def test_write_field_state_over_an_old_state_leaves_the_distinct_total_unknown(tmp_path):
+def test_write_field_state_over_an_old_state_keeps_adding_to_its_count(tmp_path):
     # The shape every state written before row identities has: one count
     # that added each run's rows, so a row corrected twice counted twice.
     path = tmp_path / "state.json"
@@ -422,10 +422,11 @@ def test_write_field_state_over_an_old_state_leaves_the_distinct_total_unknown(t
         )
 
     entry = state["fields"]["sessions.tool_calls"]
-    assert entry["corrected_rows"] == 1
-    # The earlier rows have no identities, so how many are distinct is not
-    # known - and never becomes known - but what they reported is kept.
-    assert entry["total_distinct_rows"] is None
+    # The earlier rows have no identities, so whether a later run touched
+    # one of them again cannot be told: the count adds, as it always did,
+    # and says how much of it is unidentified.
+    assert entry["corrected_rows"] == 2036
+    assert entry["rows_changed_this_run"] == 1
     assert entry["unidentified_earlier_rows"] == 2034
     assert entry["corrected_row_ids"] == sorted(mr.row_identities(records, [0, 1], "session_id"))
     assert mr.describe_backfill_state(state, lang="en") == note
@@ -444,7 +445,7 @@ def test_write_field_state_over_an_old_entry_that_corrected_nothing_knows_the_to
 
     entry = state["fields"]["sessions.tool_calls"]
     assert "unidentified_earlier_rows" not in entry
-    assert entry["total_distinct_rows"] == 1
+    assert entry["corrected_rows"] == 1
 
 
 def test_write_field_state_replaces_a_fields_entry_that_is_not_a_dict(tmp_path):
@@ -459,7 +460,7 @@ def test_write_field_state_replaces_a_fields_entry_that_is_not_a_dict(tmp_path):
             "cutoff": "c",
             "applied_at": "t",
             "corrected_rows": 1,
-            "total_distinct_rows": 1,
+            "rows_changed_this_run": 1,
             "corrected_row_ids": identities,
         }
     }

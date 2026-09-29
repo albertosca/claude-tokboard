@@ -1107,19 +1107,26 @@ def write_field_state(
     """Record a successful field pass under state["fields"]["<kind>.<field>"],
     leaving the token entries - the ones the dashboards read - untouched.
 
-    `identities` names the rows this run changed (see row_identities).
-    `corrected_rows` is how many that is; `corrected_row_ids` gathers the
-    names every run of this kind and field changed, so a row corrected by
-    two runs counts once in `total_distinct_rows`. Adding each run's count,
-    as this did before 2026-09-29, counted it twice: the tool_calls pass
-    re-corrected 2 session rows its 2026-09-28 run had written, and the
-    state said 2034 rows where 2032 distinct ones had changed.
+    `identities` names the rows this run changed (see row_identities). The
+    entry's keys:
 
-    An entry written before then has a count but no names: which of its
-    rows a later run touches again cannot be told, so the distinct total
-    stays unknown (None) for good, and the count it reported is kept as
-    `unidentified_earlier_rows`. One that reported no rows (0 or no count)
-    leaves nothing unidentified, and the total stays known.
+    - `cutoff`, `applied_at`: this run's.
+    - `corrected_rows`: CUMULATIVE over every run of this kind and field -
+      the distinct rows ever corrected, counted by name, plus
+      `unidentified_earlier_rows` when there are any.
+    - `rows_changed_this_run`: how many rows this run changed.
+    - `corrected_row_ids`: the names of every row any run changed, sorted.
+    - `unidentified_earlier_rows`: present only when the entry was first
+      written before 2026-09-29, when runs recorded a count and no names.
+      That count is carried here, and while it is present
+      `corrected_rows` may count a row twice: which of those rows a later
+      run touched again cannot be told.
+
+    Adding each run's count, as every entry did before 2026-09-29, counted
+    a row corrected by two runs twice: the tool_calls pass re-corrected 2
+    session rows its 2026-09-28 run had written, and the state said 2034
+    rows where 2032 distinct ones had changed. An old entry that reported
+    no rows (0 or no count) leaves nothing unidentified.
     """
     path = path or BACKFILL_STATE_FILE
     existing = load_backfill_state(path)
@@ -1141,8 +1148,8 @@ def write_field_state(
     entry: dict[str, Any] = {
         "cutoff": cutoff,
         "applied_at": applied_at,
-        "corrected_rows": len(identities),
-        "total_distinct_rows": None if unidentified else len(names),
+        "corrected_rows": unidentified + len(names),
+        "rows_changed_this_run": len(identities),
         "corrected_row_ids": sorted(names),
     }
     if unidentified:

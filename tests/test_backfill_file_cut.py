@@ -697,8 +697,8 @@ def test_the_script_moves_a_time_cut_count_to_the_file_cut_and_then_leaves_it(
     written = [json.loads(line) for line in metrics.read_text().splitlines()]
     assert [item["tool_call_count"] for item in written] == [1, 2]
     entry = json.loads(state_path.read_text())["fields"]["sessions.tool_calls"]
-    assert entry["corrected_rows"] == 1
-    assert entry["total_distinct_rows"] == 1  # the same row, corrected twice
+    assert entry["corrected_rows"] == 1  # the same row, corrected twice
+    assert entry["rows_changed_this_run"] == 1
     assert entry["corrected_row_ids"] == earlier
 
     assert script.main() == 0
