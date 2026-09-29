@@ -48,7 +48,7 @@ Why correction is all-or-nothing PER SESSION
 Correcting some snapshots of a session and leaving others re-inflates the
 delta at the seam: the jump from the last corrected (halved) snapshot to the
 first untouched (inflated) one is charged entirely to the day the seam falls
-on. Measured on real data, a per-row cutoff INVENTED nearly two billion tokens on
+on. Measured on real data, a per-row cutoff INVENTED billions of tokens on
 2026-08-13 - a fake spike is worse than the uniform overcount it replaced. So
 a session is corrected only when every one of its rows can be handled; a
 session with even one row on/after the cutoff is left entirely alone.

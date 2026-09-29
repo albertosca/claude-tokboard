@@ -31,7 +31,7 @@ Why the decision is per unit, not per row
 Filling the map in some snapshots of a session and not others makes the seam
 between a filled snapshot and an empty one read as a burst of usage on the
 day the seam falls on. The dedup backfill measured exactly that on real
-data: a per-row cutoff INVENTED nearly two billion tokens on a single day. So a
+data: a per-row cutoff INVENTED billions of tokens on a single day. So a
 unit (a session, or a subagent) is planned only when every one of its rows
 is resolved - reconstructed from its transcript, or already carrying a
 natively written map - and is otherwise left completely alone. A unit that
@@ -509,7 +509,7 @@ def diff_against_native(native: ModelMap, rebuilt: ModelMap) -> tuple[list[str],
     even fractionally above it fails at any magnitude.
 
     That is not a double standard, it is the lesson this repo already paid
-    for: the dedup backfill's worst outcome was INVENTING nearly two billion tokens
+    for: the dedup backfill's worst outcome was INVENTING billions of tokens
     on a single day, and a per-model bar chart shows a fabricated bar
     loudly while a sub-1% shortfall is invisible. The residue is NOT
     structurally one-directional, as an earlier version of this docstring

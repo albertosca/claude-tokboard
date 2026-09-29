@@ -98,7 +98,7 @@ def test_plan_reconstructs_each_snapshot_as_of_its_own_moment(script, tmp_path):
 def test_plan_skips_a_session_when_any_snapshot_has_no_transcript(script, tmp_path):
     # All-or-nothing per session: correcting some snapshots and leaving others
     # inflates the delta at the seam. The dedup backfill measured that as an
-    # invented spike of nearly two billion tokens on a single day.
+    # invented spike of billions of tokens on a single day.
     transcript_path = _transcript(
         tmp_path / "t.jsonl", [("2026-08-01T10:00:00Z", "a1", "model-alpha", {"input_tokens": 10})]
     )
@@ -226,7 +226,7 @@ def test_the_oracle_reports_a_shortfall_past_the_tolerance(script, tmp_path):
 def test_the_oracle_reports_an_over_count_however_small(script, tmp_path):
     # THE test the asymmetry exists for. 0.01% HIGH - two hundred times
     # smaller than the shortfall accepted above, and refused anyway, because
-    # this repo's worst backfill outcome was inventing nearly two billion tokens and
+    # this repo's worst backfill outcome was inventing billions of tokens and
     # a fabricated bar is loud where a sub-1% shortfall is invisible. If this
     # test ever passes with a symmetric comparison, the tolerance has quietly
     # become "close enough" in both directions.
@@ -768,7 +768,7 @@ def test_a_unit_whose_map_exceeds_its_own_totals_is_skipped_at_any_magnitude(scr
     # One token above, which no tolerance covers in either gate: an as-of cut
     # can miss entries the totals counted, so a map that comes out ABOVE them
     # is not residue, and a fabricated bar is the failure this repo has
-    # already paid nearly two billion invented tokens for.
+    # already paid billions of invented tokens for.
     records, _ = _planned_unit(tmp_path, 10_001, totals=10_000)
 
     plan, stats, refusals = _refuse(script, records)
