@@ -1221,6 +1221,14 @@ def _merge_field_entry(
     }
 
 
+def _current_umask() -> int:
+    """The process umask. Reading it means setting it, so it is set back
+    at once; the scripts that write the state are single-threaded."""
+    current = os.umask(0)
+    os.umask(current)
+    return current
+
+
 def _save_state(path: str, state: dict[str, Any]) -> None:
     """Write `state` to `path` whole or not at all.
 
@@ -1230,10 +1238,15 @@ def _save_state(path: str, state: dict[str, Any]) -> None:
     failing would lose all of that, so the new state goes to a temporary
     file in the same directory (mkstemp, so two runs never share one)
     and is renamed over the old one, the way labels._atomic_save writes
-    the label caches. The file keeps its mode; the temporary file is
-    removed if anything fails.
+    the label caches. The temporary file is removed if anything fails.
+
+    What the in-place write it replaced did for free is kept by hand: an
+    existing file keeps its mode, and a new one gets 0o666 less the
+    umask (mkstemp would leave it 0o600). A symlinked state file is
+    resolved first, so the rename lands on the file it points to, in
+    that file's directory, and the link stays a link.
     """
-    target = Path(path)
+    target = Path(os.path.realpath(path))
     target.parent.mkdir(parents=True, exist_ok=True)
     handle, temporary_name = tempfile.mkstemp(
         dir=target.parent, prefix=f"{target.name}.", suffix=".tmp"
@@ -1246,6 +1259,8 @@ def _save_state(path: str, state: dict[str, Any]) -> None:
             os.fsync(temporary_file.fileno())
         if target.exists():
             temporary.chmod(stat.S_IMODE(target.stat().st_mode))
+        else:
+            temporary.chmod(0o666 & ~_current_umask())
         # os.replace, not Path.replace (PTH105): the failure tests stand a
         # failing rename in for this exact name.
         os.replace(temporary, target)  # noqa: PTH105

@@ -10,6 +10,7 @@ import collections
 import importlib.util
 import json
 import os
+import shlex
 import sys
 import types
 from collections.abc import Iterable
@@ -1913,48 +1914,128 @@ def test_a_state_write_that_fails_after_the_apply_warns_instead_of_raising(
     warning = capsys.readouterr().err
     assert "the backfill state could not be recorded" in warning
     assert "disk full" in warning
-    # The warning is only useful if it says how to stop those rows from
-    # counting as native: the backup this run took names them.
-    assert (
-        f"--file sessions --metrics-dir {tmp_path / 'metrics'} "
-        f"--backup-dir {tmp_path / 'backups'} --record-earlier-applies --apply"
-    ) in warning.replace("\n", " ")
 
 
-def test_the_recovery_command_in_the_warning_records_the_rows(
-    script, tmp_path, monkeypatch, capsys
-):
-    _one_writable_session(tmp_path)
-    real_write = script.write_field_state
+# Every command the script prints is meant to be pasted. It is built from
+# the paths this run actually used, shell-quoted, and each test below runs
+# it - from a directory with a space in its name - rather than reading it.
 
+
+def _printed_command(output: str, marker: str, stop: str = "\n") -> list[str]:
+    """The words of the command printed after `marker`, as a shell reads
+    them."""
+    rest = output[output.index(marker) + len(marker) :]
+    return shlex.split(rest[: rest.index(stop)] if stop in rest else rest)
+
+
+def _run_printed(
+    script: types.ModuleType, monkeypatch: pytest.MonkeyPatch, words: list[str]
+) -> int:
+    monkeypatch.setattr(sys, "argv", ["backfill-tokens-by-model.py", *words])
+    result: int = script.main()
+    return result
+
+
+def _fail_state_write(script: types.ModuleType, monkeypatch: pytest.MonkeyPatch) -> None:
     def fail(*arguments: Any, **keywords: Any) -> None:
         raise OSError("disk full")
 
     monkeypatch.setattr(script, "write_field_state", fail)
-    _applying_argv(monkeypatch, tmp_path, "--apply", "--expect-checked", "1")
-    assert script.main() == 0
-    capsys.readouterr()
-    monkeypatch.setattr(script, "write_field_state", real_write)
 
-    _applying_argv(monkeypatch, tmp_path, "--record-earlier-applies", "--apply")
+
+def test_the_warning_names_a_recovery_that_records_the_rows(script, tmp_path, monkeypatch, capsys):
+    base = tmp_path / "with space"
+    base.mkdir()
+    _one_writable_session(base)
+    real_write = script.write_field_state
+    _fail_state_write(script, monkeypatch)
+    _applying_argv(monkeypatch, base, "--apply", "--expect-checked", "1")
     assert script.main() == 0
-    records = _live_records(tmp_path)
-    assert _recorded_ids(tmp_path) == script.row_identities(records, [0], "session_id")
+    warning = capsys.readouterr().err
+    words = _printed_command(warning, "from the backup this run took: ")
+    assert words[0] == "backfill-tokens-by-model.py"
+    assert words[words.index("--metrics-dir") + 1] == str(base / "metrics")
+    assert words[words.index("--backup-dir") + 1] == str(base / "backups")
+
+    monkeypatch.setattr(script, "write_field_state", real_write)
+    assert _run_printed(script, monkeypatch, words[1:]) == 0
+    records = _live_records(base)
+    assert _recorded_ids(base) == script.row_identities(records, [0], "session_id")
 
 
 def test_the_recovery_command_names_no_backup_dir_the_run_did_not_get(
     script, tmp_path, monkeypatch, capsys
 ):
     _one_writable_session(tmp_path)
-
-    def fail(*arguments: Any, **keywords: Any) -> None:
-        raise OSError("disk full")
-
-    monkeypatch.setattr(script, "write_field_state", fail)
+    _fail_state_write(script, monkeypatch)
     _argv(monkeypatch, tmp_path, "--apply", "--expect-checked", "1")
     assert script.main() == 0
-    warning = capsys.readouterr().err.replace("\n", " ")
-    assert f"--metrics-dir {tmp_path / 'metrics'} --record-earlier-applies --apply" in warning
+    words = _printed_command(capsys.readouterr().err, "from the backup this run took: ")
+    assert "--backup-dir" not in words
+    assert words[words.index("--metrics-dir") + 1] == str(tmp_path / "metrics")
+
+
+def test_the_dry_run_prints_commands_aimed_at_the_files_it_read(
+    script, tmp_path, monkeypatch, capsys
+):
+    # A dry run on a copy that printed a bare --file command would have the
+    # operator paste one that runs against the real ~/.claude/metrics.
+    base = tmp_path / "with space"
+    base.mkdir()
+    _backfilled_history(base)
+    _applying_argv(monkeypatch, base, "--record-earlier-applies")
+    assert script.main() == 0
+    words = _printed_command(capsys.readouterr().out, "To record: ")
+    assert words[words.index("--metrics-dir") + 1] == str(base / "metrics")
+    assert words[words.index("--backup-dir") + 1] == str(base / "backups")
+    assert _run_printed(script, monkeypatch, words) == 0
+    assert len(_recorded_ids(base)) == 2
+
+    _argv(monkeypatch, base)
+    assert script.main() == 0
+    words = _printed_command(capsys.readouterr().out, "To write: ", " (and read")
+    assert words[:4] == ["--file", "sessions", "--apply", "--expect-checked"]
+    assert words[words.index("--metrics-dir") + 1] == str(base / "metrics")
+    assert words[words.index("--projects-dir") + 1] == str(base / "projects")
+
+
+def test_an_explicit_metrics_file_and_state_file_carry_into_the_printed_command(
+    script, tmp_path, monkeypatch, capsys
+):
+    # The dedup pass may run on a metrics file of any name, with its state
+    # anywhere; the recording has to follow both, and find the backups by
+    # the metrics file's own name.
+    base = tmp_path / "with space"
+    base.mkdir()
+    live = _backfilled_history(base)
+    renamed = base / "metrics" / "sessions copy.jsonl"
+    (base / "metrics" / "sessions.jsonl").rename(renamed)
+    for backup in (base / "backups").iterdir():
+        backup.rename(backup.with_name(backup.name.replace("sessions.jsonl", renamed.name)))
+    state = base / "state dir" / "state.json"
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "backfill-tokens-by-model.py",
+            "--metrics-file",
+            str(renamed),
+            "--state-file",
+            str(state),
+            "--backup-dir",
+            str(base / "backups"),
+            "--record-earlier-applies",
+        ],
+    )
+    assert script.main() == 0
+    words = _printed_command(capsys.readouterr().out, "To record: ")
+    assert words[words.index("--metrics-file") + 1] == str(renamed)
+    assert words[words.index("--state-file") + 1] == str(state)
+
+    assert _run_printed(script, monkeypatch, words) == 0
+    entry = json.loads(state.read_text())["fields"]["sessions.tokens_by_model"]
+    assert entry["corrected_row_ids"] == sorted(script.row_identities(live, [0, 1], "session_id"))
+    assert not _state_path(base).exists(), "never the state beside the default metrics file"
 
 
 def test_record_earlier_applies_run_again_records_nothing_new(
@@ -2009,9 +2090,9 @@ def test_record_earlier_applies_records_only_the_rows_the_state_lacks(
 
 # ---------------------------------------------------------------------------
 # Maps a dedup TOKEN pass rebuilt are not native either. The 2026-09-23 and
-# 2026-09-25 subagent token passes rewrote tokens_by_model on 1060 existing
-# rows, 510 of them outside the by-model set, and the oracle kept counting
-# those as the hook's own. The dedup pass now names them in the state, and
+# 2026-09-25 subagent token passes rewrote tokens_by_model on existing
+# rows, many outside the by-model set, and the oracle kept counting those
+# as the hook's own. The dedup pass now names them in the state, and
 # --record-earlier-applies derives the earlier ones from its backups.
 # ---------------------------------------------------------------------------
 

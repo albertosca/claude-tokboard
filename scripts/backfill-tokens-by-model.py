@@ -109,12 +109,12 @@ the backups they left, by --record-earlier-applies.
 
 Nor are maps a dedup TOKEN pass rebuilt. scripts/backfill-token-dedup.py
 rewrites tokens_by_model on every row whose totals it corrects, with the
-same reconstruction; the 2026-09-23 and 2026-09-25 subagent passes did it
-to 1060 rows, 510 of them outside the by-model set, all still counted as
-native. The pass now names those rows in the state too, and the oracle
-reports them apart as "rebuilt by a dedup pass". --record-earlier-applies
-finds the earlier ones by diffing each dedup backup against the file's
-next state.
+same reconstruction, and the subagent passes of 2026-09-23 and 2026-09-25
+did so on rows no by-model apply had touched - maps the oracle went on
+counting as native. The pass now names those rows in the state too, and
+the oracle reports them apart as "rebuilt by a dedup pass".
+--record-earlier-applies finds the earlier ones by diffing each dedup
+backup against the file's next state.
 
 The write itself reuses the machinery scripts/backfill-token-dedup.py
 already proved: back up and verify the copy by sha256, re-verify at rename
@@ -135,6 +135,7 @@ import argparse
 import collections
 import json
 import os
+import shlex
 import shutil
 import stat
 import sys
@@ -619,10 +620,9 @@ def rebuilt_rows(
     scripts/backfill-token-dedup.py rewrites tokens_by_model on every row
     whose totals it corrects, by metrics_core's reconstruction - so the
     map is no longer the hook's, and checking it against the same
-    reconstruction proves nothing. The 2026-09-23 and 2026-09-25 subagent
-    passes did this to 1060 rows, 510 of them outside the by-model set.
-    The pass names them under REBUILT_MAPS_FIELD; earlier ones are found
-    by --record-earlier-applies. A row both written by an apply and
+    reconstruction proves nothing. The pass names them under
+    REBUILT_MAPS_FIELD; earlier ones are found by --record-earlier-applies.
+    A row both written by an apply and
     rebuilt is counted once, as written (see classify_native_rows).
     """
     wanted = recorded_names(state, f"{file_name}.{REBUILT_MAPS_FIELD}")
@@ -671,11 +671,13 @@ def require_prefix(
         )
 
 
-def backup_chain(backups: Path, file_name: str) -> list[tuple[str, str, Path]]:
+def backup_chain(backups: Path, metrics_name: str) -> list[tuple[str, str, Path]]:
     """(stamp, pass, path) of every dedup and by-model backup of the
-    file, oldest first - the file's successive states before each pass."""
+    metrics file named `metrics_name`, oldest first - the file's
+    successive states before each pass. Both scripts name a backup after
+    the file they backed up, so a copy under another name finds its own."""
     chain = []
-    prefix = f"{file_name}.jsonl."
+    prefix = f"{metrics_name}."
     for path in backups.glob(f"{prefix}*.bak"):
         middle = path.name[len(prefix) : -len(".bak")]
         for pass_name in (DEDUP_PASS, BY_MODEL_PASS):
@@ -685,7 +687,7 @@ def backup_chain(backups: Path, file_name: str) -> list[tuple[str, str, Path]]:
 
 
 def dedup_rebuilt_identities(
-    backups: Path, file_name: str, records: list[dict[str, Any]], id_key: str
+    backups: Path, metrics_name: str, records: list[dict[str, Any]], id_key: str
 ) -> tuple[list[str], int]:
     """(names of the rows whose map a dedup token pass rebuilt, dedup
     backups read).
@@ -701,7 +703,7 @@ def dedup_rebuilt_identities(
     every backup is a state in the chain.
     """
     identities = row_identities(records, range(len(records)), id_key)
-    chain = backup_chain(backups, file_name)
+    chain = backup_chain(backups, metrics_name)
     rebuilt: set[str] = set()
     later = load_records(str(chain[0][2])) if chain else []
     for position, (_stamp, pass_name, source) in enumerate(chain):
@@ -725,7 +727,7 @@ def dedup_rebuilt_identities(
 
 
 def earlier_apply_identities(
-    backups: Path, file_name: str, records: list[dict[str, Any]], id_key: str
+    backups: Path, metrics_name: str, records: list[dict[str, Any]], id_key: str
 ) -> tuple[list[str], int]:
     """(names of the rows earlier by-model applies wrote, backups read).
 
@@ -739,7 +741,7 @@ def earlier_apply_identities(
     """
     identities = row_identities(records, range(len(records)), id_key)
     written: set[str] = set()
-    sources = sorted(backups.glob(f"{file_name}.jsonl.{BY_MODEL_PASS}-*.bak"))
+    sources = sorted(backups.glob(f"{metrics_name}.{BY_MODEL_PASS}-*.bak"))
     for source in sources:
         earlier = load_records(str(source))
         require_prefix(earlier, records, id_key, source, "the metrics file")
@@ -1091,6 +1093,35 @@ def print_plan_summary(
         print(f"Earliest snapshot that would be written: {earliest}")
 
 
+def shell_command(*words: str) -> str:
+    """`words` as one line a shell reads back as the same words: every
+    printed command is meant to be pasted, and a path with a space in it
+    would otherwise split in two."""
+    return " ".join(shlex.quote(word) for word in words)
+
+
+def path_options(arguments: argparse.Namespace, *, projects: bool = False) -> list[str]:
+    """The path options this run was given, for a printed command to carry.
+
+    Only the ones that differ from their defaults, so a run on the real
+    files prints the short command it always did - and a run on a copy
+    never prints one that, pasted, would act on the real files instead.
+    `projects` adds --projects-dir, which only planning reads.
+    """
+    options: list[str] = []
+    if arguments.metrics_dir != METRICS_DIRECTORY:
+        options += ["--metrics-dir", arguments.metrics_dir]
+    if arguments.metrics_file:
+        options += ["--metrics-file", arguments.metrics_file]
+    if arguments.state_file:
+        options += ["--state-file", arguments.state_file]
+    if arguments.backup_dir:
+        options += ["--backup-dir", arguments.backup_dir]
+    if projects and arguments.projects_dir != PROJECTS_DIRECTORY:
+        options += ["--projects-dir", arguments.projects_dir]
+    return options
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -1102,11 +1133,24 @@ def main() -> int:
         help="which metrics file to plan against",
     )
     parser.add_argument("--metrics-dir", default=METRICS_DIRECTORY)
+    parser.add_argument(
+        "--metrics-file",
+        default=None,
+        help="the metrics file itself (default: <file>.jsonl in --metrics-dir)",
+    )
+    parser.add_argument(
+        "--state-file",
+        default=None,
+        help="the backfill state (default: backfill_state.json beside the metrics file)",
+    )
     parser.add_argument("--projects-dir", default=PROJECTS_DIRECTORY)
     parser.add_argument(
         "--backup-dir",
         default=None,
-        help="where the pre-write backup goes (default: a backups/ beside the metrics file)",
+        help=(
+            "where the pre-write backup goes, and where --record-earlier-applies looks "
+            "for backups (default: a backups/ beside the metrics file)"
+        ),
     )
     parser.add_argument(
         "--apply",
@@ -1137,7 +1181,11 @@ def main() -> int:
     arguments = parser.parse_args()
 
     id_key, transcript_key = UNIT_KEYS[arguments.file]
-    path = Path(arguments.metrics_dir) / f"{arguments.file}.jsonl"
+    path = (
+        Path(arguments.metrics_file)
+        if arguments.metrics_file
+        else Path(arguments.metrics_dir) / f"{arguments.file}.jsonl"
+    )
     if not path.exists():
         print(f"no metrics file at {path}", file=sys.stderr)
         return 1
@@ -1146,9 +1194,9 @@ def main() -> int:
     print(f"read {len(records)} rows from {path}")
     # Beside the metrics file, never the default ~/.claude state: a run
     # pointed at a copy records into the copy.
-    state_path = str(Path(arguments.metrics_dir) / "backfill_state.json")
+    state_path = arguments.state_file or str(path.parent / "backfill_state.json")
     if arguments.record_earlier_applies:
-        return record_earlier_applies(arguments, records, id_key, state_path)
+        return record_earlier_applies(arguments, path, records, id_key, state_path)
 
     # Indexed before the gate runs, not after: the oracle needs it to follow
     # a transcript that has moved between project slugs, and a row it cannot
@@ -1230,9 +1278,17 @@ def main() -> int:
         # against sessions.jsonl - and the hazard is asymmetric, so it
         # survives casual reading: the subagent file's smaller count clears
         # the session file's floor and writes, while the reverse refuses.
+        write_command = shell_command(
+            "--file",
+            arguments.file,
+            "--apply",
+            "--expect-checked",
+            str(checked),
+            *path_options(arguments, projects=True),
+        )
         print(
-            f"\nDRY RUN - nothing written. To write: --file {arguments.file} --apply "
-            f"--expect-checked {checked} (and read the oracle line above before you do)."
+            f"\nDRY RUN - nothing written. To write: {write_command} "
+            "(and read the oracle line above before you do)."
         )
         return 0
 
@@ -1282,14 +1338,19 @@ def main() -> int:
     except Exception as problem:
         # The backup this run took names these rows, so the one-time
         # recovery path records them - aimed at the same files.
-        backup_option = f" --backup-dir {arguments.backup_dir}" if arguments.backup_dir else ""
+        recovery = shell_command(
+            Path(__file__).name,
+            "--file",
+            arguments.file,
+            "--record-earlier-applies",
+            "--apply",
+            *path_options(arguments),
+        )
         print(
             "WARNING: the metrics file was rewritten, but the backfill state could not be "
             f"recorded ({type(problem).__name__}: {problem}). The next dry run will count "
             f"these {len(plan)} row(s) as native until they are recorded. To record them "
-            f"from the backup this run took: {Path(__file__).name} --file {arguments.file} "
-            f"--metrics-dir {arguments.metrics_dir}{backup_option} "
-            "--record-earlier-applies --apply",
+            f"from the backup this run took: {recovery}",
             file=sys.stderr,
         )
         return 0
@@ -1298,22 +1359,20 @@ def main() -> int:
 
 
 def record_earlier_applies(
-    arguments: argparse.Namespace, records: list[dict[str, Any]], id_key: str, state_path: str
+    arguments: argparse.Namespace,
+    path: Path,
+    records: list[dict[str, Any]],
+    id_key: str,
+    state_path: str,
 ) -> int:
     """The --record-earlier-applies run: the rows earlier by-model applies
     wrote (see earlier_apply_identities) and the rows whose map earlier
     dedup token passes rebuilt (see dedup_rebuilt_identities), each
     recorded under its own state entry."""
-    backups = (
-        Path(arguments.backup_dir)
-        if arguments.backup_dir
-        else Path(arguments.metrics_dir) / "backups"
-    )
+    backups = Path(arguments.backup_dir) if arguments.backup_dir else path.parent / "backups"
     try:
-        written, by_model_sources = earlier_apply_identities(
-            backups, arguments.file, records, id_key
-        )
-        rebuilt, dedup_sources = dedup_rebuilt_identities(backups, arguments.file, records, id_key)
+        written, by_model_sources = earlier_apply_identities(backups, path.name, records, id_key)
+        rebuilt, dedup_sources = dedup_rebuilt_identities(backups, path.name, records, id_key)
     except NotAPrefix as problem:
         print(f"refusing to record: {problem}", file=sys.stderr)
         return 1
@@ -1340,10 +1399,14 @@ def record_earlier_applies(
             f"backup(s) under {backups}; {len(fresh[entry])} of them not yet recorded"
         )
     if not arguments.apply:
-        print(
-            f"\nDRY RUN - nothing recorded. To record: --file {arguments.file} "
-            "--record-earlier-applies --apply"
+        record_command = shell_command(
+            "--file",
+            arguments.file,
+            "--record-earlier-applies",
+            "--apply",
+            *path_options(arguments),
         )
+        print(f"\nDRY RUN - nothing recorded. To record: {record_command}")
         return 0
     if not any(fresh.values()):
         print("nothing new to record; leaving the backfill state untouched")

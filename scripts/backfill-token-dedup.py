@@ -119,6 +119,7 @@ import argparse
 import collections
 import json
 import os
+import shlex
 import shutil
 import stat
 import sys
@@ -693,12 +694,30 @@ def main() -> int:
     ]
     # Unrecorded, those maps count as native in the by-model oracle; the
     # backup this run takes still names them, and this is how to read it.
+    # Every path is passed explicitly: this run's metrics file need not be
+    # named <kind>.jsonl, nor its state sit beside it, and the by-model
+    # script would otherwise derive both from a directory and record into
+    # a state this run never used. Quoted, because it is meant to be pasted.
+    recovery_command = " ".join(
+        shlex.quote(word)
+        for word in (
+            "backfill-tokens-by-model.py",
+            "--file",
+            arguments.kind,
+            "--metrics-file",
+            path,
+            "--state-file",
+            arguments.state_file,
+            "--backup-dir",
+            arguments.backup_dir,
+            "--record-earlier-applies",
+            "--apply",
+        )
+    )
     recovery = (
         " Until they are recorded, the by-model oracle counts the "
         f"{len(rebuilt)} map(s) this run rebuilt as native; to record them from "
-        f"the backup this run took: backfill-tokens-by-model.py --file {arguments.kind} "
-        f"--metrics-dir {metrics_path.parent} --backup-dir {arguments.backup_dir} "
-        "--record-earlier-applies --apply"
+        f"the backup this run took: {recovery_command}"
         if rebuilt
         else ""
     )

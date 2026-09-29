@@ -1724,3 +1724,36 @@ def test_a_state_write_keeps_the_state_files_mode(tmp_path):
     mr.write_field_state("sessions", "tool_calls", None, "b", _names(1), path=str(path))
     mr.write_backfill_state("2026-09-25", "c", _names(1), path=str(path))
     assert path.stat().st_mode & 0o777 == 0o644
+
+
+@pytest.mark.parametrize(("umask", "expected"), [(0o022, 0o644), (0o077, 0o600)])
+def test_a_new_state_file_follows_the_umask(tmp_path, umask, expected):
+    # The plain open("w") this write replaced created the file 0o666 minus
+    # the umask; a temporary file from mkstemp is 0o600 whatever it is.
+    previous = os.umask(umask)
+    try:
+        mr.write_field_state(
+            "sessions", "tool_calls", None, "a", _names(1), path=str(tmp_path / "s.json")
+        )
+    finally:
+        os.umask(previous)
+    assert (tmp_path / "s.json").stat().st_mode & 0o777 == expected
+
+
+def test_a_state_write_through_a_symlink_replaces_the_target_and_keeps_the_link(tmp_path):
+    # A state file kept elsewhere and linked into the metrics directory:
+    # renaming over the link would turn it into a regular file and leave
+    # the real one behind, stale.
+    real_directory = tmp_path / "real"
+    real_directory.mkdir()
+    real = real_directory / "state.json"
+    mr.write_backfill_state("2026-09-23", "a", _names(1), path=str(real))
+    link = tmp_path / "state.json"
+    link.symlink_to(real)
+
+    mr.write_backfill_state("2026-09-25", "b", _names(2), path=str(link))
+
+    assert link.is_symlink()
+    assert json.loads(real.read_text())["applied_at"] == "b"
+    assert sorted(child.name for child in real_directory.iterdir()) == ["state.json"]
+    assert sorted(child.name for child in tmp_path.iterdir()) == ["real", "state.json"]

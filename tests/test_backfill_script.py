@@ -3,6 +3,7 @@ import collections
 import hashlib
 import importlib.util
 import json
+import shlex
 import stat
 import sys
 import tempfile
@@ -1285,8 +1286,18 @@ def test_a_token_pass_whose_state_write_fails_names_the_recovery(
 ):
     # Unrecorded, the maps this pass rebuilt count as native in the
     # by-model oracle; its recovery path finds them in the backup this
-    # run took, and the warning has to say how.
+    # run took, and the warning has to say how - for the files THIS run
+    # used, which need not be the defaults, nor be named <kind>.jsonl.
     paths = _streamed_fixture(tmp_path)
+    metrics = tmp_path / "my metrics" / "subagents copy.jsonl"
+    metrics.parent.mkdir()
+    paths["metrics"].rename(metrics)
+    paths["metrics"] = metrics
+    state = tmp_path / "state dir" / "state.json"
+    state.parent.mkdir()
+    paths["state"].rename(state)
+    paths["state"] = state
+    paths["backups"] = tmp_path / "back ups"
 
     def fail(*arguments: Any, **keywords: Any) -> None:
         raise OSError("disk full")
@@ -1296,13 +1307,11 @@ def test_a_token_pass_whose_state_write_fails_names_the_recovery(
 
     assert script.main() == 0
 
-    warning = capsys.readouterr().err.replace("\n", " ")
+    warning = capsys.readouterr().err
     assert "the backfill state could not be recorded" in warning
-    command = (
-        f"backfill-tokens-by-model.py --file subagents --metrics-dir {paths['metrics'].parent} "
-        f"--backup-dir {paths['backups']} --record-earlier-applies --apply"
-    )
-    assert command in warning
+    marker = "the backup this run took: "
+    words = shlex.split(warning[warning.index(marker) + len(marker) :].splitlines()[0])
+    assert words[:3] == ["backfill-tokens-by-model.py", "--file", "subagents"]
 
     # And the command does what the warning says it does.
     by_model_path = SCRIPT_PATH.parent / "backfill-tokens-by-model.py"
@@ -1311,8 +1320,9 @@ def test_a_token_pass_whose_state_write_fails_names_the_recovery(
     assert spec.loader is not None
     by_model = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(by_model)
-    monkeypatch.setattr("sys.argv", command.split())
+    monkeypatch.setattr("sys.argv", words)
     assert by_model.main() == 0
-    records = [json.loads(line) for line in paths["metrics"].read_text().splitlines()]
-    entry = json.loads(paths["state"].read_text())["fields"]["subagents.tokens_by_model_rebuilt"]
+    records = [json.loads(line) for line in metrics.read_text().splitlines()]
+    entry = json.loads(state.read_text())["fields"]["subagents.tokens_by_model_rebuilt"]
     assert entry["corrected_row_ids"] == script.row_identities(records, [0], "agent_id")
+    assert not (metrics.parent / "backfill_state.json").exists()
