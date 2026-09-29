@@ -67,9 +67,9 @@ def project_roots_from(config: Mapping[str, Any]) -> list[str]:
 
     A recorded `project_path` is whatever Claude Code's cwd happened to be,
     which is often a subdirectory of the real project - and nothing in the
-    path itself says where the project stops. Measured on one real install
-    (2026-09-21): 104 of 163 distinct recorded paths no longer exist on
-    disk at all, and the busiest project had been renamed, so resolving
+    path itself says where the project stops. On one real install
+    (2026-09-21) most distinct recorded paths no longer existed on disk at
+    all, and the busiest project had been renamed, so resolving
     against the filesystem cannot answer it either. So it is declared, in
     ~/.claude/metrics/config.json:
 

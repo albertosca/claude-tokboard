@@ -39,7 +39,7 @@ BACKFILL_STATE_FILE = str(Path("~/.claude/metrics/backfill_state.json").expandus
 # Which id names a unit - the owner of one growing snapshot series - in each
 # metrics file. Subagent rows carry session_id TOO, but it is their parent's:
 # grouping them on it merges every subagent one session dispatched into a
-# single unit, the 2026-08-06 contamination (1012 of 1036 agent_ids
+# single unit, the 2026-08-06 contamination (nearly every agent_id
 # mismatched). Session rows never carry agent_id at all.
 UNIT_ID_KEYS: dict[str, str] = {"sessions": "session_id", "subagents": "agent_id"}
 
@@ -119,23 +119,23 @@ def index_subagent_transcripts(
     by AGENT id. index_transcripts deliberately walks only <slug>/*.jsonl and
     keys by SESSION id - its docstring says the deeper paths belong to
     subagents.jsonl, not there - so handing it to subagent code hands over an
-    index that cannot hit on any key. Measured 2026-09-16: 44 native subagent
-    snapshots were being skipped as "no transcript" while all 44 files were
-    on disk, migrated into the parent project slug exactly as the session
-    transcripts were.
+    index that cannot hit on any key. Found 2026-09-16: native subagent
+    snapshots were being skipped as "no transcript" while every one of their
+    files was on disk, migrated into the parent project slug exactly as the
+    session transcripts were.
 
     The filename carries the agent id with an `agent-` PREFIX that the record
     itself does not have: the file is `agent-a04a2851b378c2216.jsonl` and the
-    record's agent_id is `a04a2851b378c2216`. Measured 2026-09-16 over the
-    whole tree: 1,005 of 1,005 transcript basenames carry the prefix, 2,124
-    of 2,124 agent_id values do not, and all 1,953 rows with a recorded path
-    have `basename == "agent-" + agent_id`. Keying by the raw basename
+    record's agent_id is `a04a2851b378c2216`. Checked 2026-09-16 over a
+    whole tree: every transcript basename carries the prefix, no agent_id
+    value does, and every row with a recorded path has
+    `basename == "agent-" + agent_id`. Keying by the raw basename
     therefore builds an index that looks populated and never matches - the
     same class of failure as handing over the session index, one level down.
 
     An agent id found under more than one slug whose copies are
-    BYTE-IDENTICAL is one transcript stored twice - measured 2026-09-28, all
-    93 such ids on disk were (a renamed project directory, a migrated
+    BYTE-IDENTICAL is one transcript stored twice - checked 2026-09-28,
+    every such id on one disk was (a renamed project directory, a migrated
     worktree slug) - so the first path in sorted order stands for all of
     them: which copy is read cannot change a number. Copies that DIFFER are
     ambiguity, not a match: nothing here can tell which one the record was
@@ -435,10 +435,10 @@ def scan_cut_points(path: str) -> dict[str, tuple[int, ...]]:
     does not write lines in timestamp order, so the time cut (every
     assistant entry stamped at or before timestamp_end) can include an entry
     appended after the hook's read, or leave out one read before it.
-    Measured 2026-09-29 over real session history: 24 rows matched no
-    formula at the time cut - 11 missing an entry stamped earlier but
-    written later, 13 holding one stamped later but written earlier - and
-    all 24 matched exactly at one of these cuts.
+    Found 2026-09-29: rows that matched no formula at the time cut -
+    some missing an entry stamped earlier but written later, others
+    holding one stamped later but written earlier - all matched exactly at
+    one of these cuts.
 
     A timestamp can close several cuts: untimestamped lines after it leave
     it the last one read, and the same stamp can recur further down the
@@ -524,8 +524,8 @@ def model_totals_at_row_cut(
     beside peak totals - when every such cut gives the same map. Otherwise
     (no such cut, or cuts that disagree on the map) it is the time cut, as
     model_totals_as_of gives it, and the caller's gates judge the result.
-    Measured 2026-09-29: 12 native session maps the time cut over-counted,
-    by the 1-3 entries written after the hook's last read, or at the wrong
+    Found 2026-09-29: native session maps the time cut over-counted, by
+    the few entries written after the hook's last read, or at the wrong
     one of two cuts sharing a stamp, all matched exactly at this cut.
 
     `file_sums` is build_file_order_sums(scan.timeline), taken once per
@@ -583,11 +583,11 @@ def _recognise(stored: list[int], now: AsOf) -> str | None:
     Exact matches only. The August run accepted a raw-sum near-miss within
     2% (58 of 59 such rows then sat within 0.3% of the raw sum), and those
     rows are corrected now. Extended to the first-occurrence formula, the
-    same tolerance recognised 9 real session rows (2026-09-23) whose
+    same tolerance recognised session rows (2026-09-23) whose
     transcripts hold no streamed ids (first == peak) and which sat one late
     message below the as-of reconstruction - rows the hook got right, that a
     "correction" would have rewritten from reconstruction noise. Every row
-    the 2026-09-23 plan corrects (862 subagent, 41 session) matches its
+    the 2026-09-23 plan corrects, subagent and session, matches its
     formula exactly, so exactness costs nothing and closes that door for
     both formulas.
     """
@@ -896,10 +896,10 @@ def _tool_reading(
     `time_cut_count` is the distinct count at the time cut, passed only when
     `now` is a file cut: before 2026-09-29 this pass rebuilt every row at the
     time cut, so a row it wrote holds that count - which is neither hook
-    formula at the file cut when the two cuts disagree. Measured on the
-    2026-09-28 apply: 2 session rows, 149 and 152 where the file cut gives
-    148 and 151 (their hook values, 31, were the first-entry count at both
-    cuts). Only an exact match is recognised, and only after both hook
+    formula at the file cut when the two cuts disagree, as it was on
+    session rows of the 2026-09-28 apply: each one above the file cut's
+    count, with a hook value that was the first-entry count at both cuts.
+    Only an exact match is recognised, and only after both hook
     formulas, so a value a hook wrote is always read as the hook's. The
     caller passes it only when the move is explained (see
     _explained_time_cut_count).
@@ -971,8 +971,8 @@ def plan_tool_call_corrections(
     made: the file prefix (see scan_cut_points) at which a token formula
     reproduces them exactly, else the time cut. A tool_use block can sit in
     an entry that carries no new usage, so the time cut can count a tool
-    call the hook had not read even where the tokens agree - measured
-    2026-09-29, 7 real rows whose time and file cuts disagreed on the target.
+    call the hook had not read even where the tokens agree - found
+    2026-09-29, rows whose time and file cuts disagreed on the target.
     Prefixes that reproduce the tokens but disagree on the count, or on
     whether the row matches at all, refuse the unit.
     """
@@ -1145,9 +1145,9 @@ def cumulative_rows(previous: Any, identities: list[str]) -> dict[str, Any]:
       run touched again cannot be told.
 
     Adding each run's count, as every entry did before 2026-09-29, counted
-    a row corrected by two runs twice: the tool_calls pass re-corrected 2
-    session rows its 2026-09-28 run had written, and the state said 2034
-    rows where 2032 distinct ones had changed. An old entry that reported
+    a row corrected by two runs twice: the tool_calls pass re-corrected
+    session rows its 2026-09-28 run had written, and the state counted each
+    of them twice. An old entry that reported
     no rows (0 or no count, or a null one) leaves nothing unidentified.
 
     Never raises on what an earlier entry holds: the callers write the

@@ -5,10 +5,10 @@ timestamp_end, the timestamp of the last timestamped line it read - any
 line type, not only assistant entries. Claude Code does not write lines in
 timestamp order, so "every assistant entry stamped at or before
 timestamp_end" (the time cut) can include an entry the hook had not read
-yet, or leave out one it had. Measured 2026-09-29 on real history: 24
-session rows in 9 units matched no formula under the time cut and all 24
-matched exactly at the file prefix, which refused 745 rows that were
-already correct.
+yet, or leave out one it had. Found 2026-09-29: session rows that matched
+no formula under the time cut all matched exactly at the file prefix, and
+refusing their units had held back hundreds of rows that were already
+correct.
 """
 
 import importlib.util

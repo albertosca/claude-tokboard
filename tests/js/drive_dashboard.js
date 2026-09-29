@@ -9,7 +9,7 @@
 // session_tokens}, computed by the Python side from metrics_core over the
 // fixture's own records. Nothing in this file knows what the right answer
 // is; it only knows how to interrogate the page.
-const fs = require("fs");
+const fileSystem = require("fs");
 const { JSDOM } = require("jsdom");
 
 const HTML = process.env.DASHBOARD;
@@ -17,25 +17,25 @@ if (!HTML) {
   console.error("DASHBOARD env var is required (path to the generated dashboard.html)");
   process.exit(2);
 }
-const EXPECT = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+const EXPECT = JSON.parse(fileSystem.readFileSync(process.argv[2], "utf8"));
 const PERIOD_IDS = Object.keys(EXPECT.periods);
 
-const dom = new JSDOM(fs.readFileSync(HTML, "utf8"), { runScripts: "dangerously" });
+const dom = new JSDOM(fileSystem.readFileSync(HTML, "utf8"), { runScripts: "dangerously" });
 const { window } = dom;
 const { document } = window;
 
 let styleCache = new Map();
-function displayOf(el) {
-  if (styleCache.has(el)) return styleCache.get(el);
-  const d = window.getComputedStyle(el).display;
-  styleCache.set(el, d);
-  return d;
+function displayOf(element) {
+  if (styleCache.has(element)) return styleCache.get(element);
+  const display = window.getComputedStyle(element).display;
+  styleCache.set(element, display);
+  return display;
 }
 // Visible = neither this element nor any ancestor computes to display:none.
 // Ancestors matter for the composition legend, which is hidden by its
 // wrapping .period-block rather than by a class of its own.
-function isVisible(el) {
-  let node = el;
+function isVisible(element) {
+  let node = element;
   while (node && node.nodeType === 1) {
     if (displayOf(node) === "none") return false;
     node = node.parentElement;
@@ -157,9 +157,9 @@ function panoramaTotalsDrawn() {
   const totals = Array.from(document.querySelectorAll(".total-grand")).filter(isVisible);
   if (labels.length !== totals.length) return null;
   const drawn = {};
-  labels.forEach((label, i) => {
+  labels.forEach((label, index) => {
     const name = label.textContent.replace(/\s*●$/, "").trim();
-    drawn[name] = parseFormatted(totals[i].textContent.split("·")[0]);
+    drawn[name] = parseFormatted(totals[index].textContent.split("·")[0]);
   });
   return drawn;
 }
@@ -187,13 +187,13 @@ function toggleTo(header, wantCollapsed) {
   }
 }
 function expandAllGroups() {
-  headers.forEach((h) => toggleTo(h, false));
+  headers.forEach((header) => toggleTo(header, false));
 }
 function collapseAllGroups() {
-  headers.forEach((h) => toggleTo(h, true));
+  headers.forEach((header) => toggleTo(header, true));
 }
 function resetScroll() {
-  allTrendScrolls.forEach((el) => { el.scrollLeft = 0; });
+  allTrendScrolls.forEach((element) => { element.scrollLeft = 0; });
 }
 function closeAllPanels() {
   panels.forEach((panel) => {
@@ -208,27 +208,27 @@ function measure(periodId) {
   const visibleLegends = legendBlocks.filter(isVisible);
   const legend = {};
   if (visibleLegends.length === 1) {
-    visibleLegends[0].querySelectorAll(".legend-total").forEach((el) => {
-      legend[el.getAttribute("data-series")] = el.textContent.trim();
+    visibleLegends[0].querySelectorAll(".legend-total").forEach((element) => {
+      legend[element.getAttribute("data-series")] = element.textContent.trim();
     });
   }
   // A header is only allowed on screen if at least one of its own sessions
   // belongs to the period, and BOTH numbers it prints have to describe what
   // the reader can actually see. Critical #2's literal wording was about the
-  // token figure, not the count - "29 group headers reading 29.3B tokens
-  // under every period when ontem was 5.9B" - so a regex that captured only
+  // token figure, not the count - every group header reading the all-time
+  // token total under every period, ontem included - so a regex that captured only
   // "(N sess" would have watched that exact defect go straight past.
   const headerCounts = {};
   const headerTokenText = {};
   let headersWithoutCount = 0;
-  visibleHeaders.forEach((h) => {
-    const span = Array.from(h.querySelectorAll(".group-count")).find(isVisible);
+  visibleHeaders.forEach((header) => {
+    const span = Array.from(header.querySelectorAll(".group-count")).find(isVisible);
     const parsed = span && /^\((\d+) sess\S* · (.+) tokens\)$/.exec(span.textContent.trim());
     if (!parsed) {
       headersWithoutCount += 1;
       return;
     }
-    const group = h.id.replace("group-", "");
+    const group = header.id.replace("group-", "");
     headerCounts[group] = parseInt(parsed[1], 10);
     headerTokenText[group] = parsed[2].trim();
   });
@@ -236,20 +236,20 @@ function measure(periodId) {
     document.querySelectorAll('.period-block[data-period="' + periodId + '"] .trend-scroll')
   );
   return {
-    sessionIds: visibleRows.map((el) => el.id.replace(/^row-/, "")).sort(),
+    sessionIds: visibleRows.map((element) => element.id.replace(/^row-/, "")).sort(),
     rowsNotFlex: visibleRows
-      .filter((el) => displayOf(el) !== "flex")
-      .map((el) => el.id + "=" + displayOf(el))
+      .filter((element) => displayOf(element) !== "flex")
+      .map((element) => element.id + "=" + displayOf(element))
       .sort(),
-    headerGroups: visibleHeaders.map((h) => h.id.replace("group-", "")).sort(),
+    headerGroups: visibleHeaders.map((header) => header.id.replace("group-", "")).sort(),
     headerCounts,
     headerTokenText,
     headersWithoutCount,
     legendBlocks: visibleLegends.length,
     legend,
-    visiblePanelIds: panels.filter(isVisible).map((el) => el.id.replace(/^detail-/, "")).sort(),
+    visiblePanelIds: panels.filter(isVisible).map((element) => element.id.replace(/^detail-/, "")).sort(),
     trendScrolls: activeScrolls.length,
-    trendScrollsAtNewest: activeScrolls.filter((el) => el.scrollLeft === SCROLL_WIDTH).length,
+    trendScrollsAtNewest: activeScrolls.filter((element) => element.scrollLeft === SCROLL_WIDTH).length,
   };
 }
 
@@ -257,13 +257,13 @@ const failures = [];
 let assertionCount = 0;
 function check(label, actual, expected) {
   assertionCount += 1;
-  const ok = JSON.stringify(actual) === JSON.stringify(expected);
-  if (!ok) {
+  const matches = JSON.stringify(actual) === JSON.stringify(expected);
+  if (!matches) {
     failures.push(
       `${label}\n      got:      ${JSON.stringify(actual)}\n      expected: ${JSON.stringify(expected)}`
     );
   }
-  console.log(`  ${ok ? "PASS" : "FAIL"} ${label}: ${JSON.stringify(actual)}`);
+  console.log(`  ${matches ? "PASS" : "FAIL"} ${label}: ${JSON.stringify(actual)}`);
 }
 
 function section(title) {
@@ -317,8 +317,8 @@ function checkAgainst(periodId, got) {
   const chips = Object.keys(want.legend).map((series) => parseFormatted(got.legend[series]));
   check("composition legend chips all parse as numbers", chips.every(Boolean), true);
   if (chips.every(Boolean)) {
-    const sum = chips.reduce((acc, chip) => acc + chip.value, 0);
-    const tolerance = chips.reduce((acc, chip) => acc + chip.tolerance, 0);
+    const sum = chips.reduce((total, chip) => total + chip.value, 0);
+    const tolerance = chips.reduce((total, chip) => total + chip.tolerance, 0);
     check(
       `composition legend sums to the period's token total (${want.token_total} +/- ${tolerance})`,
       Math.abs(sum - want.token_total) <= tolerance,
@@ -400,7 +400,7 @@ for (const order of ["expand-then-period", "period-then-expand"]) {
     // filtered out by isVisible rather than by a selector.
     const trendProjects = Array.from(document.querySelectorAll(".trend-legend-slot .legend-chip"))
       .filter(isVisible)
-      .map((el) => el.textContent.trim())
+      .map((element) => element.textContent.trim())
       .sort();
     check(`trend chart legend names at least one project under ${periodId}`, trendProjects.length > 0, true);
     check(`trend chart is built from ${periodId}'s data alone`, trendProjects, want.trend_projects);
@@ -427,7 +427,7 @@ for (const order of ["expand-then-period", "period-then-expand"]) {
     const panoramaProjects = Array.from(document.querySelectorAll(".project-chart-label"))
       .filter(isVisible)
       // " ●" marks a project open right now - not part of its name.
-      .map((el) => el.textContent.replace(/\s*●$/, "").trim())
+      .map((element) => element.textContent.replace(/\s*●$/, "").trim())
       .sort();
     check(`Panorama chart names at least one project under ${periodId}`, panoramaProjects.length > 0, true);
     check(`Panorama chart is built from ${periodId}'s data alone`, panoramaProjects, want.panorama_projects);
@@ -460,7 +460,7 @@ for (const order of ["expand-then-period", "period-then-expand"]) {
       const clicked = visibleTrendPanes(clickedPeriod);
       check(
         `clicked period ${clickedPeriod} shows exactly its '${mode}' pane after showTrendMode`,
-        clicked.map((el) => el.id),
+        clicked.map((element) => element.id),
         ["trend-pane-" + mode + "-" + clickedPeriod]
       );
       for (const otherPeriod of PERIOD_IDS) {
@@ -496,7 +496,7 @@ for (const order of ["expand-then-period", "period-then-expand"]) {
       freshStyles();
       check(
         `panel for ${insider} stays visible under ${periodId}`,
-        panels.filter(isVisible).map((el) => el.id.replace(/^detail-/, "")),
+        panels.filter(isVisible).map((element) => element.id.replace(/^detail-/, "")),
         [insider]
       );
     }
@@ -508,7 +508,7 @@ for (const order of ["expand-then-period", "period-then-expand"]) {
       freshStyles();
       check(
         `panel for ${outsider} disappears under ${periodId}`,
-        panels.filter(isVisible).map((el) => el.id.replace(/^detail-/, "")),
+        panels.filter(isVisible).map((element) => element.id.replace(/^detail-/, "")),
         []
       );
     }
@@ -525,10 +525,10 @@ for (const order of ["expand-then-period", "period-then-expand"]) {
   window.selectPeriod(EXPECT.default_period);
   expandAllGroups();
   freshStyles();
-  const expanded = rows.filter(isVisible).map((el) => el.id.replace(/^row-/, "")).sort();
+  const expanded = rows.filter(isVisible).map((element) => element.id.replace(/^row-/, "")).sort();
   collapseAllGroups();
   freshStyles();
-  const collapsed = rows.filter(isVisible).map((el) => el.id.replace(/^row-/, ""));
+  const collapsed = rows.filter(isVisible).map((element) => element.id.replace(/^row-/, ""));
   check("rows visible after expanding all", expanded, EXPECT.periods[EXPECT.default_period].session_ids);
   check("rows visible after collapsing all", collapsed, []);
   endSection("collapse regression", started);
@@ -594,22 +594,22 @@ for (const order of ["expand-then-period", "period-then-expand"]) {
 
   // A band and a chip that disagree on the class would each light the
   // other's colour - the failure this pairing exists to refuse.
-  const bandClasses = new Set(bands.map((b) => b.getAttribute("class").replace("chart-bar ", "")));
+  const bandClasses = new Set(bands.map((band) => band.getAttribute("class").replace("chart-bar ", "")));
   const chipClasses = new Set(
-    chips.map((c) => c.querySelector(".legend-swatch").getAttribute("class").replace("legend-swatch ", ""))
+    chips.map((chip) => chip.querySelector(".legend-swatch").getAttribute("class").replace("legend-swatch ", ""))
   );
   check(
     "every band colour has a chip of the same colour",
-    Array.from(bandClasses).every((c) => chipClasses.has(c)),
+    Array.from(bandClasses).every((bandClass) => chipClasses.has(bandClass)),
     true
   );
 
   // A NAMED model, not the "sem modelo" remainder: the remainder would
   // prove the mechanism while sidestepping the thing that was reported.
-  const named = bands.find((b) => b.getAttribute("class").indexOf("group-color-none") === -1);
+  const named = bands.find((band) => band.getAttribute("class").indexOf("group-color-none") === -1);
   check("the pane draws a band for a named model", Boolean(named), true);
   const target = named.getAttribute("class").replace("chart-bar ", "");
-  const other = bands.find((b) => b.getAttribute("class").indexOf(target) === -1);
+  const other = bands.find((band) => band.getAttribute("class").indexOf(target) === -1);
   check("the pane has a second, differently-coloured band to dim", Boolean(other), true);
 
   named.onclick(new window.MouseEvent("click"));
@@ -636,7 +636,7 @@ for (const order of ["expand-then-period", "period-then-expand"]) {
   check("clicking the same band again clears the selection", document.body.hasAttribute("data-highlight"), false);
 
   const chipForTarget = chips.find(
-    (c) => c.querySelector(".legend-swatch").getAttribute("class").indexOf(target) !== -1
+    (chip) => chip.querySelector(".legend-swatch").getAttribute("class").indexOf(target) !== -1
   );
   chipForTarget.onclick(new window.MouseEvent("click"));
   check(

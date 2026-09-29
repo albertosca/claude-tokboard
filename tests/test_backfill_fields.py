@@ -400,12 +400,12 @@ def test_write_field_state_over_an_old_state_keeps_adding_to_its_count(tmp_path)
     old = {
         "cutoff": "2026-09-23",
         "applied_at": "2026-09-23T21:38:39",
-        "corrected_rows": 2839,
+        "corrected_rows": 2541,
         "fields": {
             "sessions.tool_calls": {
                 "cutoff": "2026-09-28",
                 "applied_at": "2026-09-29T10:58:52",
-                "corrected_rows": 2034,
+                "corrected_rows": 2000,
             }
         },
     }
@@ -427,9 +427,9 @@ def test_write_field_state_over_an_old_state_keeps_adding_to_its_count(tmp_path)
     # The earlier rows have no identities, so whether a later run touched
     # one of them again cannot be told: the count adds, as it always did,
     # and says how much of it is unidentified.
-    assert entry["corrected_rows"] == 2036
+    assert entry["corrected_rows"] == 2002
     assert entry["rows_changed_this_run"] == 1
-    assert entry["unidentified_earlier_rows"] == 2034
+    assert entry["unidentified_earlier_rows"] == 2000
     assert entry["corrected_row_ids"] == sorted(mr.row_identities(records, [0, 1], "session_id"))
     assert mr.describe_backfill_state(state, lang="en") == note
 
@@ -475,7 +475,7 @@ def test_write_field_state_replaces_a_fields_entry_that_is_not_a_dict(tmp_path):
 # rest is kept.
 
 
-@pytest.mark.parametrize("count", ["2034", 3.5, True, -1, [1]], ids=repr)
+@pytest.mark.parametrize("count", ["2000", 3.5, True, -1, [1]], ids=repr)
 def test_write_field_state_records_an_unusable_old_count_as_unknown(tmp_path, count):
     path = tmp_path / "state.json"
     other = {"cutoff": "c", "applied_at": "t0", "corrected_rows": 9}
@@ -772,7 +772,7 @@ def test_an_apply_over_a_hand_edited_state_records_it_and_succeeds(
             {
                 "fields": {
                     "sessions.tool_calls": {
-                        "corrected_rows": "2034",
+                        "corrected_rows": "2000",
                         "corrected_row_ids": [7, "abc"],
                     }
                 }

@@ -64,7 +64,7 @@ def load_base_data(
     Splitting here is not a micro-optimization (2026-08-17). Before it,
     action_cycle_period called the whole of load_data synchronously on the
     event loop for every keypress, measured at 2.1-2.7s per press on a
-    4545-session dataset - long enough that the tmux pane looked hung and
+    dataset of a few thousand sessions - long enough that the tmux pane looked hung and
     had to be killed. See tests/test_tui_responsiveness.py for the
     regression test that keeps that work out of the keypress path.
     """
@@ -113,7 +113,7 @@ def load_base_data(
     # default to a 30-day window applied through filter_by_days BEFORE the
     # period filter ran - and filter_by_days keys on timestamp_start, the
     # exact start-date rule this phase replaced with span overlap. The
-    # result was a dashboard that lied: "tudo" showed 3644 of 4530 sessions,
+    # result was a dashboard that lied: "tudo" left out a fifth of the sessions,
     # "mes" and "tudo" were byte-identical on four of five surfaces, and
     # TrendChart disagreed with the rest of its own screen because
     # daily_chart_records was captured before the cap. --days stays as an
@@ -205,12 +205,12 @@ def load_base_data(
     # Kept rather than replaced by a plain loop, measured not assumed
     # (2026-08-17). With max_workers=1 the pool is pure overhead when every
     # lookup is a cache hit, and it is: 2.07s median startup with it against
-    # 1.86s with a serial stand-in, over five runs on a 4545-session
-    # dataset - 0.21s, one time, while the app is already starting. That
+    # 1.86s with a serial stand-in, over five runs on a dataset of a few
+    # thousand sessions - 0.21s, one time, while the app is already starting. That
     # buys keeping the structure this comment documents, which is the thing
     # that makes "serial ON PURPOSE" visible to whoever next touches the
     # budget>0 path where the subprocesses are real. What actually costs
-    # here is neither the pool nor the cache: 262 of 4545 sessions miss the
+    # here is neither the pool nor the cache: sessions that miss the
     # cache and, since --label-budget 0 deliberately declines to cache them
     # so a later run can pick them up, each load re-reads their transcripts
     # (~1.2s). That is unchanged by this split, and no longer on the

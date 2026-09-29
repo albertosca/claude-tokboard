@@ -323,7 +323,7 @@ def test_main_leaves_the_backfill_state_alone_when_an_apply_has_nothing_to_corre
     state_path = tmp_path / "backfill_state.json"
     previous = (
         b'{"cutoff": "2026-08-21", "applied_at": "2026-08-21T19:49:23", '
-        b'"corrected_rows": 2798, "earliest_corrected": "2026-07-22T09:00:00"}'
+        b'"corrected_rows": 2500, "earliest_corrected": "2026-07-22T09:00:00"}'
     )
     state_path.write_bytes(previous)
     metrics_file.write_text(
@@ -996,7 +996,7 @@ def _subagents_fixture(tmp_path: Path) -> dict[str, Path]:
     state = tmp_path / "backfill_state.json"
     state.write_text(
         json.dumps(
-            {"cutoff": "2026-08-21", "applied_at": "2026-08-21T19:49:23", "corrected_rows": 2798}
+            {"cutoff": "2026-08-21", "applied_at": "2026-08-21T19:49:23", "corrected_rows": 2500}
         )
     )
     return {
@@ -1055,7 +1055,7 @@ def test_main_dedups_each_subagent_against_its_own_transcript(
     # The sessions entry the dashboards read is untouched...
     assert state["cutoff"] == "2026-08-21"
     assert state["applied_at"] == "2026-08-21T19:49:23"
-    assert state["corrected_rows"] == 2798
+    assert state["corrected_rows"] == 2500
     # ...and this run is recorded beside it.
     assert state["subagents"]["corrected_rows"] == 2
     assert state["subagents"]["cutoff"] == "2026-08-21"

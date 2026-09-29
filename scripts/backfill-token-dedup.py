@@ -7,7 +7,7 @@ Background
 Until the dedup fix, hooks/metrics-log.py summed EVERY assistant entry in a
 transcript. Resuming or compacting a session replays earlier turns back into
 the same transcript file, so one message id can appear many times and every
-token count logged that way is inflated (measured ~1.89x overall).
+token count logged that way is inflated (nearly doubled, overall).
 
 Why this rewrites every snapshot, not one row per session
 ---------------------------------------------------------
@@ -48,7 +48,7 @@ Why correction is all-or-nothing PER SESSION
 Correcting some snapshots of a session and leaving others re-inflates the
 delta at the seam: the jump from the last corrected (halved) snapshot to the
 first untouched (inflated) one is charged entirely to the day the seam falls
-on. Measured on real data, a per-row cutoff INVENTED 1.9 billion tokens on
+on. Measured on real data, a per-row cutoff INVENTED billions of tokens on
 2026-08-13 - a fake spike is worse than the uniform overcount it replaced. So
 a session is corrected only when every one of its rows can be handled; a
 session with even one row on/after the cutoff is left entirely alone.
@@ -105,7 +105,7 @@ correction, run with --kind subagents. Everything above holds with one
 change of UNIT: a subagent row carries its own agent_id AND its parent's
 session_id, so its series is grouped by agent_id - grouping on session_id
 merges every subagent one session dispatched, the 2026-08-06 contamination
-(1012 of 1036 agent_ids mismatched). Its transcript is found the way
+(nearly every agent_id mismatched). Its transcript is found the way
 scripts/backfill-tokens-by-model.py finds it: the row's recorded
 agent_transcript_path, relocated through the by-agent-id index when stale.
 The run refuses when --kind contradicts the rows (agent_id present or

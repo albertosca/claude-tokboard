@@ -44,8 +44,8 @@ USAGE_KEYS = {
 }
 
 # The pseudo-model Claude Code writes for entries it generated without a
-# model call. Measured over every transcript on one machine (534 entries):
-# always zero in all four token fields. It is filtered by CONTRIBUTION, not
+# model call. Checked over every transcript on one machine: always zero
+# in all four token fields. It is filtered by CONTRIBUTION, not
 # by name - see model_key's callers - so a future synthetic entry carrying
 # tokens still reconciles instead of vanishing.
 SYNTHETIC_MODEL = "<synthetic>"
@@ -77,13 +77,13 @@ def usage_increment(
 
     One message id appears in a transcript many times, for two reasons. A
     resumed or compacted session REPLAYS earlier turns, with identical usage
-    (measured 2026-08-11: 47.2% of all token volume in the twelve largest
-    transcripts was a repeat, an overall 1.89x when every entry was summed).
+    (measured 2026-08-11 on the largest transcripts: close to half of all
+    token volume was a repeat when every entry was summed).
     And a streamed response is written as one entry PER CONTENT BLOCK, whose
     output_tokens grow block by block while input and cache usage repeat
-    unchanged. Measured 2026-09-23 over every transcript on disk: 28,509 of
-    39,335 repeated ids in subagent transcripts differ, all of them only in
-    output_tokens; 0 of 21,280 in session transcripts do.
+    unchanged. Checked 2026-09-23 over every transcript on one disk: most
+    repeated ids in subagent transcripts differ, all of them only in
+    output_tokens; none in session transcripts do.
 
     Counting the first entry of an id, as this module did from 2026-08-11 to
     2026-09-23, handles replays and undercounts every streamed message - the
@@ -125,19 +125,19 @@ def count_incomplete(message_order: list[Any], finalised: set[Any]) -> int:
     """How many messages are over but never got their final usage entry.
 
     Claude Code writes a message's final entry with a non-null stop_reason,
-    and that entry carries the message's full usage. Measured 2026-09-25 over
-    every transcript on disk: all 74,698 ids that have one carry their
-    largest output there; replays repeat it, so an id can have several, all
-    with the same reason. An id with NONE never had its usage written - since
-    Claude Code 2.1.278, ~17,000 subagent ids end on a streaming placeholder
-    (output 1-4 tokens for about a third of them) - so the totals counted for
+    and that entry carries the message's full usage. Checked 2026-09-25 over
+    every transcript on one disk: every id that has one carries its largest
+    output there; replays repeat it, so an id can have several, all with
+    the same reason. An id with NONE never had its usage written - since
+    Claude Code 2.1.278, many subagent ids end on a streaming placeholder
+    (output of a few tokens) - so the totals counted for
     it are a floor, and this is the count that says so.
 
     The message first seen LAST is excluded: a snapshot taken mid-response
     sees the newest message before its final entry exists, and counting it
     would flag every in-progress snapshot. A message is over once another
     one has started after it. The price is that a transcript whose very last
-    message was never finalised goes unflagged (25 of 1,315 subagent
+    message was never finalised goes unflagged (a small share of subagent
     transcripts on 2026-09-25) - an undercount of the flag, never a false one.
     `message_order` lists ids in first-seen order.
     """
@@ -254,8 +254,8 @@ def parse_transcript(path: str) -> dict[str, Any]:
                 # writes each content block as its own entry, so its
                 # tool_use blocks sit in LATER entries of the id, which a
                 # first-entry count never saw (2026-09-23, over every
-                # transcript on disk: 7,856 of 31,154 distinct tool_use
-                # blocks counted in sessions, 12,005 of 57,374 in
+                # transcript on one disk: about a quarter of the distinct
+                # tool_use blocks counted in sessions, and a fifth in
                 # subagents). The block id makes a replayed entry count
                 # once. A block without an id cannot be matched, so it
                 # counts on its message's first entry only, as before.

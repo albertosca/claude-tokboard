@@ -399,7 +399,7 @@ def test_parse_transcript_only_assistant_entries_count(script, tmp_path):
 
 
 def test_parse_transcript_triple_duplicate_message_id_counted_exactly_once(script, tmp_path):
-    # This is the 1.89x inflation bug the module's own comment cites: a
+    # This is the replay inflation bug the module's own comment cites: a
     # resumed/compacted session replays the same assistant message several
     # times. A repeat of an already-seen message.id must add neither a turn
     # nor its usage a second (or third) time.
@@ -421,9 +421,9 @@ def test_parse_transcript_triple_duplicate_message_id_counted_exactly_once(scrip
 def _streamed(message_id: str, outputs: list[int], model: str = "model-alpha") -> list[str]:
     # A streamed response is written as one transcript entry per content
     # block, all sharing the message id. Input and cache usage repeat
-    # unchanged; output_tokens GROWS block by block (measured 2026-09-23 over
-    # every subagent transcript on disk: 28,509 ids, all differing only in
-    # output_tokens).
+    # unchanged; output_tokens GROWS block by block (checked 2026-09-23 over
+    # every subagent transcript on one disk: the repeated ids all differ only
+    # in output_tokens).
     return [
         json.dumps(
             {
@@ -469,7 +469,7 @@ def test_parse_transcript_counts_a_streamed_message_at_its_peak_usage(script, tm
 
 
 def test_parse_transcript_takes_the_peak_even_when_the_last_entry_is_lower(script, tmp_path):
-    # Measured: 5 ids in one subagent transcript whose streamed series was
+    # Found: ids in a subagent transcript whose streamed series was
     # replayed interleaved (2, 270, 2, 270, 2). Neither first nor last is
     # right in general; the per-field maximum is.
     path = tmp_path / "t.jsonl"
@@ -578,8 +578,8 @@ def test_parse_transcript_counts_tool_calls_carried_by_later_entries_of_a_messag
     # A streamed message is one entry per content block, all sharing the
     # message id: the thinking block first, each tool_use in an entry of its
     # own after it. Counting only the first entry of an id counted 0 here
-    # (measured over every subagent transcript: 12,005 counted against
-    # 57,374 distinct tool_use blocks). A replayed entry repeats a block id
+    # (over real subagent transcripts it counted about a fifth of the
+    # distinct tool_use blocks). A replayed entry repeats a block id
     # and must not count twice.
     def entry(second: int, block: dict[str, object]) -> str:
         return json.dumps(
@@ -844,7 +844,7 @@ def test_parse_transcript_tokens_by_model_replayed_message_counts_once_too(scrip
 
 def test_parse_transcript_tokens_by_model_excludes_the_synthetic_pseudo_model(script, tmp_path):
     # `<synthetic>` appears in real transcripts carrying zero in all four
-    # fields (measured: 534 messages, 0 tokens). Carrying nothing, it gets
+    # fields. Carrying nothing, it gets
     # no bucket, so it can never render as a permanently-empty series. The
     # exclusion is conditional on that emptiness, not on the model id - see
     # the test below for the one that does carry tokens.

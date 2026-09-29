@@ -87,12 +87,11 @@ def warm_summary_source(transcript_path: str | None, maximum_turns: int = 4) -> 
     ("Review one task... Follow the reviewer rubric at .../task-reviewer-
     prompt.md... Work in the git worktree... Do NOT cd... Do not commit..."),
     identical across every dispatch of that skill and specific to nothing.
-    Measured directly against this repo's own real subagent transcripts
-    (2026-09-04): 838 agent labels sampled from ~/.claude/metrics/
-    agent_labels.json, 49% were __no_label__ and the labels that did exist
-    clustered into near-duplicates like "Revisão de implementação de
-    tarefa" / "Revisar implementação de tarefa" (14 of ~514 unique real
-    labels) - all from that same boilerplate prefix.
+    Checked against a sample of agent_labels.json (2026-09-04): about half
+    of the labels were __no_label__, and the ones that did exist clustered
+    into near-duplicates like "Revisão de implementação de tarefa" /
+    "Revisar implementação de tarefa" - all from that same boilerplate
+    prefix.
     The LAST assistant turns are the closest thing a subagent has to a
     session's away_summary: whatever it actually concluded, concretely
     ("Spec Compliance: Compliant - test-only diff confirmed empty...",
@@ -191,13 +190,12 @@ def _run_label_prompt(prompt: str) -> str | None:
         # (2026-07-23, "você revisou uso de tokens nesse rotulamento?"):
         # without these, every call auto-discovers Alberto's global
         # CLAUDE.md + the full default Claude Code system prompt as
-        # cache-creation input - measured 13,037 cache_creation +
-        # 15,907 cache_read tokens and $0.030 for a single "summarize in
-        # 3-5 words" call. This task needs zero project context and zero
-        # tools, so replacing the system prompt entirely and disabling
-        # setting-source/tool loading drops that to 0 cache tokens and
-        # $0.0032 - a ~9x cost cut per label, multiplied across every
-        # session in the backfill.
+        # cache-creation input - tens of thousands of cache tokens for a
+        # single "summarize in 3-5 words" call. This task needs zero
+        # project context and zero tools, so replacing the system prompt
+        # entirely and disabling setting-source/tool loading drops that to
+        # zero cache tokens - roughly a tenth of the cost per label,
+        # multiplied across every session in the backfill.
         result = subprocess.run(
             [
                 "nice",

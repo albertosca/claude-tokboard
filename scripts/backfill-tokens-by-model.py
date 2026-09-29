@@ -31,7 +31,7 @@ Why the decision is per unit, not per row
 Filling the map in some snapshots of a session and not others makes the seam
 between a filled snapshot and an empty one read as a burst of usage on the
 day the seam falls on. The dedup backfill measured exactly that on real
-data: a per-row cutoff INVENTED 1.9 billion tokens on a single day. So a
+data: a per-row cutoff INVENTED billions of tokens on a single day. So a
 unit (a session, or a subagent) is planned only when every one of its rows
 is resolved - reconstructed from its transcript, or already carrying a
 natively written map - and is otherwise left completely alone. A unit that
@@ -56,11 +56,11 @@ Claude Code does not write a transcript in timestamp order, so "every entry
 stamped at or before timestamp_end" (the time cut) can hold an entry the
 hook had not read yet - an OVER-count - or miss one it had. An earlier
 version of this text said the error could only be a shortfall; on
-2026-09-29 the time cut over-counted 12 native session maps, every one of
+2026-09-29 the time cut over-counted native session maps, every one of
 which matched exactly at the file cut its tokens reproduce. So each row is
 rebuilt at that cut (model_totals_at_row_cut), and at the time cut only
-when no file cut decides; after the change the same copy gave 2625
-sessions exact, 0 tolerated, 0 disagreements. The gate still accepts
+when no file cut decides; after the change the same copy gave every
+session exact, none tolerated, no disagreements. The gate still accepts
 equality or a shortfall of at most 1% and refuses an over-count of any
 size: a fabricated bar is loud, a small shortfall is not. See
 diff_against_native.
@@ -90,9 +90,10 @@ A bare run is a dry run. Writing needs --apply AND --expect-checked N, and
 the run refuses if the oracle verified fewer than N snapshots - or zero of
 them, whatever N says. The floor exists because this gate has twice reported
 green while quietly measuring less than anyone believed: once over an empty
-index, and once reaching 49 of 93 subagent rows while printing a verdict
-that read exactly as green as 93 of 93. Both runs would have exited 0. An
-oracle that stops reaching its rows looks identical to one that passed, so
+index, and once reaching about half of the subagent rows while printing
+a verdict that read exactly as green as a full check. Both runs would have
+exited 0. An oracle that stops reaching its rows looks identical to one
+that passed, so
 the count of rows it actually verified is made an argument the operator must
 copy off the dry run they just read, rather than a number the run gets to
 shrink on its own. Vacuous checks - empty on both sides - are excluded from
@@ -100,8 +101,8 @@ that count on purpose: they agree and prove nothing.
 
 So are maps this script wrote itself. They carry the field like a native
 map but were rebuilt by this same code, so re-checking them proves nothing,
-and after the 2026-09-21 and 2026-09-29 applies they were 1648 of the 3409
-session maps. Each --apply records the rows it wrote in the backfill state
+and after the 2026-09-21 and 2026-09-29 applies they were about half of
+the session maps. Each --apply records the rows it wrote in the backfill state
 beside the metrics file (the row names write_field_state keeps for the
 field passes), and the oracle reports them apart as "written by an earlier
 backfill". The two applies that predate the record are found once, from
@@ -507,7 +508,7 @@ def diff_against_native(native: ModelMap, rebuilt: ModelMap) -> tuple[list[str],
     even fractionally above it fails at any magnitude.
 
     That is not a double standard, it is the lesson this repo already paid
-    for: the dedup backfill's worst outcome was INVENTING 1.9 billion tokens
+    for: the dedup backfill's worst outcome was INVENTING billions of tokens
     on a single day, and a per-model bar chart shows a fabricated bar
     loudly while a sub-1% shortfall is invisible. The residue is NOT
     structurally one-directional, as an earlier version of this docstring
@@ -594,12 +595,12 @@ def backfilled_rows(
     Such a map was rebuilt by this same code, so checking it against a
     fresh reconstruction proves nothing about the reconstruction, yet it
     carries the field exactly like a native one: after the 2026-09-21 and
-    2026-09-29 applies, 1648 of the 3409 session maps were this script's
+    2026-09-29 applies, about half of the session maps were this script's
     own output, all counted as native evidence. They are named in the
-    state by row_identities. The key order would tell them apart on the
-    real file today (the hook writes the map right after
-    tool_call_count, an apply appends it last), but 1299 map-less session
-    rows END in tool_call_count, so a later apply to one of them would
+    state by row_identities. The key order would tell them apart today
+    (the hook writes the map right after tool_call_count, an apply
+    appends it last), but map-less session rows can END in
+    tool_call_count too, so a later apply to one of them would
     look native - hence the recorded names, not the shape.
 
     A state entry this cannot read excludes nothing: the oracle then
@@ -774,7 +775,7 @@ def classify_native_rows(
     `transcripts` is the by-id index, and passing it is not optional in
     practice: transcripts migrate between project slugs while their sessions
     are alive (measured 2026-09-16 - the snapshots that first exposed the
-    tolerance question moved out of a worktree slug within the hour, and 44
+    tolerance question moved out of a worktree slug within the hour, and
     subagent transcripts did the same). Without the index those rows drop out
     of the oracle silently, and a gate that quietly stops checking the hard
     cases reports a pass it has not earned.
@@ -910,7 +911,7 @@ def tail_after_prefix(current: bytes, records: list[dict[str, Any]]) -> bytes:
 
     Read as LATE as possible, for the same reason the dedup backfill reads
     it late: the metrics file is append-only and live, every running
-    session's Stop hook appends to it, and it grew by more than 200 lines
+    session's Stop hook appends to it, and it grew by hundreds of lines
     during the session that specified this. Anything past the prefix is
     returned as raw bytes and copied through untouched, including a
     half-written final line a hook is in the middle of appending.
@@ -1052,9 +1053,9 @@ def print_plan_summary(
 
     "Covered" is read off the plan AFTER refuse_unwritable_units has narrowed
     it, so it counts only what would actually be written. Counting the raw
-    plan overstated it by 981,659,264 tokens on the subagent file and
-    4,134,787,999 on the session file (measured 2026-09-17, the two dry runs
-    either side of this gate) - volume attributed to units whose map does not
+    plan overstated it by close to a billion tokens on the subagent file and
+    several billion on the session file (measured 2026-09-17, the two dry
+    runs either side of this gate) - volume attributed to units whose map does not
     reach their own totals and which are therefore declined.
     """
     print("\nRow disposition")
@@ -1107,9 +1108,13 @@ def path_options(arguments: argparse.Namespace, *, projects: bool = False) -> li
     files prints the short command it always did - and a run on a copy
     never prints one that, pasted, would act on the real files instead.
     `projects` adds --projects-dir, which only planning reads.
+
+    A directory counts as the default when it resolves to the same place
+    - a trailing slash, or a link to it, is the default spelled another
+    way - so the comparison is on resolved paths, not on strings.
     """
     options: list[str] = []
-    if arguments.metrics_dir != METRICS_DIRECTORY:
+    if not same_place(arguments.metrics_dir, METRICS_DIRECTORY):
         options += ["--metrics-dir", arguments.metrics_dir]
     if arguments.metrics_file:
         options += ["--metrics-file", arguments.metrics_file]
@@ -1117,9 +1122,14 @@ def path_options(arguments: argparse.Namespace, *, projects: bool = False) -> li
         options += ["--state-file", arguments.state_file]
     if arguments.backup_dir:
         options += ["--backup-dir", arguments.backup_dir]
-    if projects and arguments.projects_dir != PROJECTS_DIRECTORY:
+    if projects and not same_place(arguments.projects_dir, PROJECTS_DIRECTORY):
         options += ["--projects-dir", arguments.projects_dir]
     return options
+
+
+def same_place(first: str, second: str) -> bool:
+    """Whether two paths name the same place once resolved."""
+    return os.path.realpath(first) == os.path.realpath(second)
 
 
 def main() -> int:

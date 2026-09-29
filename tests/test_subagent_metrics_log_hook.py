@@ -215,7 +215,7 @@ def test_parse_transcript_only_assistant_entries_count(script, tmp_path):
 
 
 def test_parse_transcript_triple_duplicate_message_id_counted_exactly_once(script, tmp_path):
-    # This is the 1.89x inflation bug metrics-log.py's comment cites: a
+    # This is the replay inflation bug metrics-log.py's comment cites: a
     # resumed/compacted session replays the same assistant message several
     # times. A repeat of an already-seen message.id must not add its usage
     # or tool calls a second (or third) time.

@@ -44,8 +44,8 @@ def dedupe_by_key(records: list[dict[str, Any]], key_field: str) -> list[dict[st
     # legend, the subagent detail table) just sums/lists records, so
     # without this dedup real usage gets counted once per snapshot logged
     # - inflating every total by however many times that id got logged
-    # (found 2026-07-21: one session had 33 duplicate rows; 17 subagent
-    # ids had up to 4). Keep the snapshot with the largest
+    # (found 2026-07-21: one session had dozens of duplicate rows, and
+    # subagent ids had several). Keep the snapshot with the largest
     # duration_seconds per id, first-seen order otherwise.
     best_by_id: dict[Any, dict[str, Any]] = {}
     order: list[Any] = []
@@ -70,9 +70,9 @@ def normalize_project_paths(
 ) -> list[dict[str, Any]]:
     # A session's project_path is whatever directory Claude Code's cwd
     # happened to be, not necessarily the project's real root - working
-    # from a subdirectory (2026-07-21: found 45 sessions logged from
+    # from a subdirectory (2026-07-21: found sessions logged from
     # .../claude-metrics-dashboard/hooks instead of
-    # .../claude-metrics-dashboard, 1356 sessions strong) creates a
+    # .../claude-metrics-dashboard itself) creates a
     # spurious extra "project" for a folder that isn't one. Roll a path
     # up to its IMMEDIATE parent when that parent is ALSO a project_path
     # present in the dataset - if not, the path is left alone (most
@@ -81,14 +81,14 @@ def normalize_project_paths(
     # "Parent is also a known path" alone is NOT enough of a signal, and
     # two broken attempts at this found out why the hard way:
     #   1. Walking up to the nearest matching ancestor at ANY depth: found
-    #      /Users/username (33 sessions) and /Users/username/Programming
-    #      (205 sessions) are THEMSELVES real project_paths (one-off
+    #      /Users/username and /Users/username/Programming
+    #      are THEMSELVES real project_paths (one-off
     #      sessions that never cd'ed anywhere specific) - every project
     #      merely NESTED under either got swallowed into that one bucket.
     #   2. Limiting to one level up didn't fix it either: EVERY project
     #      directly under ~/Programming shares that same immediate
     #      parent, and "Programming" being a known path made ALL of them
-    #      collapse into it (2114 of ~2500 sessions ended up there,
+    #      collapse into it (most sessions ended up there,
     #      wiping out almost every real project in the dashboard).
     # The actual distinguishing signal is fan-out: a real subdirectory
     # mistake (.../claude-metrics-dashboard/hooks) is the ONLY child its
@@ -494,9 +494,9 @@ def expand_records_to_daily_deltas(raw_records: list[dict[str, Any]]) -> list[di
     # all-time totals but wrong for day-by-day charts: that single row's
     # timestamp_start is fixed at the session's START, so a long-running
     # session's ENTIRE cumulative total lands on one day bucket, however
-    # long it actually ran. Found 2026-08-06: 77 of 4518 sessions (43 of
-    # 1034 subagents) span multiple snapshots, the longest running 33.8
-    # days - each one dumped its whole multi-million-token total onto a
+    # long it actually ran. Found 2026-08-06: sessions and subagents
+    # spanning multiple snapshots, some running for weeks - each one
+    # dumped its whole multi-million-token total onto a
     # single day up to a month in the past, making any given week look
     # artificially quiet no matter how much real usage happened inside
     # one of these long sessions.
@@ -519,8 +519,8 @@ def expand_records_to_daily_deltas(raw_records: list[dict[str, Any]]) -> list[di
     # session_id first would group every subagent dispatched by the same
     # session together as if they were sequential snapshots of one
     # entity, corrupting deltas across unrelated subagents (found
-    # 2026-08-06: 1012 of 1036 agent_ids mismatched dedup's own totals
-    # this way on real data). Session records never carry agent_id at
+    # 2026-08-06: nearly every agent_id mismatched dedup's own totals
+    # this way). Session records never carry agent_id at
     # all, so they always fall through to session_id correctly.
     id_fields = ("agent_id", "session_id")
     by_id: dict[tuple[str, Any], list[dict[str, Any]]] = {}

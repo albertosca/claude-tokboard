@@ -418,7 +418,7 @@ def test_compute_model_totals_reports_the_shortfall_as_unattributed():
 
 
 def test_compute_model_totals_counts_a_record_with_no_map_as_entirely_unattributed():
-    # 75% of the real history is this case - the transcript is gone and no
+    # Most of a real history is this case - the transcript is gone and no
     # backfill can ever recover it.
     records = [_row((40, 0, 0, 0)), _row((0, 2, 0, 0))]
 

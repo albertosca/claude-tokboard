@@ -1084,8 +1084,8 @@ def build_group_colors(
     # directory a session cd'ed out of before its final snapshot, a
     # subagent's own path - was therefore missing from the colour map and
     # fell back to "group-color-none", so clicking that bar highlighted
-    # nothing in the legend (regression introduced by bd2e899; measured
-    # 2026-08-10 at 38 of 67 rendered paths uncoloured on real data).
+    # nothing in the legend (regression introduced by bd2e899; found
+    # 2026-08-10 with over half of the rendered paths uncoloured).
     #
     # chart_records goes FIRST so every colour slot already assigned keeps
     # the exact number it had - assign_group_colors skips a project_path it

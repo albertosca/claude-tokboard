@@ -174,8 +174,8 @@ DEFECTS = [
             "declaration beats any non-!important class rule regardless of "
             "specificity, so an expanded row's inline 'display: flex' wins "
             "over '.session-row.period-hidden { display: none }' no matter "
-            "which period is active - the original defect made 11 sessions "
-            "on the chart coexist with 4530 rows in the list under 'ontem'."
+            "which period is active - the original defect made a handful of "
+            "sessions on the chart coexist with every row in the list under 'ontem'."
         ),
         anchor=("rows.forEach(function(el) { el.classList.toggle('collapsed', !collapsed); });"),
         replacement=(
@@ -196,8 +196,8 @@ DEFECTS = [
             "render_composition_legend goes back to being fed the full, "
             "unfiltered `records` instead of the period-scoped window, so "
             "every period's legend reports the same all-time token total - "
-            "the original defect reported 29.3B under every period, "
-            "'ontem' included, when 'ontem' was actually 5.9B."
+            "the original defect reported the all-time total under every "
+            "period, 'ontem' included, at several times what 'ontem' held."
         ),
         # Anchored on the inner call, not the whole expression: the outer
         # compute_token_type_totals(...) call now wraps its argument across

@@ -1233,9 +1233,9 @@ def _render_model_legend(model_count: int) -> tuple[list[str], str]:
 
 
 def test_eight_models_each_get_their_own_colour_and_no_overflow_marker():
-    # The author's real history held 8 models on 2026-09-29 while the
-    # palette had 7 colours, so the newest model was drawn in a borrowed
-    # colour and marked " *". The palette now has room for them all.
+    # A real history held more models on 2026-09-29 than the palette had
+    # colours, so the newest model was drawn in a borrowed colour and
+    # marked " *". The palette now has room for them all.
     colours, raw = _render_model_legend(8)
     assert len(set(colours)) == 8, colours
     assert " *" not in raw, "no model may be marked as overflow while the palette has room"

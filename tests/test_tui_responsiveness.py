@@ -7,7 +7,7 @@ them passed while pressing "p" froze the terminal for seconds at a time,
 because a headless Pilot waits patiently and a human does not: the defect
 was invisible to correctness testing by construction. The shipped bug was
 action_cycle_period calling load_data on the event loop, so each press
-re-read both JSONL files, re-deduped, re-labelled ~4500 sessions and
+re-read both JSONL files, re-deduped, re-labelled thousands of sessions and
 re-folded subagent tokens just to show a different slice of records it
 already had - 2.1-2.7s of frozen UI per press on the real dataset, enough
 that the tmux pane had to be killed and reopened. Responsiveness is the
@@ -49,7 +49,7 @@ so on it even a full reload costs about a millisecond and no wall-clock
 bound could tell a reload from a re-window. That is a limit of running
 hermetically, and it is why the reload counter carries the regression and
 the ceiling only carries the "no new second-long work" guarantee. Applied
-to the real 4545-session dataset the same 1.5s ceiling would have failed on
+to the real dataset of a few thousand sessions the same 1.5s ceiling would have failed on
 the shipped defect (2.19-2.82s per press), which is the calibration that
 makes the number a bound and not a decoration.
 

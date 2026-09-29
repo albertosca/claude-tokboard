@@ -262,8 +262,9 @@ def test_render_session_row_emits_no_inline_display_style():
     # The 2026-08 bug (see production comment at line 127): an inline
     # style="display:..." beats any non-!important class rule regardless
     # of specificity, so an expanded row's inline display:flex won over
-    # .session-row.period-hidden { display: none }, and 4530 rows
-    # coexisted on screen with 11 chart sessions under the "ontem" filter.
+    # .session-row.period-hidden { display: none }, and every row of the
+    # history coexisted on screen with a handful of chart sessions under the
+    # "ontem" filter.
     # Visibility must be class-driven only - this is the highest-value
     # assertion in this module.
     record = _base_record()

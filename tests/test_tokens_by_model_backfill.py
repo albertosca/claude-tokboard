@@ -6,6 +6,7 @@ sessions append to continuously. Every test here builds its own records and
 transcripts under tmp_path and never touches a real metrics file.
 """
 
+import argparse
 import collections
 import importlib.util
 import json
@@ -97,7 +98,7 @@ def test_plan_reconstructs_each_snapshot_as_of_its_own_moment(script, tmp_path):
 def test_plan_skips_a_session_when_any_snapshot_has_no_transcript(script, tmp_path):
     # All-or-nothing per session: correcting some snapshots and leaving others
     # inflates the delta at the seam. The dedup backfill measured that as an
-    # invented 1.9-billion-token spike on a single day.
+    # invented multi-billion-token spike on a single day.
     transcript_path = _transcript(
         tmp_path / "t.jsonl", [("2026-08-01T10:00:00Z", "a1", "model-alpha", {"input_tokens": 10})]
     )
@@ -225,7 +226,7 @@ def test_the_oracle_reports_a_shortfall_past_the_tolerance(script, tmp_path):
 def test_the_oracle_reports_an_over_count_however_small(script, tmp_path):
     # THE test the asymmetry exists for. 0.01% HIGH - two hundred times
     # smaller than the shortfall accepted above, and refused anyway, because
-    # this repo's worst backfill outcome was inventing 1.9 billion tokens and
+    # this repo's worst backfill outcome was inventing billions of tokens and
     # a fabricated bar is loud where a sub-1% shortfall is invisible. If this
     # test ever passes with a symmetric comparison, the tolerance has quietly
     # become "close enough" in both directions.
@@ -293,8 +294,8 @@ def _subagent_tree(projects: Path, slug: str, session_id: str, agent_id: str) ->
     Both halves are load-bearing. The indexer globs
     <projects>/<slug>/<session_id>/subagents/, and the file inside is named
     `agent-<agent_id>.jsonl` while the record's own agent_id has no prefix -
-    measured over the live tree, 1,005 of 1,005 files carry it and 2,124 of
-    2,124 ids do not. An earlier version of this helper named the file after
+    checked over a live tree, every file carries it and no id does. An
+    earlier version of this helper named the file after
     the bare id, which made every test here pass against an indexer that
     could not match a single real row.
     """
@@ -310,8 +311,8 @@ def test_the_oracle_reaches_a_subagent_transcript_through_the_agent_id_index(scr
     # The gap the session-side fix did NOT close. index_transcripts globs
     # <slug>/*.jsonl and keys by session_id; a subagent transcript lives a
     # level deeper and is keyed by agent_id, so that index can never hit for
-    # --file subagents. Measured 2026-09-16: 44 native subagent snapshots
-    # were reported as having no transcript while all 44 files were on disk.
+    # --file subagents. Found 2026-09-16: native subagent snapshots were
+    # reported as having no transcript while every one of their files was on disk.
     #
     # This test builds the directory shape the indexer actually walks. Handing
     # a dict in by hand - as the session test above does - would pass whether
@@ -621,8 +622,8 @@ def _entry(stamp: str, message_id: str, model: str, input_tokens: int) -> dict[s
 
 # The hook stopped reading at the queue-operation line; the model-beta entry
 # is stamped before it but was written below it, so the hook never read it.
-# Measured 2026-09-29: 12 native rows refused by the oracle as over-counts
-# (or an extra bucket) all matched exactly at the cut their tokens reproduce.
+# Found 2026-09-29: native rows refused by the oracle as over-counts (or
+# an extra bucket) all matched exactly at the cut their tokens reproduce.
 LATE_WRITTEN = [
     _entry("2026-08-01T10:00:00Z", "a1", "model-alpha", 100),
     {"type": "queue-operation", "timestamp": "2026-08-01T10:00:05Z"},
@@ -709,9 +710,9 @@ def test_plan_summary_of_an_empty_plan_over_a_file_with_no_tokens(script, capsys
 # those were written on deploy day, after the transcript-entry dedup was live.
 # The rows this run would WRITE are historical and many store PRE-DEDUP,
 # duplicate-inflated totals, so the oracle stays green while the run writes a
-# map that contradicts the numbers beside it. Measured on the real files at
-# the time this gate was added: 194 of 769 planned subagent rows (171 of 622
-# units) more than 1% short, and 7 session rows ABOVE their own totals.
+# map that contradicts the numbers beside it. When this gate was added, about
+# a quarter of the planned subagent rows came out more than 1% short, and a
+# few session rows came out ABOVE their own totals.
 
 
 def _planned_unit(
@@ -767,7 +768,7 @@ def test_a_unit_whose_map_exceeds_its_own_totals_is_skipped_at_any_magnitude(scr
     # One token above, which no tolerance covers in either gate: an as-of cut
     # can miss entries the totals counted, so a map that comes out ABOVE them
     # is not residue, and a fabricated bar is the failure this repo has
-    # already paid 1.9 billion invented tokens for.
+    # already paid billions of invented tokens for.
     records, _ = _planned_unit(tmp_path, 10_001, totals=10_000)
 
     plan, stats, refusals = _refuse(script, records)
@@ -1014,8 +1015,8 @@ def test_the_reported_volume_counts_only_what_would_actually_be_written(
 ):
     # The dry run used to count a refused unit's volume as covered, because
     # "covered" was read off the plan before the reconciliation gate narrowed
-    # it - overstating the subagent file by 982 million tokens and the session
-    # file by 4.13 billion. Here the declined unit holds 99% of the file.
+    # it - overstating both files by the volume of every declined unit.
+    # Here the declined unit holds 99% of the file.
     good = _transcript(
         tmp_path / "good.jsonl",
         [("2026-08-01T10:00:00Z", "g1", "model-alpha", {"input_tokens": 10_000})],
@@ -1664,8 +1665,8 @@ def _subagent_metrics(tmp_path: Path) -> None:
 
 def _two_native_session_rows(tmp_path: Path) -> None:
     """A session with one row to write and TWO the oracle can verify, so the
-    two files' evidence counts differ the way the real ones do (135 against
-    96) and a command pasted from the wrong run is not caught by the floor."""
+    two files' evidence counts differ the way real ones can, and a command
+    pasted from the wrong run is not caught by the floor."""
     transcript_path = _transcript(
         tmp_path / "t.jsonl",
         [
@@ -1727,7 +1728,7 @@ def test_the_dry_run_prints_the_file_it_actually_read(script, tmp_path, monkeypa
 # The oracle counts only NATIVE maps. A map an earlier by-model apply wrote
 # was rebuilt by this same code, so re-checking it proves nothing - yet it
 # carries the field exactly like a native one. After the 2026-09-21 and
-# 2026-09-29 applies, 1648 of the 3409 session maps were the script's own
+# 2026-09-29 applies, about half of the session maps were the script's own
 # output, and all of them counted as "exact" evidence toward
 # --expect-checked. An apply now records the rows it wrote in the backfill
 # state, and the oracle leaves them out.
@@ -2234,3 +2235,33 @@ def test_record_earlier_applies_refuses_a_dedup_backup_its_next_state_does_not_e
     assert script.main() == 1
     assert "is not a prefix" in capsys.readouterr().err
     assert not _state_path(tmp_path).exists()
+
+
+def test_a_default_path_spelled_differently_is_still_the_default(script, tmp_path, monkeypatch):
+    # "~/.claude/metrics/" with a trailing slash, or reached through a
+    # link, is the default directory; a command that names it is only
+    # longer, but one that omits a directory that is NOT the default is
+    # wrong, so the comparison is on the resolved paths.
+    metrics = tmp_path / "metrics"
+    metrics.mkdir()
+    projects = tmp_path / "projects"
+    projects.mkdir()
+    alias = tmp_path / "alias"
+    alias.symlink_to(metrics)
+    monkeypatch.setattr(script, "METRICS_DIRECTORY", str(metrics))
+    monkeypatch.setattr(script, "PROJECTS_DIRECTORY", str(projects))
+
+    def options(metrics_directory: str, projects_directory: str) -> list[str]:
+        arguments = argparse.Namespace(
+            metrics_dir=metrics_directory,
+            metrics_file=None,
+            state_file=None,
+            backup_dir=None,
+            projects_dir=projects_directory,
+        )
+        found: list[str] = script.path_options(arguments, projects=True)
+        return found
+
+    assert options(f"{metrics}/", f"{projects}/") == []
+    assert options(str(alias), str(projects)) == []
+    assert options(str(tmp_path), str(projects)) == ["--metrics-dir", str(tmp_path)]

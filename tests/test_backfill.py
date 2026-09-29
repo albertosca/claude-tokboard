@@ -454,8 +454,8 @@ def test_plan_corrections_refuses_a_raw_total_split_differently_across_fields(tm
 def test_plan_corrections_refuses_a_near_miss_of_the_raw_sum(tmp_path):
     # A 2% tolerance used to accept this (0.5% off the raw sum) as broken-hook
     # output. It was measured for the August run's rows, which are corrected
-    # now; on 2026-09-23 every row the real plan corrects - 862 subagent, 41
-    # session - matches its formula exactly, and a near-miss corrected from
+    # now; on 2026-09-23 every row the real plan corrects, subagent and
+    # session, matches its formula exactly, and a near-miss corrected from
     # the reconstruction is a row rewritten from reconstruction noise. So
     # both formulas are recognised on an exact match only.
     path = tmp_path / "s1.jsonl"
@@ -619,11 +619,11 @@ def test_plan_corrects_each_snapshot_of_a_unit_from_its_own_formula(tmp_path):
 def test_plan_never_takes_a_near_miss_for_a_first_occurrence_sum(tmp_path):
     # A 2% near-miss tolerance was measured for the RAW formula in August
     # (and has since been dropped too). Extended to this formula it
-    # recognised 9 real session rows (2026-09-23 dry run) whose transcripts
+    # recognised real session rows (2026-09-23 dry run) whose transcripts
     # have NO streamed ids - first == peak - and which sat one late message
     # below the as-of reconstruction: rows the hook got right, which a
     # "correction" would have rewritten from reconstruction noise. Every one
-    # of the 820 real subagent rows it must catch matches exactly.
+    # of the real subagent rows it must catch matches exactly.
     path = tmp_path / "a1.jsonl"
     write_transcript(
         path,
@@ -925,10 +925,10 @@ def _copy(projects: Path, slug: str, parent: str, agent_id: str, body: str) -> s
 
 
 def test_identical_copies_under_two_slugs_are_one_transcript_not_an_ambiguity(tmp_path):
-    # Measured 2026-09-28: all 93 agent ids found under two project slugs
-    # are byte-identical copies (a project directory renamed, a worktree slug
+    # Checked 2026-09-28: every agent id found under two project slugs was
+    # a byte-identical copy (a project directory renamed, a worktree slug
     # migrated). Which copy is read changes nothing, so refusing them left
-    # 85 correctable rows behind for no reason.
+    # correctable rows behind for no reason.
     projects = tmp_path / "projects"
     first = _copy(projects, "slug-a", "sess-1", "dup", "same\n")
     _copy(projects, "slug-b", "sess-1", "dup", "same\n")
@@ -1207,7 +1207,7 @@ def test_write_backfill_state_for_subagents_keeps_the_sessions_entry(tmp_path):
     mr.write_backfill_state(
         "2026-08-21",
         "2026-08-21T19:49:23",
-        _names(2798),
+        _names(2500),
         earliest_corrected="2026-07-22",
         path=path,
     )
@@ -1223,7 +1223,7 @@ def test_write_backfill_state_for_subagents_keeps_the_sessions_entry(tmp_path):
     loaded = mr.load_backfill_state(path)
     assert loaded == written
     assert loaded["applied_at"] == "2026-08-21T19:49:23"
-    assert loaded["corrected_rows"] == 2798
+    assert loaded["corrected_rows"] == 2500
     assert loaded["earliest_corrected"] == "2026-07-22"
     assert loaded["subagents"] == {
         "cutoff": "2026-08-21",
@@ -1255,13 +1255,13 @@ def test_a_second_apply_extends_the_record_instead_of_replacing_it(tmp_path):
     # A later run corrects only what the earlier ones left. Replacing the
     # entry would report its handful of rows as the whole correction and
     # move the retention boundary forward to ITS earliest row - on a copy of
-    # the real files, 2798 corrected sessions rows became 41 and the
-    # boundary moved from July to 2026-08-12.
+    # the real files, thousands of corrected session rows became a few dozen
+    # and the boundary moved from July to 2026-08-12.
     path = str(tmp_path / "state.json")
     mr.write_backfill_state(
         "2026-08-21",
         "2026-08-21T19:49:23",
-        _names(2798),
+        _names(2500),
         10,
         earliest_corrected="2026-07-22",
         path=path,
@@ -1270,17 +1270,17 @@ def test_a_second_apply_extends_the_record_instead_of_replacing_it(tmp_path):
         "2026-09-23",
         "2026-09-23T21:00:00",
         _names(41, "later"),
-        8695,
+        8000,
         earliest_corrected="2026-08-12",
         path=path,
     )
     assert written == {
         "cutoff": "2026-09-23",
         "applied_at": "2026-09-23T21:00:00",
-        "corrected_rows": 2839,
+        "corrected_rows": 2541,
         "rows_changed_this_run": 41,
-        "corrected_row_ids": sorted(_names(2798) + _names(41, "later")),
-        "uncorrectable_rows": 8695,
+        "corrected_row_ids": sorted(_names(2500) + _names(41, "later")),
+        "uncorrectable_rows": 8000,
         "earliest_corrected": "2026-07-22",
     }
 
@@ -1318,22 +1318,22 @@ def test_a_second_apply_over_a_record_without_a_boundary_keeps_it_unknown(tmp_pa
 
 
 def test_a_token_apply_over_an_old_shape_entry_keeps_its_count_unidentified(tmp_path):
-    # The real state's token entries hold a count and no names (2839
-    # sessions rows). Which of those a later run touches again cannot be
+    # The real state's token entries hold a count and no names. Which
+    # of those a later run touches again cannot be
     # told, so the count is carried as unidentified, and a third run still
     # carries it rather than dropping it.
     path = tmp_path / "state.json"
     old = {
         "cutoff": "2026-09-23",
         "applied_at": "2026-09-23T21:38:39",
-        "corrected_rows": 2839,
-        "uncorrectable_rows": 8695,
+        "corrected_rows": 2541,
+        "uncorrectable_rows": 8000,
         "earliest_corrected": None,
         "subagents": {
             "cutoff": "2026-09-25",
             "applied_at": "2026-09-29T10:58:01",
-            "corrected_rows": 1192,
-            "uncorrectable_rows": 1391,
+            "corrected_rows": 1100,
+            "uncorrectable_rows": 1300,
             "earliest_corrected": "2026-08-11T20:45:41.010Z",
         },
     }
@@ -1351,12 +1351,12 @@ def test_a_token_apply_over_an_old_shape_entry_keeps_its_count_unidentified(tmp_
         "2026-09-29", "2026-09-29T11:00", ["a1"], 3, "2026-08-20", path=str(path), kind="subagents"
     )
 
-    assert written["corrected_rows"] == 2839 + 3
+    assert written["corrected_rows"] == 2541 + 3
     assert written["rows_changed_this_run"] == 2
-    assert written["unidentified_earlier_rows"] == 2839
+    assert written["unidentified_earlier_rows"] == 2541
     assert written["corrected_row_ids"] == ["e1", "e2", "e3"]
-    assert subagents["subagents"]["corrected_rows"] == 1192 + 1
-    assert subagents["subagents"]["unidentified_earlier_rows"] == 1192
+    assert subagents["subagents"]["corrected_rows"] == 1100 + 1
+    assert subagents["subagents"]["unidentified_earlier_rows"] == 1100
     assert subagents["subagents"]["earliest_corrected"] == "2026-08-11T20:45:41.010Z"
     # The note both dashboards render reads none of the new keys.
     for lang, note in note_before.items():
@@ -1390,16 +1390,16 @@ def test_a_new_shape_token_state_renders_the_same_note_as_the_old_shape(tmp_path
     old = {
         "cutoff": "2026-09-23",
         "applied_at": "2026-09-23T21:38:39",
-        "corrected_rows": 2839,
-        "uncorrectable_rows": 8695,
+        "corrected_rows": 2541,
+        "uncorrectable_rows": 8000,
         "earliest_corrected": "2026-07-22T09:00:00",
     }
     path = tmp_path / "state.json"
     written = mr.write_backfill_state(
         "2026-09-23",
         "2026-09-23T21:38:39",
-        _names(2839),
-        8695,
+        _names(2541),
+        8000,
         "2026-07-22T09:00:00",
         path=str(path),
     )
@@ -1423,7 +1423,7 @@ def test_a_second_subagents_apply_extends_the_subagents_record(tmp_path):
     written = mr.write_backfill_state(
         "2026-09-23",
         "b",
-        _names(820, "later"),
+        _names(800, "later"),
         3,
         earliest_corrected="2026-08-24",
         path=path,
@@ -1432,9 +1432,9 @@ def test_a_second_subagents_apply_extends_the_subagents_record(tmp_path):
     assert written["subagents"] == {
         "cutoff": "2026-09-23",
         "applied_at": "b",
-        "corrected_rows": 862,
-        "rows_changed_this_run": 820,
-        "corrected_row_ids": sorted(_names(42) + _names(820, "later")),
+        "corrected_rows": 842,
+        "rows_changed_this_run": 800,
+        "corrected_row_ids": sorted(_names(42) + _names(800, "later")),
         "uncorrectable_rows": 3,
         "earliest_corrected": "2026-08-11",
     }
