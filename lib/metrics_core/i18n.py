@@ -179,8 +179,13 @@ def t(key: str, lang: str, **values: Any) -> str:
 
 
 def tn(key: str, count: int, lang: str, **values: Any) -> str:
+    """`count` always chooses singular/plural; the `{n}` placeholder shows
+    `count` itself unless the caller passes its own `n` (e.g. a count large
+    enough to need format_tokens's k/M/B/T formatting - this module cannot
+    format it here, since format.py imports FROM i18n)."""
     form = "one" if count == 1 else "other"
-    return t(f"{key}.{form}", lang, n=count, **values)
+    values.setdefault("n", count)
+    return t(f"{key}.{form}", lang, **values)
 
 
 # POSIX order: the first non-empty one wins, and an empty one counts as unset.

@@ -97,3 +97,13 @@ def test_detail_panel_without_any_flag_adds_no_note() -> None:
 def test_detail_panel_notes_a_session_flagged_by_its_own_messages_alone() -> None:
     lines = _panel_lines([], "en", incomplete_usage=1)
     assert lines[-1] == mr.tn("floor_note", 1, "en")
+
+
+def test_detail_panel_floor_note_thousands_formats_the_message_count() -> None:
+    # A long session's floor count can reach into the thousands - the note
+    # must format it the way every other count on this dashboard is
+    # formatted (format_tokens), not interpolate the raw int.
+    lines = _panel_lines([], "en", incomplete_usage=2500)
+    note = lines[-1]
+    assert mr.format_tokens(2500) in note
+    assert "2500" not in note

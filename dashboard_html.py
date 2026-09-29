@@ -103,7 +103,12 @@ def render_floor_total(record: dict[str, Any], css_class: str, *, lang: str) -> 
     incomplete = metrics_core_module.incomplete_usage_messages(record)
     if not incomplete:
         return f'<span class="{css_class}">{total}</span>'
-    note = html.escape(metrics_core_module.tn("floor_note", incomplete, lang), quote=True)
+    note = html.escape(
+        metrics_core_module.tn(
+            "floor_note", incomplete, lang, n=metrics_core_module.format_tokens(incomplete)
+        ),
+        quote=True,
+    )
     return f'<span class="{css_class}" title="{note}">≥{total}</span>'
 
 

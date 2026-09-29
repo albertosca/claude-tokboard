@@ -477,7 +477,12 @@ class SessionDetailPanel(VerticalScroll):
                 )
                 lines.append(f"[{style}]{row}[/{style}]" if style else row)
         if incomplete_usage:
-            floor_note = self.metrics_core_module.tn("floor_note", incomplete_usage, self.lang)
+            floor_note = self.metrics_core_module.tn(
+                "floor_note",
+                incomplete_usage,
+                self.lang,
+                n=self.metrics_core_module.format_tokens(incomplete_usage),
+            )
             lines.append(f"[dim]{floor_note}[/dim]")
         self._body.update("\n".join(lines))
 

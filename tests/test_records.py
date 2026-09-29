@@ -775,9 +775,14 @@ def test_fold_carries_the_subagents_incomplete_usage_count_onto_the_session():
     assert "incomplete_usage_messages" not in sessions[2]
 
 
-@pytest.mark.parametrize("value", [None, 0, -1, "3", 2.5])
+@pytest.mark.parametrize("value", [None, 0, -1, "3", 2.5, True])
 def test_incomplete_usage_messages_reads_anything_but_a_positive_int_as_zero(value):
     # The file is hand-editable and the key is absent on every older row.
+    # True is deliberately included: bool is an int subclass, so
+    # isinstance(True, int) is True and would let a hand-edited
+    # `"incomplete_usage_messages": true` sneak through as a truthy,
+    # non-int return value instead of being rejected like every other
+    # non-int.
     assert mr.incomplete_usage_messages({"incomplete_usage_messages": value}) == 0
     assert mr.incomplete_usage_messages({}) == 0
     assert mr.incomplete_usage_messages({"incomplete_usage_messages": 7}) == 7

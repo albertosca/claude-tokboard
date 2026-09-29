@@ -319,9 +319,12 @@ def incomplete_usage_messages(record: dict[str, Any]) -> int:
     """How many of this record's messages never got their final usage entry,
     so its output is a floor - 0 when the key is absent (every row written
     before 2026-09-25, and every complete one since) or not a positive int
-    (the file is hand-editable)."""
+    (the file is hand-editable). `type(value) is int`, not `isinstance`:
+    bool is an int subclass, so isinstance(True, int) is True and would let
+    a hand-edited `"incomplete_usage_messages": true` return as the
+    non-int value True instead of being rejected like every other non-int."""
     value = record.get("incomplete_usage_messages")
-    return value if isinstance(value, int) and value > 0 else 0
+    return value if type(value) is int and value > 0 else 0
 
 
 def record_token_total(record: dict[str, Any]) -> int:

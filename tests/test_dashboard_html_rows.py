@@ -23,6 +23,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 import metrics_core as mr
 
 import dashboard_html
+import dashboard_html_assets
 
 # --------------------------------------------------------------------------
 # render_session_row
@@ -155,6 +156,21 @@ def test_render_session_row_marks_a_floor_output_with_a_prefix_and_a_note(lang):
     assert text == "≥" + mr.format_tokens(mr.record_token_total(record))
     assert html.unescape(_attr(attributes, "title") or "") == mr.tn("floor_note", 3, lang)
     assert _output_segment_title(out).startswith("output · ≥")
+
+
+@pytest.mark.parametrize("lang", ["en", "pt"])
+def test_render_session_row_floor_note_thousands_formats_the_message_count(lang):
+    # A long session's floor count can reach into the thousands - the
+    # tooltip must format it the way every other count on this dashboard
+    # is formatted (format_tokens), not interpolate the raw int.
+    record = _base_record(incomplete_usage_messages=2500)
+    out = dashboard_html.render_session_row(
+        record, is_active=False, group_colors={}, group_index=0, lang=lang
+    )
+    attributes, _text = _tag_with_class(out, "tokens-total")
+    note = html.unescape(_attr(attributes, "title") or "")
+    assert mr.format_tokens(2500) in note
+    assert "2500" not in note
 
 
 def test_render_session_row_without_the_flag_shows_no_floor_marker():
@@ -643,3 +659,11 @@ def test_render_detail_panel_marks_only_the_flagged_subagent_as_a_floor(lang):
     assert html.unescape(_attr(attributes, "title") or "") == mr.tn("floor_note", 1, lang)
     assert _output_segment_title(flagged_row).startswith("output · ≥")
     assert "≥" not in complete_row
+
+
+def test_floor_total_css_class_has_a_style_rule():
+    # render_detail_panel emits css_class="floor-total" into every subagent
+    # row (see render_floor_total's call site above) - a class with no
+    # matching rule in STYLE silently renders unstyled, indistinguishable
+    # from a typo in the class name.
+    assert re.search(r"\.floor-total\s*\{", dashboard_html_assets.STYLE)
