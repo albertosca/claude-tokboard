@@ -1287,8 +1287,7 @@ def write_field_state(
     field.
     """
     path = path or BACKFILL_STATE_FILE
-    existing = load_backfill_state(path)
-    state: dict[str, Any] = existing if isinstance(existing, dict) else {}
+    state = read_state_for_update(path)
     _merge_field_entry(state, kind, field, cutoff, applied_at, identities)
     _save_state(path, state)
     return state
@@ -1423,6 +1422,62 @@ def verify_fields(
     return problems
 
 
+class UnreadableStateError(Exception):
+    """A backfill state file that exists but cannot be read as a JSON object."""
+
+    def __init__(self, path: str, reason: str) -> None:
+        super().__init__(f"the backfill state at {path} cannot be read ({reason})")
+        self.path = path
+
+
+def read_state_for_update(path: str) -> dict[str, Any]:
+    """The backfill state at `path`, for a writer about to merge into it.
+
+    A missing file is a first run, and reads as an empty state. Anything
+    else that does not read as a JSON object - malformed JSON, another
+    top-level type, a file this process may not open - raises
+    UnreadableStateError instead: a writer that took it for an empty
+    state would replace every recorded boundary and row name with its
+    own entry alone. load_backfill_state, which the dashboards read
+    through, keeps degrading to None.
+    """
+    try:
+        with Path(path).open(encoding="utf-8") as state_file:
+            state = json.load(state_file)
+    except FileNotFoundError:
+        return {}
+    except (OSError, ValueError) as problem:
+        raise UnreadableStateError(path, f"{type(problem).__name__}: {problem}") from problem
+    if not isinstance(state, dict):
+        raise UnreadableStateError(path, f"it holds a JSON {type(state).__name__}, not an object")
+    return state
+
+
+def unreadable_state_notice(path: str, *, apply: bool) -> str | None:
+    """What a backfill script prints before it starts when the state at
+    `path` exists but cannot be read, or None when it can (or is missing).
+
+    For an apply it is a refusal, printed before anything is written: the
+    state is recorded only after the metrics file has been replaced, too
+    late to stop. For a dry run it is a warning - the dry run reads the
+    state as empty, and says so.
+    """
+    try:
+        read_state_for_update(path)
+    except UnreadableStateError as problem:
+        if apply:
+            return (
+                f"refusing to apply: {problem}. Nothing was written; move it aside "
+                "or fix it, then run again (with no state file there, the run starts "
+                "a new one)."
+            )
+        return (
+            f"WARNING: {problem}. This dry run reads it as empty, and --apply will "
+            "refuse until it is moved aside or fixed."
+        )
+    return None
+
+
 def load_backfill_state(path: str | None = None) -> dict[str, Any] | None:
     """Metadata about the most recent successful --apply run, or None.
 
@@ -1457,7 +1512,8 @@ def write_backfill_state(
     (and that every state written before subagents were deduped has); a
     subagents run nests its entry under a "subagents" key. Each kind touches
     only its own entry, so neither run erases the other's record. A file that
-    does not hold a dict is replaced rather than merged into.
+    exists but does not read as a JSON object raises UnreadableStateError
+    and is left as it was (see read_state_for_update).
 
     `identities` names the rows this run corrected (see row_identities).
     A later run on a kind that already has an entry EXTENDS it: its rows
@@ -1477,8 +1533,7 @@ def write_backfill_state(
     write; a run that rebuilt none leaves that entry as it was.
     """
     path = path or BACKFILL_STATE_FILE
-    existing = load_backfill_state(path)
-    state: dict[str, Any] = existing if isinstance(existing, dict) else {}
+    state = read_state_for_update(path)
     previous = state.get("subagents") if kind == "subagents" else state
     if isinstance(previous, dict) and isinstance(previous.get("applied_at"), str):
         earlier = previous.get("earliest_corrected")

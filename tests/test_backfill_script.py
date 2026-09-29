@@ -1513,3 +1513,67 @@ def test_the_live_pass_and_the_backup_diff_name_the_same_rebuilt_rows(
 
     assert live["corrected_row_ids"] == derived["corrected_row_ids"]
     assert len(live["corrected_row_ids"]) == 1
+
+
+# ---------------------------------------------------------------------------
+# A backfill state that exists but cannot be read stops an apply before
+# anything is written: read as empty, the recording would replace every
+# boundary and name the file held with this run's entry alone.
+# ---------------------------------------------------------------------------
+
+UNREADABLE_STATES = {
+    "malformed JSON": b"{not json",
+    "a list at the top level": b"[1, 2]",
+    "unreadable": b'{"cutoff": "2026-08-21", "applied_at": "a"}',
+}
+
+
+def _make_state_unreadable(paths: dict[str, Path], shape: str) -> None:
+    paths["state"].write_bytes(UNREADABLE_STATES[shape])
+    if shape == "unreadable":
+        paths["state"].chmod(0o000)
+
+
+@pytest.mark.parametrize("shape", sorted(UNREADABLE_STATES))
+@pytest.mark.parametrize("fields", ["tokens", "incomplete_usage"])
+def test_an_apply_refuses_a_state_it_cannot_read(
+    tmp_path, script, monkeypatch, capsys, shape, fields
+):
+    paths = _streamed_fixture(tmp_path)
+    metrics_before = paths["metrics"].read_bytes()
+    _make_state_unreadable(paths, shape)
+    monkeypatch.setattr("sys.argv", _subagents_argv(paths, "--fields", fields, "--apply"))
+    try:
+        assert script.main() == 1
+    finally:
+        paths["state"].chmod(0o644)
+    error = capsys.readouterr().err
+    assert f"refusing to apply: the backfill state at {paths['state']}" in error
+    assert "move it aside or fix it" in error
+    assert paths["state"].read_bytes() == UNREADABLE_STATES[shape]
+    assert paths["metrics"].read_bytes() == metrics_before
+    assert not paths["backups"].exists()
+
+
+@pytest.mark.parametrize("shape", sorted(UNREADABLE_STATES))
+def test_a_dry_run_warns_about_a_state_it_cannot_read(tmp_path, script, monkeypatch, capsys, shape):
+    paths = _streamed_fixture(tmp_path)
+    _make_state_unreadable(paths, shape)
+    monkeypatch.setattr("sys.argv", _subagents_argv(paths))
+    try:
+        assert script.main() == 0
+    finally:
+        paths["state"].chmod(0o644)
+    output = capsys.readouterr()
+    assert f"WARNING: the backfill state at {paths['state']}" in output.err
+    assert "--apply will refuse" in output.err
+    assert "DRY RUN - nothing written" in output.out
+    assert paths["state"].read_bytes() == UNREADABLE_STATES[shape]
+
+
+def test_an_apply_over_a_missing_state_is_a_first_run(tmp_path, script, monkeypatch, capsys):
+    paths = _streamed_fixture(tmp_path)
+    paths["state"].unlink()
+    monkeypatch.setattr("sys.argv", _subagents_argv(paths, "--apply"))
+    assert script.main() == 0
+    assert json.loads(paths["state"].read_text())["subagents"]["corrected_rows"] == 1

@@ -164,6 +164,7 @@ from metrics_core.backfill import (
     sha256_bytes,
     sha256_of,
     token_sum,
+    unreadable_state_notice,
     verify_fields,
     write_field_state,
 )
@@ -1208,6 +1209,14 @@ def main() -> int:
     # Beside the metrics file, never the default ~/.claude state: a run
     # pointed at a copy records into the copy.
     state_path = arguments.state_file or str(path.parent / "backfill_state.json")
+    # Checked before anything is written, for both the apply and the
+    # recording: read as empty, the recording would replace every name the
+    # state holds with this run's alone.
+    notice = unreadable_state_notice(state_path, apply=arguments.apply)
+    if notice:
+        print(notice, file=sys.stderr)
+        if arguments.apply:
+            return 1
     if arguments.record_earlier_applies:
         return record_earlier_applies(arguments, path, records, id_key, state_path)
 

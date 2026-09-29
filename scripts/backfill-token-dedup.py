@@ -157,6 +157,7 @@ from metrics_core.backfill import (
     sha256_of,
     subagent_transcripts,
     token_sum,
+    unreadable_state_notice,
     verify_fields,
     write_backfill_state,
     write_field_state,
@@ -615,6 +616,13 @@ def main() -> int:
     if not metrics_path.exists():
         print(f"no metrics file at {path}", file=sys.stderr)
         return 1
+    # Checked before anything is written: the state is recorded only once
+    # the metrics file has been replaced, too late for a refusal to stop it.
+    notice = unreadable_state_notice(arguments.state_file, apply=arguments.apply)
+    if notice:
+        print(notice, file=sys.stderr)
+        if arguments.apply:
+            return 1
 
     data = metrics_path.read_bytes()
     # Ignore a partially written trailing line: a concurrent hook may be

@@ -1454,19 +1454,75 @@ def test_a_later_apply_that_reaches_further_back_moves_the_boundary_back(tmp_pat
     assert written["corrected_rows"] == 13
 
 
-def test_write_backfill_state_for_subagents_over_a_malformed_file(tmp_path):
-    # A hand-edited state that is not a dict is replaced rather than merged
-    # into; the sessions side then reads as never applied, which is true of
-    # what is left on disk.
+# A state that exists but cannot be read as a JSON object is never taken
+# for an empty one: a writer that did would replace every recorded
+# boundary and row name with its own entry alone.
+UNREADABLE_STATES = {
+    "malformed JSON": b"{not json",
+    "a list at the top level": b"[1, 2]",
+    "a number at the top level": b"7",
+    "unreadable": b'{"cutoff": "2026-08-21", "applied_at": "a"}',
+}
+
+
+def _unreadable_state(tmp_path: Path, shape: str) -> Path:
     path = tmp_path / "state.json"
-    path.write_text("[1, 2]")
-    mr.write_backfill_state(
-        "2026-08-21", "2026-09-23T20:00:00", _names(1), path=str(path), kind="subagents"
-    )
-    loaded = mr.load_backfill_state(str(path))
-    assert loaded is not None
-    assert set(loaded) == {"subagents"}
-    assert "2026-08-21" not in mr.describe_backfill_state(loaded, lang="en")
+    path.write_bytes(UNREADABLE_STATES[shape])
+    if shape == "unreadable":
+        path.chmod(0o000)
+    return path
+
+
+@pytest.mark.parametrize("shape", sorted(UNREADABLE_STATES))
+@pytest.mark.parametrize("writer", ["write_backfill_state", "write_field_state"])
+def test_a_state_writer_refuses_a_state_it_cannot_read(tmp_path, writer, shape):
+    path = _unreadable_state(tmp_path, shape)
+    try:
+        with pytest.raises(mr.UnreadableStateError) as raised:
+            if writer == "write_backfill_state":
+                mr.write_backfill_state("2026-08-21", "b", _names(1), path=str(path))
+            else:
+                mr.write_field_state("sessions", "tool_calls", None, "b", _names(1), path=str(path))
+    finally:
+        path.chmod(0o644)
+    assert path.read_bytes() == UNREADABLE_STATES[shape]
+    assert str(path) in str(raised.value)
+    assert sorted(child.name for child in tmp_path.iterdir()) == ["state.json"]
+
+
+def test_read_state_for_update_reads_a_missing_file_as_a_first_run(tmp_path):
+    assert mr.read_state_for_update(str(tmp_path / "absent" / "state.json")) == {}
+
+
+def test_read_state_for_update_returns_a_readable_state(tmp_path):
+    path = tmp_path / "state.json"
+    path.write_text('{"cutoff": "2026-08-21"}')
+    assert mr.read_state_for_update(str(path)) == {"cutoff": "2026-08-21"}
+
+
+@pytest.mark.parametrize("shape", sorted(UNREADABLE_STATES))
+def test_the_notice_refuses_an_apply_and_warns_a_dry_run(tmp_path, shape):
+    path = _unreadable_state(tmp_path, shape)
+    try:
+        refusal = mr.unreadable_state_notice(str(path), apply=True)
+        warning = mr.unreadable_state_notice(str(path), apply=False)
+    finally:
+        path.chmod(0o644)
+    assert refusal is not None
+    assert refusal.startswith("refusing to apply")
+    assert str(path) in refusal
+    assert "move it aside or fix it" in refusal
+    assert warning is not None
+    assert warning.startswith("WARNING")
+    assert str(path) in warning
+    assert "--apply will refuse" in warning
+
+
+def test_the_notice_is_silent_for_a_missing_or_readable_state(tmp_path):
+    path = tmp_path / "state.json"
+    assert mr.unreadable_state_notice(str(path), apply=True) is None
+    path.write_text("{}")
+    assert mr.unreadable_state_notice(str(path), apply=True) is None
 
 
 def test_describe_backfill_state_when_never_applied():
