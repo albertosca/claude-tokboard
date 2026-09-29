@@ -1471,7 +1471,8 @@ def write_backfill_state(
     count describe the file as of this run, so they are replaced.
 
     `rebuilt_maps` names the rows whose tokens_by_model this run rebuilt
-    (see apply_plan). When there are any, they join the fields entry
+    (see apply_plan) into different contents; a map rebuilt equal to the
+    old one is still the hook's, and is not named. When there are any, they join the fields entry
     "<kind>.tokens_by_model_rebuilt" (REBUILT_MAPS_FIELD) in the same
     write; a run that rebuilt none leaves that entry as it was.
     """

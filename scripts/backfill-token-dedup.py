@@ -66,9 +66,10 @@ Safety
 - only the four token fields may change, each row only in its formula's
   direction; tokens_by_model on a corrected row is rebuilt by the same rule
   and must sum to the new totals; every other field is compared
-  byte-for-byte before the rename. The rows whose map was rebuilt are
-  named in the state (REBUILT_MAPS_FIELD), so the by-model oracle stops
-  counting that map as the hook's own.
+  byte-for-byte before the rename. The rows whose map the rebuild
+  changed are named in the state (REBUILT_MAPS_FIELD), so the by-model
+  oracle stops counting that map as the hook's own; a map rebuilt equal
+  to the old one is left for the oracle to keep checking.
 
 Limits
 ------
@@ -715,12 +716,17 @@ def main() -> int:
         return 0
 
     # The rows whose tokens_by_model apply_plan rebuilt rather than
-    # dropped: that map is now this module's reconstruction, not the
-    # hook's, and the by-model oracle must stop counting it as native.
+    # dropped AND whose contents that changed: that map is now this
+    # module's reconstruction, not the hook's, and the by-model oracle
+    # must stop counting it as native. A map rebuilt equal to the old one
+    # is still the hook's answer, so the oracle keeps checking it - the
+    # same rule --record-earlier-applies applies when it diffs backups.
     rebuilt = [
         index
         for index in sorted(plan)
-        if index in result.model_maps and "tokens_by_model" in records[index]
+        if index in result.model_maps
+        and "tokens_by_model" in records[index]
+        and corrected[index]["tokens_by_model"] != records[index]["tokens_by_model"]
     ]
     # Unrecorded, those maps count as native in the by-model oracle; the
     # backup this run takes still names them, and this is how to read it.

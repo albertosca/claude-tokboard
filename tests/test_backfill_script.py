@@ -1396,3 +1396,120 @@ def test_a_run_on_a_metrics_file_keeps_its_backup_and_state_beside_it(
     )
     assert len(list((beside / "backups").glob("subagents.jsonl.backfill-*.bak"))) == 1
     assert not stand_in.exists(), "nothing may land in the default directory"
+
+
+# ---------------------------------------------------------------------------
+# A token pass names a rebuilt map only when its contents changed - the
+# same rule --record-earlier-applies applies to the backups. A map rebuilt
+# equal to the one the hook wrote is still the hook's answer, so the
+# by-model oracle should keep checking it.
+# ---------------------------------------------------------------------------
+
+
+def _load_by_model() -> types.ModuleType:
+    by_model_path = SCRIPT_PATH.parent / "backfill-tokens-by-model.py"
+    spec = importlib.util.spec_from_file_location("by_model_for_rebuilt", by_model_path)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _changed_and_unchanged_fixture(tmp_path: Path) -> dict[str, Path]:
+    """Two streamed subagents whose totals both need raising: s1's map was
+    built from the first entry (the rebuild changes it), s2's map already
+    holds the final entry's values (the rebuild reproduces it)."""
+    paths = _streamed_fixture(tmp_path)
+    agents = paths["projects"] / "some-project" / "parent" / "subagents"
+    entries = [
+        (
+            f"2026-08-03T10:00:0{second}",
+            "s2",
+            {
+                "input_tokens": 4,
+                "output_tokens": output,
+                "cache_read_input_tokens": 500,
+                "cache_creation_input_tokens": 20,
+            },
+        )
+        for second, output in enumerate([7, 60, 90])
+    ]
+    _write_transcript(agents / "agent-s2.jsonl", entries)
+    row = _subagent_row("s2", "2026-08-03T10:00:02", 30, 4, str(agents / "agent-s2.jsonl"))
+    row.update(output_tokens=7, cache_read_tokens=500, cache_creation_tokens=20)
+    row["tokens_by_model"] = {
+        "unknown": {
+            "input_tokens": 4,
+            "output_tokens": 90,
+            "cache_read_tokens": 500,
+            "cache_creation_tokens": 20,
+        }
+    }
+    with paths["metrics"].open("a") as metrics_file:
+        metrics_file.write(json.dumps(row) + "\n")
+    return paths
+
+
+def test_a_token_pass_names_only_the_maps_whose_contents_changed(
+    tmp_path, script, monkeypatch, capsys
+):
+    paths = _changed_and_unchanged_fixture(tmp_path)
+    records = [json.loads(line) for line in paths["metrics"].read_text().splitlines()]
+    monkeypatch.setattr("sys.argv", _subagents_argv(paths, "--apply"))
+
+    assert script.main() == 0
+
+    state = json.loads(paths["state"].read_text())
+    assert state["subagents"]["corrected_rows"] == 2
+    entry = state["fields"]["subagents.tokens_by_model_rebuilt"]
+    assert entry["corrected_row_ids"] == script.row_identities(records, [0], "agent_id")
+
+
+def test_a_token_pass_whose_maps_all_rebuild_equal_names_none(
+    tmp_path, script, monkeypatch, capsys
+):
+    paths = _changed_and_unchanged_fixture(tmp_path)
+    rows = paths["metrics"].read_text().splitlines()
+    paths["metrics"].write_text(rows[1] + "\n")
+    monkeypatch.setattr("sys.argv", _subagents_argv(paths, "--apply"))
+
+    assert script.main() == 0
+
+    state = json.loads(paths["state"].read_text())
+    assert state["subagents"]["corrected_rows"] == 1
+    assert "fields" not in state
+
+
+def test_the_live_pass_and_the_backup_diff_name_the_same_rebuilt_rows(
+    tmp_path, script, monkeypatch, capsys
+):
+    paths = _changed_and_unchanged_fixture(tmp_path)
+    monkeypatch.setattr("sys.argv", _subagents_argv(paths, "--apply"))
+    assert script.main() == 0
+    live = json.loads(paths["state"].read_text())["fields"]["subagents.tokens_by_model_rebuilt"]
+
+    derived_state = tmp_path / "derived" / "backfill_state.json"
+    derived_state.parent.mkdir()
+    by_model = _load_by_model()
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "backfill-tokens-by-model.py",
+            "--file",
+            "subagents",
+            "--metrics-file",
+            str(paths["metrics"]),
+            "--state-file",
+            str(derived_state),
+            "--backup-dir",
+            str(paths["backups"]),
+            "--record-earlier-applies",
+            "--apply",
+        ],
+    )
+    assert by_model.main() == 0
+    derived = json.loads(derived_state.read_text())["fields"]["subagents.tokens_by_model_rebuilt"]
+
+    assert live["corrected_row_ids"] == derived["corrected_row_ids"]
+    assert len(live["corrected_row_ids"]) == 1
