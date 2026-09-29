@@ -1118,7 +1118,8 @@ def write_field_state(
     An entry written before then has a count but no names: which of its
     rows a later run touches again cannot be told, so the distinct total
     stays unknown (None) for good, and the count it reported is kept as
-    `unidentified_earlier_rows`.
+    `unidentified_earlier_rows`. One that reported no rows (0 or no count)
+    leaves nothing unidentified, and the total stays known.
     """
     path = path or BACKFILL_STATE_FILE
     existing = load_backfill_state(path)
@@ -1129,22 +1130,22 @@ def write_field_state(
     key = f"{kind}.{field}"
     previous = fields.get(key)
     names = set(identities)
-    unidentified: int | None = None
+    unidentified = 0
     if isinstance(previous, dict):
         earlier = previous.get("corrected_row_ids")
         if isinstance(earlier, list):
             names.update(earlier)
-            unidentified = previous.get("unidentified_earlier_rows")
+            unidentified = previous.get("unidentified_earlier_rows") or 0
         else:
             unidentified = previous.get("corrected_rows") or 0
     entry: dict[str, Any] = {
         "cutoff": cutoff,
         "applied_at": applied_at,
         "corrected_rows": len(identities),
-        "total_distinct_rows": len(names) if unidentified is None else None,
+        "total_distinct_rows": None if unidentified else len(names),
         "corrected_row_ids": sorted(names),
     }
-    if unidentified is not None:
+    if unidentified:
         entry["unidentified_earlier_rows"] = unidentified
     fields[key] = entry
     target = Path(path)

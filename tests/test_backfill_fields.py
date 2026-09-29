@@ -431,6 +431,22 @@ def test_write_field_state_over_an_old_state_leaves_the_distinct_total_unknown(t
     assert mr.describe_backfill_state(state, lang="en") == note
 
 
+@pytest.mark.parametrize("earlier", [{"corrected_rows": 0}, {}], ids=["zero", "missing"])
+def test_write_field_state_over_an_old_entry_that_corrected_nothing_knows_the_total(
+    tmp_path, earlier
+):
+    path = tmp_path / "state.json"
+    old_entry = {"cutoff": "c", "applied_at": "t0", **earlier}
+    path.write_text(json.dumps({"fields": {"sessions.tool_calls": old_entry}}))
+    identities = mr.row_identities(identified_rows("e1"), [0], "session_id")
+
+    state = mr.write_field_state("sessions", "tool_calls", "c", "t", identities, path=str(path))
+
+    entry = state["fields"]["sessions.tool_calls"]
+    assert "unidentified_earlier_rows" not in entry
+    assert entry["total_distinct_rows"] == 1
+
+
 def test_write_field_state_replaces_a_fields_entry_that_is_not_a_dict(tmp_path):
     path = tmp_path / "state.json"
     path.write_text(json.dumps({"fields": "junk"}))
