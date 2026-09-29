@@ -1280,10 +1280,16 @@ def main() -> int:
             path=state_path,
         )
     except Exception as problem:
+        # The backup this run took names these rows, so the one-time
+        # recovery path records them - aimed at the same files.
+        backup_option = f" --backup-dir {arguments.backup_dir}" if arguments.backup_dir else ""
         print(
             "WARNING: the metrics file was rewritten, but the backfill state could not be "
             f"recorded ({type(problem).__name__}: {problem}). The next dry run will count "
-            f"these {len(plan)} row(s) as native until they are recorded.",
+            f"these {len(plan)} row(s) as native until they are recorded. To record them "
+            f"from the backup this run took: {Path(__file__).name} --file {arguments.file} "
+            f"--metrics-dir {arguments.metrics_dir}{backup_option} "
+            "--record-earlier-applies --apply",
             file=sys.stderr,
         )
         return 0

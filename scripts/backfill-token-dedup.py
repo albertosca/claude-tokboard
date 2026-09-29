@@ -384,7 +384,7 @@ def field_problems(
     return problems
 
 
-def record_without_raising(record_state: Callable[[], None]) -> None:
+def record_without_raising(record_state: Callable[[], None], recovery: str = "") -> None:
     """Run `record_state`, turning any failure into a warning.
 
     It runs the moment the rewritten file is in place, and
@@ -392,7 +392,8 @@ def record_without_raising(record_state: Callable[[], None]) -> None:
     instant only AFTER it returns. A raise here would skip that carry-over
     and report a finished rewrite as a traceback. The file is right either
     way; only the record of the run would be missing, so that is what the
-    warning says.
+    warning says - followed by `recovery`, when part of that record can
+    still be rebuilt, and how.
     """
     try:
         record_state()
@@ -400,7 +401,7 @@ def record_without_raising(record_state: Callable[[], None]) -> None:
         print(
             "WARNING: the metrics file was rewritten, but the backfill state could not be "
             f"recorded ({type(problem).__name__}: {problem}). The data is correct; the "
-            "state file does not know about this run.",
+            f"state file does not know about this run.{recovery}",
             file=sys.stderr,
         )
 
@@ -412,6 +413,7 @@ def back_up_and_write(
     corrected: list[dict[str, Any]],
     backup_directory: str,
     record_state: Callable[[], None],
+    recovery: str = "",
 ) -> int:
     """Back up the live file (verified by sha256), write `corrected` over it
     atomically with live appends carried over, and check the line count.
@@ -438,7 +440,11 @@ def back_up_and_write(
     mode = stat.S_IMODE(metrics_path.stat().st_mode)
     new_lines = [json.dumps(record).encode("utf-8") for record in corrected]
     appended = write_atomically(
-        path, snapshot, new_lines, mode, on_replaced=lambda: record_without_raising(record_state)
+        path,
+        snapshot,
+        new_lines,
+        mode,
+        on_replaced=lambda: record_without_raising(record_state, recovery),
     )
 
     written = metrics_path.read_bytes()
@@ -677,6 +683,26 @@ def main() -> int:
         print("\nnothing to correct; leaving the file and the backfill state untouched")
         return 0
 
+    # The rows whose tokens_by_model apply_plan rebuilt rather than
+    # dropped: that map is now this module's reconstruction, not the
+    # hook's, and the by-model oracle must stop counting it as native.
+    rebuilt = [
+        index
+        for index in sorted(plan)
+        if index in result.model_maps and "tokens_by_model" in records[index]
+    ]
+    # Unrecorded, those maps count as native in the by-model oracle; the
+    # backup this run takes still names them, and this is how to read it.
+    recovery = (
+        " Until they are recorded, the by-model oracle counts the "
+        f"{len(rebuilt)} map(s) this run rebuilt as native; to record them from "
+        f"the backup this run took: backfill-tokens-by-model.py --file {arguments.kind} "
+        f"--metrics-dir {metrics_path.parent} --backup-dir {arguments.backup_dir} "
+        "--record-earlier-applies --apply"
+        if rebuilt
+        else ""
+    )
+
     def record_state() -> None:
         # The earliest timestamp_end actually corrected, and the count of
         # rows that could never be (no transcript on disk) - both feed the
@@ -687,14 +713,6 @@ def main() -> int:
         # rewritten, and an unrecorded rewrite is never recorded - a re-run
         # finds every row corrected and has nothing to write.
         earliest_corrected = min((records[index]["timestamp_end"] for index in plan), default=None)
-        # The rows whose tokens_by_model apply_plan rebuilt rather than
-        # dropped: that map is now this module's reconstruction, not the
-        # hook's, and the by-model oracle must stop counting it as native.
-        rebuilt = [
-            index
-            for index in sorted(plan)
-            if index in result.model_maps and "tokens_by_model" in records[index]
-        ]
         write_backfill_state(
             arguments.cutoff,
             datetime.now().isoformat(),
@@ -708,7 +726,7 @@ def main() -> int:
         print(f"  backfill state recorded: {arguments.state_file}")
 
     return back_up_and_write(
-        path, snapshot, len(raw_lines), corrected, arguments.backup_dir, record_state
+        path, snapshot, len(raw_lines), corrected, arguments.backup_dir, record_state, recovery
     )
 
 

@@ -12,6 +12,8 @@ import collections
 import hashlib
 import json
 import os
+import stat
+import tempfile
 from collections.abc import Iterable, Iterator
 from pathlib import Path
 from typing import Any, BinaryIO, NamedTuple, cast
@@ -1219,6 +1221,39 @@ def _merge_field_entry(
     }
 
 
+def _save_state(path: str, state: dict[str, Any]) -> None:
+    """Write `state` to `path` whole or not at all.
+
+    Both state writers run AFTER the metrics file was replaced, and the
+    state holds what nothing else does: the boundary the dashboards
+    render and every recorded row name. Truncating it in place and then
+    failing would lose all of that, so the new state goes to a temporary
+    file in the same directory (mkstemp, so two runs never share one)
+    and is renamed over the old one, the way labels._atomic_save writes
+    the label caches. The file keeps its mode; the temporary file is
+    removed if anything fails.
+    """
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    handle, temporary_name = tempfile.mkstemp(
+        dir=target.parent, prefix=f"{target.name}.", suffix=".tmp"
+    )
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(handle, "w") as temporary_file:
+            json.dump(state, temporary_file, indent=2)
+            temporary_file.flush()
+            os.fsync(temporary_file.fileno())
+        if target.exists():
+            temporary.chmod(stat.S_IMODE(target.stat().st_mode))
+        # os.replace, not Path.replace (PTH105): the failure tests stand a
+        # failing rename in for this exact name.
+        os.replace(temporary, target)  # noqa: PTH105
+    except BaseException:
+        temporary.unlink(missing_ok=True)
+        raise
+
+
 def write_field_state(
     kind: str,
     field: str,
@@ -1240,10 +1275,7 @@ def write_field_state(
     existing = load_backfill_state(path)
     state: dict[str, Any] = existing if isinstance(existing, dict) else {}
     _merge_field_entry(state, kind, field, cutoff, applied_at, identities)
-    target = Path(path)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    with target.open("w") as handle:
-        json.dump(state, handle, indent=2)
+    _save_state(path, state)
     return state
 
 
@@ -1461,10 +1493,7 @@ def write_backfill_state(
         state.update(entry)
     if rebuilt_maps:
         _merge_field_entry(state, kind, REBUILT_MAPS_FIELD, cutoff, applied_at, rebuilt_maps)
-    target = Path(path)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    with target.open("w") as state_file:
-        json.dump(state, state_file, indent=2)
+    _save_state(path, state)
     return state
 
 

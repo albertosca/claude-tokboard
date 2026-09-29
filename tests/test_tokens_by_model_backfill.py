@@ -1913,6 +1913,48 @@ def test_a_state_write_that_fails_after_the_apply_warns_instead_of_raising(
     warning = capsys.readouterr().err
     assert "the backfill state could not be recorded" in warning
     assert "disk full" in warning
+    # The warning is only useful if it says how to stop those rows from
+    # counting as native: the backup this run took names them.
+    assert (
+        f"--file sessions --metrics-dir {tmp_path / 'metrics'} "
+        f"--backup-dir {tmp_path / 'backups'} --record-earlier-applies --apply"
+    ) in warning.replace("\n", " ")
+
+
+def test_the_recovery_command_in_the_warning_records_the_rows(
+    script, tmp_path, monkeypatch, capsys
+):
+    _one_writable_session(tmp_path)
+    real_write = script.write_field_state
+
+    def fail(*arguments: Any, **keywords: Any) -> None:
+        raise OSError("disk full")
+
+    monkeypatch.setattr(script, "write_field_state", fail)
+    _applying_argv(monkeypatch, tmp_path, "--apply", "--expect-checked", "1")
+    assert script.main() == 0
+    capsys.readouterr()
+    monkeypatch.setattr(script, "write_field_state", real_write)
+
+    _applying_argv(monkeypatch, tmp_path, "--record-earlier-applies", "--apply")
+    assert script.main() == 0
+    records = _live_records(tmp_path)
+    assert _recorded_ids(tmp_path) == script.row_identities(records, [0], "session_id")
+
+
+def test_the_recovery_command_names_no_backup_dir_the_run_did_not_get(
+    script, tmp_path, monkeypatch, capsys
+):
+    _one_writable_session(tmp_path)
+
+    def fail(*arguments: Any, **keywords: Any) -> None:
+        raise OSError("disk full")
+
+    monkeypatch.setattr(script, "write_field_state", fail)
+    _argv(monkeypatch, tmp_path, "--apply", "--expect-checked", "1")
+    assert script.main() == 0
+    warning = capsys.readouterr().err.replace("\n", " ")
+    assert f"--metrics-dir {tmp_path / 'metrics'} --record-earlier-applies --apply" in warning
 
 
 def test_record_earlier_applies_run_again_records_nothing_new(

@@ -1,5 +1,6 @@
 import hashlib
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -1682,3 +1683,44 @@ def test_a_token_pass_that_rebuilt_no_map_leaves_the_fields_alone(tmp_path):
     assert written["fields"] == earlier["fields"]
     fresh = mr.write_backfill_state("2026-09-23", "b", _names(1), path=str(tmp_path / "other.json"))
     assert "fields" not in fresh
+
+
+# Both state writers run AFTER the metrics file was replaced. A write that
+# truncated the state and then failed would leave the dashboards' boundary
+# note, and every recorded row name, gone - so the state is written to a
+# temporary file beside it and renamed into place.
+
+
+def _failing_replace(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fail(source: Any, target: Any) -> None:
+        raise OSError("disk full")
+
+    monkeypatch.setattr(os, "replace", fail)
+
+
+@pytest.mark.parametrize("writer", ["write_backfill_state", "write_field_state"])
+def test_a_state_write_whose_rename_fails_leaves_the_old_state_intact(
+    tmp_path, monkeypatch, writer
+):
+    path = tmp_path / "state.json"
+    mr.write_backfill_state("2026-09-23", "a", _names(2), path=str(path), rebuilt_maps=["row0"])
+    before = path.read_bytes()
+    _failing_replace(monkeypatch)
+
+    with pytest.raises(OSError, match="disk full"):
+        if writer == "write_backfill_state":
+            mr.write_backfill_state("2026-09-25", "b", _names(5), path=str(path))
+        else:
+            mr.write_field_state("sessions", "tool_calls", None, "b", _names(5), path=str(path))
+
+    assert path.read_bytes() == before
+    assert sorted(child.name for child in tmp_path.iterdir()) == ["state.json"]
+
+
+def test_a_state_write_keeps_the_state_files_mode(tmp_path):
+    path = tmp_path / "state.json"
+    mr.write_backfill_state("2026-09-23", "a", _names(1), path=str(path))
+    path.chmod(0o644)
+    mr.write_field_state("sessions", "tool_calls", None, "b", _names(1), path=str(path))
+    mr.write_backfill_state("2026-09-25", "c", _names(1), path=str(path))
+    assert path.stat().st_mode & 0o777 == 0o644

@@ -1278,3 +1278,41 @@ def test_a_token_pass_over_rows_without_a_map_names_none(tmp_path, script, monke
     state = json.loads(paths["state"].read_text())
     assert state["subagents"]["corrected_rows"] == 1
     assert "fields" not in state
+
+
+def test_a_token_pass_whose_state_write_fails_names_the_recovery(
+    tmp_path, script, monkeypatch, capsys
+):
+    # Unrecorded, the maps this pass rebuilt count as native in the
+    # by-model oracle; its recovery path finds them in the backup this
+    # run took, and the warning has to say how.
+    paths = _streamed_fixture(tmp_path)
+
+    def fail(*arguments: Any, **keywords: Any) -> None:
+        raise OSError("disk full")
+
+    monkeypatch.setattr(script, "write_backfill_state", fail)
+    monkeypatch.setattr("sys.argv", _subagents_argv(paths, "--apply"))
+
+    assert script.main() == 0
+
+    warning = capsys.readouterr().err.replace("\n", " ")
+    assert "the backfill state could not be recorded" in warning
+    command = (
+        f"backfill-tokens-by-model.py --file subagents --metrics-dir {paths['metrics'].parent} "
+        f"--backup-dir {paths['backups']} --record-earlier-applies --apply"
+    )
+    assert command in warning
+
+    # And the command does what the warning says it does.
+    by_model_path = SCRIPT_PATH.parent / "backfill-tokens-by-model.py"
+    spec = importlib.util.spec_from_file_location("by_model_for_recovery", by_model_path)
+    assert spec is not None
+    assert spec.loader is not None
+    by_model = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(by_model)
+    monkeypatch.setattr("sys.argv", command.split())
+    assert by_model.main() == 0
+    records = [json.loads(line) for line in paths["metrics"].read_text().splitlines()]
+    entry = json.loads(paths["state"].read_text())["fields"]["subagents.tokens_by_model_rebuilt"]
+    assert entry["corrected_row_ids"] == script.row_identities(records, [0], "agent_id")
