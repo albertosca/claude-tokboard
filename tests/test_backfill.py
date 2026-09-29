@@ -1,11 +1,18 @@
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 from typing import Any
 
 import metrics_core as mr
 import pytest
+from state_shapes import (
+    SHAPE_NAMES,
+    UNREADABLE_STATES,
+    restore_permissions,
+    write_unreadable_state,
+)
 
 
 def write_transcript(path: Path, entries: list[tuple[str, str | None, dict[str, int]]]) -> None:
@@ -1454,40 +1461,71 @@ def test_a_later_apply_that_reaches_further_back_moves_the_boundary_back(tmp_pat
     assert written["corrected_rows"] == 13
 
 
-# A state that exists but cannot be read as a JSON object is never taken
-# for an empty one: a writer that did would replace every recorded
-# boundary and row name with its own entry alone.
-UNREADABLE_STATES = {
-    "malformed JSON": b"{not json",
-    "a list at the top level": b"[1, 2]",
-    "a number at the top level": b"7",
-    "unreadable": b'{"cutoff": "2026-08-21", "applied_at": "a"}',
-}
+# A state that exists but cannot be read safely is never taken for an
+# empty one: a writer that did would replace every recorded boundary and
+# row name with its own entry alone. The shapes are shared with the script
+# and dashboard tests (tests/state_shapes.py).
+
+DRY_RUN_EFFECT = "This dry run does not read the state."
 
 
 def _unreadable_state(tmp_path: Path, shape: str) -> Path:
     path = tmp_path / "state.json"
-    path.write_bytes(UNREADABLE_STATES[shape])
-    if shape == "unreadable":
-        path.chmod(0o000)
+    write_unreadable_state(path, shape)
     return path
 
 
-@pytest.mark.parametrize("shape", sorted(UNREADABLE_STATES))
+@pytest.mark.parametrize("shape", SHAPE_NAMES)
 @pytest.mark.parametrize("writer", ["write_backfill_state", "write_field_state"])
 def test_a_state_writer_refuses_a_state_it_cannot_read(tmp_path, writer, shape):
     path = _unreadable_state(tmp_path, shape)
     try:
         with pytest.raises(mr.UnreadableStateError) as raised:
             if writer == "write_backfill_state":
-                mr.write_backfill_state("2026-08-21", "b", _names(1), path=str(path))
+                mr.write_backfill_state(
+                    "2026-08-21", "b", _names(1), path=str(path), kind="subagents"
+                )
             else:
                 mr.write_field_state("sessions", "tool_calls", None, "b", _names(1), path=str(path))
     finally:
-        path.chmod(0o644)
+        restore_permissions(path)
     assert path.read_bytes() == UNREADABLE_STATES[shape]
     assert str(path) in str(raised.value)
     assert sorted(child.name for child in tmp_path.iterdir()) == ["state.json"]
+
+
+@pytest.mark.parametrize("shape", SHAPE_NAMES)
+def test_the_sessions_writer_refuses_a_state_it_cannot_read_too(tmp_path, shape):
+    # The sessions entry is the top level itself, so it merges into
+    # "fields" and "subagents" only by keeping them - still never by
+    # dropping a malformed one.
+    path = _unreadable_state(tmp_path, shape)
+    try:
+        with pytest.raises(mr.UnreadableStateError):
+            mr.write_backfill_state("2026-08-21", "b", _names(1), path=str(path))
+    finally:
+        restore_permissions(path)
+    assert path.read_bytes() == UNREADABLE_STATES[shape]
+
+
+@pytest.mark.parametrize(
+    ("shape", "reason"),
+    [
+        ("empty", "the file is empty"),
+        ("not UTF-8", "UnicodeDecodeError"),
+        ("a list at the top level", "it holds a JSON array, not an object"),
+        ("fields is null", 'its "fields" value is a JSON null, not an object'),
+        ("subagents is a string", 'its "subagents" value is a JSON string, not an object'),
+        (
+            "a fields entry is a list",
+            'its "fields" entry "sessions.tool_calls" is a JSON array, not an object',
+        ),
+    ],
+)
+def test_the_refusal_names_what_is_wrong(tmp_path, shape, reason):
+    path = _unreadable_state(tmp_path, shape)
+    with pytest.raises(mr.UnreadableStateError, match=re.escape(reason)):
+        mr.read_state_for_update(str(path))
 
 
 def test_read_state_for_update_reads_a_missing_file_as_a_first_run(tmp_path):
@@ -1496,33 +1534,55 @@ def test_read_state_for_update_reads_a_missing_file_as_a_first_run(tmp_path):
 
 def test_read_state_for_update_returns_a_readable_state(tmp_path):
     path = tmp_path / "state.json"
-    path.write_text('{"cutoff": "2026-08-21"}')
-    assert mr.read_state_for_update(str(path)) == {"cutoff": "2026-08-21"}
+    state = {
+        "cutoff": "2026-08-21",
+        "subagents": {"cutoff": "c"},
+        "fields": {"sessions.tool_calls": {"corrected_row_ids": ["x"]}},
+    }
+    path.write_text(json.dumps(state))
+    assert mr.read_state_for_update(str(path)) == state
 
 
-@pytest.mark.parametrize("shape", sorted(UNREADABLE_STATES))
+@pytest.mark.parametrize("shape", SHAPE_NAMES)
 def test_the_notice_refuses_an_apply_and_warns_a_dry_run(tmp_path, shape):
     path = _unreadable_state(tmp_path, shape)
     try:
-        refusal = mr.unreadable_state_notice(str(path), apply=True)
-        warning = mr.unreadable_state_notice(str(path), apply=False)
+        refusal = mr.unreadable_state_notice(str(path), apply=True, dry_run_effect=DRY_RUN_EFFECT)
+        warning = mr.unreadable_state_notice(str(path), apply=False, dry_run_effect=DRY_RUN_EFFECT)
     finally:
-        path.chmod(0o644)
+        restore_permissions(path)
     assert refusal is not None
     assert refusal.startswith("refusing to apply")
     assert str(path) in refusal
     assert "move it aside or fix it" in refusal
+    assert "an empty file is not a missing one" in refusal
+    assert DRY_RUN_EFFECT not in refusal
     assert warning is not None
     assert warning.startswith("WARNING")
     assert str(path) in warning
+    assert DRY_RUN_EFFECT in warning
     assert "--apply will refuse" in warning
 
 
 def test_the_notice_is_silent_for_a_missing_or_readable_state(tmp_path):
     path = tmp_path / "state.json"
-    assert mr.unreadable_state_notice(str(path), apply=True) is None
+    assert mr.unreadable_state_notice(str(path), apply=True, dry_run_effect="") is None
     path.write_text("{}")
-    assert mr.unreadable_state_notice(str(path), apply=True) is None
+    assert mr.unreadable_state_notice(str(path), apply=True, dry_run_effect="") is None
+
+
+@pytest.mark.parametrize("shape", SHAPE_NAMES)
+def test_load_backfill_state_stays_lenient_on_every_unreadable_shape(tmp_path, shape):
+    # What the dashboards and the by-model dry run read through: it must
+    # never raise, whatever the file holds.
+    path = _unreadable_state(tmp_path, shape)
+    try:
+        loaded = mr.load_backfill_state(str(path))
+    finally:
+        restore_permissions(path)
+    assert loaded is None or isinstance(loaded, (dict, list, int))
+    for lang in ("en", "pt"):
+        assert mr.describe_backfill_state(loaded, lang=lang)
 
 
 def test_describe_backfill_state_when_never_applied():

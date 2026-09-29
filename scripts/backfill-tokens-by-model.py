@@ -112,8 +112,10 @@ Nor are maps a dedup TOKEN pass rebuilt. scripts/backfill-token-dedup.py
 rewrites tokens_by_model on every row whose totals it corrects, with the
 same reconstruction, and the subagent passes of 2026-09-23 and 2026-09-25
 did so on rows no by-model apply had touched - maps the oracle went on
-counting as native. The pass now names those rows in the state too, and
-the oracle reports them apart as "rebuilt by a dedup pass".
+counting as native. The pass now names in the state the rows whose map
+the rebuild CHANGED, and the oracle reports them apart as "rebuilt by a
+dedup pass"; a map rebuilt equal to the hook's is still the hook's
+answer, and stays in the oracle's native evidence.
 --record-earlier-applies finds the earlier ones by diffing each dedup
 backup against the file's next state.
 
@@ -622,12 +624,14 @@ def rebuilt_rows(
     """The rows whose map a dedup token pass rebuilt.
 
     scripts/backfill-token-dedup.py rewrites tokens_by_model on every row
-    whose totals it corrects, by metrics_core's reconstruction - so the
-    map is no longer the hook's, and checking it against the same
-    reconstruction proves nothing. The pass names them under
-    REBUILT_MAPS_FIELD; earlier ones are found by --record-earlier-applies.
-    A row both written by an apply and
-    rebuilt is counted once, as written (see classify_native_rows).
+    whose totals it corrects, by metrics_core's reconstruction - so a map
+    it changed is no longer the hook's, and checking it against the same
+    reconstruction proves nothing. The pass names under
+    REBUILT_MAPS_FIELD the rows whose map the rebuild changed (one
+    rebuilt equal to the hook's is still the hook's); earlier ones are
+    found by --record-earlier-applies, by the same rule. A row both
+    written by an apply and rebuilt is counted once, as written (see
+    classify_native_rows).
     """
     wanted = recorded_names(state, f"{file_name}.{REBUILT_MAPS_FIELD}")
     return named_rows(records, id_key, wanted)
@@ -1217,7 +1221,15 @@ def main() -> int:
     # Checked before anything is written, for both the apply and the
     # recording: read as empty, the recording would replace every name the
     # state holds with this run's alone.
-    notice = unreadable_state_notice(state_path, apply=arguments.apply)
+    notice = unreadable_state_notice(
+        state_path,
+        apply=arguments.apply,
+        dry_run_effect=(
+            "This dry run reads what it can of it - nothing, when the file itself "
+            "does not parse - so the oracle may count as native, and the recording "
+            "as not yet recorded, rows the state would have named."
+        ),
+    )
     if notice:
         print(notice, file=sys.stderr)
         if arguments.apply:

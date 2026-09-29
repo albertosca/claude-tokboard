@@ -29,6 +29,7 @@ sys.path.insert(0, str(REPO_ROOT / "lib"))
 sys.path.insert(0, str(REPO_ROOT))
 
 import metrics_core as mr  # noqa: E402
+from state_shapes import write_unreadable_state  # noqa: E402
 from test_tui_state import seeded_tui_home  # noqa: E402
 from textual.widgets import Static  # noqa: E402
 
@@ -117,3 +118,25 @@ def test_the_note_is_one_line_cut_with_an_ellipsis_and_whole_on_hover(
     last_word = note.split()[-1]
     assert last_word not in opened["note_line"]
     assert last_word in opened["hover_screen"]
+
+
+def test_the_tui_opens_over_a_state_that_is_not_utf8(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # The dashboards read the state leniently: a file the strict reader
+    # refuses still opens the app, with the never-applied note.
+    seeded_tui_home(monkeypatch, tmp_path)
+    metrics = tmp_path / ".claude" / "metrics"
+    (metrics / "config.json").write_text(json.dumps({"language": "en"}))
+    write_unreadable_state(metrics / "backfill_state.json", "not UTF-8")
+    arguments = tui.build_arg_parser().parse_args(["--label-budget", "0"])
+
+    async def drive() -> str:
+        app = tui.MetricsTUIApp(
+            mr, tui.load_data(arguments, metrics_core_module=mr), arguments=arguments
+        )
+        async with app.run_test(size=(140, 30), tooltips=True) as pilot:
+            await pilot.pause()
+            return str(app.query(".backfill-note").first(Static).tooltip)
+
+    assert asyncio.run(drive()) == mr.describe_backfill_state(None, lang="en")

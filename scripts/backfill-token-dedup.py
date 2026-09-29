@@ -619,7 +619,11 @@ def main() -> int:
         return 1
     # Checked before anything is written: the state is recorded only once
     # the metrics file has been replaced, too late for a refusal to stop it.
-    notice = unreadable_state_notice(arguments.state_file, apply=arguments.apply)
+    notice = unreadable_state_notice(
+        arguments.state_file,
+        apply=arguments.apply,
+        dry_run_effect="This dry run does not read the state.",
+    )
     if notice:
         print(notice, file=sys.stderr)
         if arguments.apply:

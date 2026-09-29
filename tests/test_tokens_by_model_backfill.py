@@ -20,6 +20,12 @@ from typing import Any
 
 import pytest
 from pasted_command import run_as_pasted
+from state_shapes import (
+    SHAPE_NAMES,
+    UNREADABLE_STATES,
+    restore_permissions,
+    write_unreadable_state,
+)
 
 SCRIPT_PATH = Path(__file__).resolve().parent.parent / "scripts" / "backfill-tokens-by-model.py"
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
@@ -2391,34 +2397,23 @@ def test_a_backup_directory_that_does_not_exist_is_refused(script, tmp_path, mon
     assert not _state_path(tmp_path).exists()
 
 
-# A backfill state that exists but cannot be read stops an apply before it
-# writes anything: read as empty, the recording would replace every name
-# the file held with this run's alone. A dry run says so and carries on.
-UNREADABLE_STATES = {
-    "malformed JSON": b"{not json",
-    "a list at the top level": b"[1, 2]",
-    "unreadable": b'{"fields": {}}',
-}
+# A backfill state that exists but cannot be read safely stops an apply
+# before it writes anything: read as empty, the recording would replace
+# every name the file held with this run's alone. A dry run says so and
+# carries on. The shapes are shared (tests/state_shapes.py).
 
 
-def _make_state_unreadable(tmp_path: Path, shape: str) -> Path:
-    path = _state_path(tmp_path)
-    path.write_bytes(UNREADABLE_STATES[shape])
-    if shape == "unreadable":
-        path.chmod(0o000)
-    return path
-
-
-@pytest.mark.parametrize("shape", sorted(UNREADABLE_STATES))
+@pytest.mark.parametrize("shape", SHAPE_NAMES)
 def test_an_apply_refuses_a_state_it_cannot_read(script, tmp_path, monkeypatch, capsys, shape):
     _one_writable_session(tmp_path)
     metrics_before = _metrics_text(tmp_path)
-    state = _make_state_unreadable(tmp_path, shape)
+    state = _state_path(tmp_path)
+    write_unreadable_state(state, shape)
     _applying_argv(monkeypatch, tmp_path, "--apply", "--expect-checked", "1")
     try:
         assert script.main() == 1
     finally:
-        state.chmod(0o644)
+        restore_permissions(state)
     error = capsys.readouterr().err
     assert f"refusing to apply: the backfill state at {state}" in error
     assert "move it aside or fix it" in error
@@ -2427,35 +2422,39 @@ def test_an_apply_refuses_a_state_it_cannot_read(script, tmp_path, monkeypatch, 
     assert not (tmp_path / "backups").exists()
 
 
-@pytest.mark.parametrize("shape", sorted(UNREADABLE_STATES))
+@pytest.mark.parametrize("shape", SHAPE_NAMES)
 def test_record_earlier_applies_refuses_a_state_it_cannot_read(
     script, tmp_path, monkeypatch, capsys, shape
 ):
     _backfilled_history(tmp_path)
-    state = _make_state_unreadable(tmp_path, shape)
+    state = _state_path(tmp_path)
+    write_unreadable_state(state, shape)
     _applying_argv(monkeypatch, tmp_path, "--record-earlier-applies", "--apply")
     try:
         assert script.main() == 1
     finally:
-        state.chmod(0o644)
+        restore_permissions(state)
     assert f"refusing to apply: the backfill state at {state}" in capsys.readouterr().err
     assert state.read_bytes() == UNREADABLE_STATES[shape]
 
 
-@pytest.mark.parametrize("shape", sorted(UNREADABLE_STATES))
+@pytest.mark.parametrize("shape", SHAPE_NAMES)
 @pytest.mark.parametrize("record_earlier", [False, True])
 def test_a_dry_run_warns_about_a_state_it_cannot_read(
     script, tmp_path, monkeypatch, capsys, shape, record_earlier
 ):
     _backfilled_history(tmp_path)
-    state = _make_state_unreadable(tmp_path, shape)
+    state = _state_path(tmp_path)
+    write_unreadable_state(state, shape)
     extra = ["--record-earlier-applies"] if record_earlier else []
     _applying_argv(monkeypatch, tmp_path, *extra)
     try:
         assert script.main() == 0
     finally:
-        state.chmod(0o644)
+        restore_permissions(state)
     error = capsys.readouterr().err
     assert f"WARNING: the backfill state at {state}" in error
+    # This script's dry run does read the state, and says how.
+    assert "This dry run reads what it can of it" in error
     assert "--apply will refuse" in error
     assert state.read_bytes() == UNREADABLE_STATES[shape]

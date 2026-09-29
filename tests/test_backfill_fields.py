@@ -450,24 +450,6 @@ def test_write_field_state_over_an_old_entry_that_corrected_nothing_knows_the_to
     assert entry["corrected_rows"] == 1
 
 
-def test_write_field_state_replaces_a_fields_entry_that_is_not_a_dict(tmp_path):
-    path = tmp_path / "state.json"
-    path.write_text(json.dumps({"fields": "junk"}))
-    identities = mr.row_identities(identified_rows("e1"), [0], "session_id")
-
-    state = mr.write_field_state("sessions", "tool_calls", "c", "t", identities, path=str(path))
-
-    assert state["fields"] == {
-        "sessions.tool_calls": {
-            "cutoff": "c",
-            "applied_at": "t",
-            "corrected_rows": 1,
-            "rows_changed_this_run": 1,
-            "corrected_row_ids": identities,
-        }
-    }
-
-
 # --- a hand-edited state never breaks a write ---------------------------------
 # write_field_state runs AFTER the metrics file was replaced, so a state it
 # cannot read must not raise: that turned a successful apply into a

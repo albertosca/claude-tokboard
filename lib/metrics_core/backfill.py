@@ -1432,44 +1432,91 @@ def script_invocation(script_file: str) -> tuple[str, str]:
 
 
 class UnreadableStateError(Exception):
-    """A backfill state file that exists but cannot be read as a JSON object."""
+    """A backfill state file that exists but cannot be read safely."""
 
     def __init__(self, path: str, reason: str) -> None:
         super().__init__(f"the backfill state at {path} cannot be read ({reason})")
         self.path = path
 
 
+# JSON's names for the types json.loads returns, bool before the numbers
+# it is a subclass of.
+_JSON_TYPES: tuple[tuple[Any, str], ...] = (
+    (type(None), "null"),
+    (bool, "boolean"),
+    ((int, float), "number"),
+    (str, "string"),
+    (list, "array"),
+    (dict, "object"),
+)
+
+
+def _json_type(value: Any) -> str:
+    """`value`'s type as JSON names it, for a message about the file."""
+    return next(name for kinds, name in _JSON_TYPES if isinstance(value, kinds))
+
+
+def _container_problem(state: dict[str, Any]) -> str | None:
+    """What is wrong with a container the writers merge into, or None.
+
+    "subagents" holds the subagents entry, "fields" holds one entry per
+    field pass, and each of those entries is merged into by name. A
+    writer finding any of them not an object would replace it, and lose
+    what it held; the leaves inside an entry (counts, names) are read
+    leniently by cumulative_rows instead.
+    """
+    for key in ("subagents", "fields"):
+        if key in state and not isinstance(state[key], dict):
+            return f'its "{key}" value is a JSON {_json_type(state[key])}, not an object'
+    for name, entry in state.get("fields", {}).items():
+        if not isinstance(entry, dict):
+            return f'its "fields" entry "{name}" is a JSON {_json_type(entry)}, not an object'
+    return None
+
+
 def read_state_for_update(path: str) -> dict[str, Any]:
     """The backfill state at `path`, for a writer about to merge into it.
 
     A missing file is a first run, and reads as an empty state. Anything
-    else that does not read as a JSON object - malformed JSON, another
-    top-level type, a file this process may not open - raises
-    UnreadableStateError instead: a writer that took it for an empty
-    state would replace every recorded boundary and row name with its
-    own entry alone. load_backfill_state, which the dashboards read
-    through, keeps degrading to None.
+    else that cannot be read safely raises UnreadableStateError instead:
+    an empty file, bytes that are not UTF-8, malformed JSON, another
+    top-level type, a file this process may not open, or a readable
+    object whose "subagents" or "fields" container (or one "fields"
+    entry) is not an object. A writer that took any of these for an
+    empty state would replace every recorded boundary and row name with
+    its own entry alone. load_backfill_state, which the dashboards read
+    through, stays lenient.
     """
     try:
-        with Path(path).open(encoding="utf-8") as state_file:
-            state = json.load(state_file)
+        raw = Path(path).read_bytes()
     except FileNotFoundError:
         return {}
-    except (OSError, ValueError) as problem:
+    except OSError as problem:
+        raise UnreadableStateError(path, f"{type(problem).__name__}: {problem}") from problem
+    if not raw.strip():
+        raise UnreadableStateError(path, "the file is empty")
+    try:
+        state = json.loads(raw.decode("utf-8"))
+    except ValueError as problem:
         raise UnreadableStateError(path, f"{type(problem).__name__}: {problem}") from problem
     if not isinstance(state, dict):
-        raise UnreadableStateError(path, f"it holds a JSON {type(state).__name__}, not an object")
+        raise UnreadableStateError(path, f"it holds a JSON {_json_type(state)}, not an object")
+    container_problem = _container_problem(state)
+    if container_problem:
+        raise UnreadableStateError(path, container_problem)
     return state
 
 
-def unreadable_state_notice(path: str, *, apply: bool) -> str | None:
+def unreadable_state_notice(path: str, *, apply: bool, dry_run_effect: str) -> str | None:
     """What a backfill script prints before it starts when the state at
-    `path` exists but cannot be read, or None when it can (or is missing).
+    `path` exists but cannot be read safely, or None when it can (or is
+    missing).
 
     For an apply it is a refusal, printed before anything is written: the
     state is recorded only after the metrics file has been replaced, too
-    late to stop. For a dry run it is a warning - the dry run reads the
-    state as empty, and says so.
+    late to stop. For a dry run it is a warning, and `dry_run_effect` is
+    the calling script's own sentence on what its dry run does with the
+    state - they differ, so each says it.
     """
     try:
         read_state_for_update(path)
@@ -1478,11 +1525,11 @@ def unreadable_state_notice(path: str, *, apply: bool) -> str | None:
             return (
                 f"refusing to apply: {problem}. Nothing was written; move it aside "
                 "or fix it, then run again (with no state file there, the run starts "
-                "a new one)."
+                "a new one; an empty file is not a missing one)."
             )
         return (
-            f"WARNING: {problem}. This dry run reads it as empty, and --apply will "
-            "refuse until it is moved aside or fixed."
+            f"WARNING: {problem}. {dry_run_effect} --apply will refuse until it is "
+            "moved aside or fixed."
         )
     return None
 
@@ -1490,17 +1537,23 @@ def unreadable_state_notice(path: str, *, apply: bool) -> str | None:
 def load_backfill_state(path: str | None = None) -> dict[str, Any] | None:
     """Metadata about the most recent successful --apply run, or None.
 
-    Read by both dashboards to render the correction boundary honestly;
-    written only by scripts/backfill-token-dedup.py after a verified
-    write to the live metrics file.
+    Read by both dashboards to render the correction boundary honestly,
+    and by the by-model dry run; written only by the backfill scripts
+    after a verified write to the live metrics file. Lenient on purpose:
+    whatever the file holds - not UTF-8, not JSON, unreadable - reads as
+    None rather than raising, so no dashboard fails to render over it
+    (describe_backfill_state copes with a parsed value of any shape).
     """
     path = path or BACKFILL_STATE_FILE
+    # A stat, not an open, for the usual missing file: the TUI calls this
+    # on every recompose, on its event loop, where an open() counts as a
+    # blocking call (tests/test_tui_responsiveness.py).
     if not Path(path).exists():
         return None
     try:
-        with Path(path).open() as state_file:
+        with Path(path).open(encoding="utf-8") as state_file:
             return cast("dict[str, Any]", json.load(state_file))
-    except (json.JSONDecodeError, OSError):
+    except (OSError, ValueError):
         return None
 
 
@@ -1537,9 +1590,10 @@ def write_backfill_state(
 
     `rebuilt_maps` names the rows whose tokens_by_model this run rebuilt
     (see apply_plan) into different contents; a map rebuilt equal to the
-    old one is still the hook's, and is not named. When there are any, they join the fields entry
-    "<kind>.tokens_by_model_rebuilt" (REBUILT_MAPS_FIELD) in the same
-    write; a run that rebuilt none leaves that entry as it was.
+    old one is still the hook's, and is not named. When there are any,
+    they join the fields entry "<kind>.tokens_by_model_rebuilt"
+    (REBUILT_MAPS_FIELD) in the same write; a run that rebuilt none
+    leaves that entry as it was.
     """
     path = path or BACKFILL_STATE_FILE
     state = read_state_for_update(path)

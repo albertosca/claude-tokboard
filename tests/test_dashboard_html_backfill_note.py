@@ -4,6 +4,10 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
+import metrics_core.backfill as backfill_module
+import pytest
+from state_shapes import SHAPE_NAMES, restore_permissions, write_unreadable_state
+
 import dashboard_html
 
 
@@ -26,3 +30,19 @@ def test_render_backfill_note_wraps_the_description_in_a_span(monkeypatch):
 def test_render_period_filter_includes_the_backfill_note(monkeypatch):
     monkeypatch.setattr(dashboard_html, "render_backfill_note", lambda lang: "<span>NOTE</span>")
     assert "<span>NOTE</span>" in dashboard_html.render_period_filter(lang="pt")
+
+
+@pytest.mark.parametrize("shape", SHAPE_NAMES)
+def test_the_note_renders_over_every_unreadable_state(monkeypatch, tmp_path, shape):
+    # The dashboards read the state leniently: whatever the file holds,
+    # the page renders a note rather than raising.
+    state = tmp_path / "backfill_state.json"
+    write_unreadable_state(state, shape)
+    monkeypatch.setattr(backfill_module, "BACKFILL_STATE_FILE", str(state))
+    try:
+        for lang in ("en", "pt"):
+            note = dashboard_html.render_backfill_note(lang=lang)
+            assert note.startswith('<span class="backfill-note">'), note
+            assert len(note) > len('<span class="backfill-note"></span>')
+    finally:
+        restore_permissions(state)
