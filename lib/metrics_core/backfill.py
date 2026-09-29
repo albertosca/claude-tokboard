@@ -877,7 +877,9 @@ def _tool_reading(
     2026-09-28 apply: 2 session rows, 149 and 152 where the file cut gives
     148 and 151 (their hook values, 31, were the first-entry count at both
     cuts). Only an exact match is recognised, and only after both hook
-    formulas, so a value a hook wrote is always read as the hook's.
+    formulas, so a value a hook wrote is always read as the hook's. The
+    caller passes it only when the move is explained (see
+    _explained_time_cut_count).
     """
     if stored == now.distinct:
         return (now.distinct, None)
@@ -888,6 +890,28 @@ def _tool_reading(
     if time_cut_count is not None and stored == time_cut_count:
         return (now.distinct, TIME_CUT)
     return None
+
+
+def _explained_time_cut_count(facts: list[EntryFacts], end_timestamp: str) -> int | None:
+    """The distinct tool count at the time cut, or None when the entries
+    lying between it and a file cut do not explain how it differs.
+
+    Read as a file position, the time cut ends after its own size - the
+    number of entries stamped at or before `end_timestamp` - so the entries
+    between it and a file cut are the ones between those two positions.
+    The time cut's count is explained when it equals the count of the file
+    prefix of that same size: the two cuts then differ exactly by the
+    distinct tool_use blocks of the entries between them, in either
+    direction. That is the measured mechanism behind the 2026-09-28 rows
+    (one in-flight message written just below the hook's last read). A
+    time cut that takes an entry further down while skipping one between
+    the cuts can match a stored count by coincidence, and is not trusted.
+    """
+    size = sum(1 for fact in facts if fact.stamp <= end_timestamp)
+    time_count = tool_calls_as_of(facts, end_timestamp).distinct
+    if time_count != tool_calls_as_of(facts[:size], None).distinct:
+        return None
+    return time_count
 
 
 def plan_tool_call_corrections(
@@ -931,7 +955,7 @@ def plan_tool_call_corrections(
             end = record["timestamp_end"]
             counts = reproducing_cuts(_stored_tokens(record), cut_points.get(end, ()), file_sums)
             if counts:
-                time_cut_count = tool_calls_as_of(facts, end).distinct
+                time_cut_count = _explained_time_cut_count(facts, end)
                 readings = {
                     _tool_reading(stored, tool_calls_as_of(facts[:count], None), time_cut_count)
                     for count in counts

@@ -378,6 +378,91 @@ def test_a_hook_formula_wins_over_the_time_cut_count_when_both_match(tmp_path):
     assert plan.formulas == {0: mr.RAW}
 
 
+# The two real rows the 2026-09-28 apply wrote at the time cut (one
+# session, 149 -> 148 and 152 -> 151), scaled down: the hook stopped at a
+# line stamped after the three entries of one in-flight message that were
+# written below it, the last of which carries the only new tool_use block.
+# The hook value is m1's first-entry count (1); the time cut's distinct
+# count is 3, the file cut's 2.
+REAL_TIME_CUT_SHAPES = [
+    [
+        assistant("2026-09-22T22:28:40.000Z", "m1", 100, tools=("t1",)),
+        assistant("2026-09-22T22:28:41.000Z", "m1", 100, tools=("t2",)),
+        other("2026-09-22T22:28:45.019Z", "pr-link"),
+        assistant("2026-09-22T22:28:44.886Z", "m2", 50),
+        assistant("2026-09-22T22:28:44.892Z", "m2", 50),
+        assistant("2026-09-22T22:28:44.972Z", "m2", 50, tools=("t3",)),
+    ],
+    [
+        assistant("2026-09-22T22:55:10.000Z", "m1", 100, tools=("t1",)),
+        assistant("2026-09-22T22:55:11.000Z", "m1", 100, tools=("t2",)),
+        other("2026-09-22T22:55:40.000Z"),
+        assistant("2026-09-22T22:55:17.589Z", "m2", 50),
+        assistant("2026-09-22T22:55:17.596Z", "m2", 50),
+        assistant("2026-09-22T22:55:36.921Z", "m2", 50, tools=("t3",)),
+    ],
+]
+
+
+@pytest.mark.parametrize("lines", REAL_TIME_CUT_SHAPES, ids=["149-to-148", "152-to-151"])
+def test_the_two_real_time_cut_rows_still_move_to_the_file_cut(tmp_path, lines):
+    transcripts = {"s": write(tmp_path / "s.jsonl", lines)}
+    end = next(line["timestamp"] for line in lines if line["type"] != "assistant")
+    records = [row("s", end, 100, tool_call_count=3)]
+
+    plan = mr.plan_tool_call_corrections(records, transcripts, "2026-09-28")
+
+    assert plan.values == {0: 2}
+    assert plan.formulas == {0: mr.TIME_CUT}
+
+
+def test_a_time_cut_count_explained_in_the_forward_direction_moves_up(tmp_path):
+    # The hook read m2, stamped after the line it stopped at: the time cut
+    # is the one entry before it, and the entry between the cuts (m2)
+    # carries exactly the block the time cut leaves out.
+    transcripts = {
+        "s": write(
+            tmp_path / "s.jsonl",
+            [
+                assistant("2026-08-01T10:00:00Z", "m1", 100, tools=("t1",)),
+                assistant("2026-08-01T10:00:07Z", "m2", 50, tools=("t2",)),
+                other("2026-08-01T10:00:05Z"),
+            ],
+        )
+    }
+    records = [row("s", "2026-08-01T10:00:05Z", 150, tool_call_count=1)]
+
+    plan = mr.plan_tool_call_corrections(records, transcripts, "2026-09-01")
+
+    assert plan.values == {0: 2}
+    assert plan.formulas == {0: mr.TIME_CUT}
+
+
+def test_a_time_cut_count_the_entries_between_the_cuts_do_not_explain_is_refused(tmp_path):
+    # The time cut takes m3 (stamped before the end) but not m2 (after it),
+    # so its extra block sits past an entry it skips: the entry lying
+    # between the two cuts, m2, carries no tool call, yet the counts differ
+    # by one. A stored 2 equals the time cut's count without being
+    # explained by the in-flight mechanism, so it is not moved.
+    transcripts = {
+        "s": write(
+            tmp_path / "s.jsonl",
+            [
+                assistant("2026-08-01T10:00:00Z", "m1", 100, tools=("t1",)),
+                other("2026-08-01T10:00:05Z", "queue-operation"),
+                assistant("2026-08-01T10:00:07Z", "m2", 50),
+                assistant("2026-08-01T10:00:02Z", "m3", 30, tools=("t3",)),
+            ],
+        )
+    }
+    records = [row("s", "2026-08-01T10:00:05Z", 100, tool_call_count=2)]
+
+    plan = mr.plan_tool_call_corrections(records, transcripts, "2026-09-01")
+
+    assert plan.values == {}
+    assert plan.stats == {"untouched: session has a row matching no formula": 1}
+
+
 # --- the incomplete_usage pass -----------------------------------------------
 
 
