@@ -1250,3 +1250,31 @@ def test_main_corrects_a_subagent_whose_copies_under_two_slugs_are_identical(
     assert "differing copies" not in out
     # a2's stale path now resolves to the one transcript both copies are.
     assert "Lines: 3 read, 2 would change" in out
+
+
+def test_a_token_pass_names_the_rows_whose_map_it_rebuilt(tmp_path, script, monkeypatch, capsys):
+    # The by-model oracle counts every map it is not told about as the
+    # hook's own; this rebuilt one is this repo's reconstruction.
+    paths = _streamed_fixture(tmp_path)
+    records = [json.loads(line) for line in paths["metrics"].read_text().splitlines()]
+    monkeypatch.setattr("sys.argv", _subagents_argv(paths, "--apply"))
+
+    assert script.main() == 0
+
+    state = json.loads(paths["state"].read_text())
+    entry = state["fields"]["subagents.tokens_by_model_rebuilt"]
+    assert entry["corrected_row_ids"] == script.row_identities(records, [0], "agent_id")
+
+
+def test_a_token_pass_over_rows_without_a_map_names_none(tmp_path, script, monkeypatch, capsys):
+    paths = _streamed_fixture(tmp_path)
+    row = json.loads(paths["metrics"].read_text())
+    del row["tokens_by_model"]
+    paths["metrics"].write_text(json.dumps(row) + "\n")
+    monkeypatch.setattr("sys.argv", _subagents_argv(paths, "--apply"))
+
+    assert script.main() == 0
+
+    state = json.loads(paths["state"].read_text())
+    assert state["subagents"]["corrected_rows"] == 1
+    assert "fields" not in state

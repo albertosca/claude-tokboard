@@ -66,7 +66,9 @@ Safety
 - only the four token fields may change, each row only in its formula's
   direction; tokens_by_model on a corrected row is rebuilt by the same rule
   and must sum to the new totals; every other field is compared
-  byte-for-byte before the rename.
+  byte-for-byte before the rename. The rows whose map was rebuilt are
+  named in the state (REBUILT_MAPS_FIELD), so the by-model oracle stops
+  counting that map as the hook's own.
 
 Limits
 ------
@@ -685,6 +687,14 @@ def main() -> int:
         # rewritten, and an unrecorded rewrite is never recorded - a re-run
         # finds every row corrected and has nothing to write.
         earliest_corrected = min((records[index]["timestamp_end"] for index in plan), default=None)
+        # The rows whose tokens_by_model apply_plan rebuilt rather than
+        # dropped: that map is now this module's reconstruction, not the
+        # hook's, and the by-model oracle must stop counting it as native.
+        rebuilt = [
+            index
+            for index in sorted(plan)
+            if index in result.model_maps and "tokens_by_model" in records[index]
+        ]
         write_backfill_state(
             arguments.cutoff,
             datetime.now().isoformat(),
@@ -693,6 +703,7 @@ def main() -> int:
             earliest_corrected=earliest_corrected,
             path=arguments.state_file,
             kind=arguments.kind,
+            rebuilt_maps=row_identities(records, rebuilt, id_key),
         )
         print(f"  backfill state recorded: {arguments.state_file}")
 

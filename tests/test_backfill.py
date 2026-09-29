@@ -1637,3 +1637,48 @@ def test_verify_fields_still_rejects_a_value_change_on_a_declared_addable_key():
     problems = mr.verify_fields(before, after, allow_new_keys=frozenset({"tokens_by_model"}))
 
     assert problems, "a value change on a pre-existing declared key must still be reported"
+
+
+# A token pass that corrects a row carrying tokens_by_model rebuilds that
+# map by the same rule as the totals. The by-model oracle must not count
+# it as native any more, so the pass names those rows in the state.
+
+
+def test_write_backfill_state_names_the_maps_the_token_pass_rebuilt(tmp_path):
+    path = str(tmp_path / "state.json")
+    written = mr.write_backfill_state(
+        "2026-09-25",
+        "2026-09-25T08:35:57",
+        _names(3),
+        path=path,
+        kind="subagents",
+        rebuilt_maps=["row1", "row2"],
+    )
+    entry = written["fields"][f"subagents.{mr.REBUILT_MAPS_FIELD}"]
+    assert entry["corrected_row_ids"] == ["row1", "row2"]
+    assert entry["rows_changed_this_run"] == 2
+    assert entry["applied_at"] == "2026-09-25T08:35:57"
+    assert entry["cutoff"] == "2026-09-25"
+    assert written["subagents"]["corrected_rows"] == 3
+    assert mr.load_backfill_state(path) == written
+
+
+def test_a_later_token_pass_adds_its_rebuilt_maps_to_the_earlier_ones(tmp_path):
+    path = str(tmp_path / "state.json")
+    mr.write_backfill_state("2026-09-23", "a", _names(2), path=path, rebuilt_maps=["row0"])
+    written = mr.write_backfill_state(
+        "2026-09-25", "b", _names(3), path=path, rebuilt_maps=["row2"]
+    )
+    entry = written["fields"][f"sessions.{mr.REBUILT_MAPS_FIELD}"]
+    assert entry["corrected_row_ids"] == ["row0", "row2"]
+    assert entry["rows_changed_this_run"] == 1
+
+
+def test_a_token_pass_that_rebuilt_no_map_leaves_the_fields_alone(tmp_path):
+    path = str(tmp_path / "state.json")
+    earlier = {"fields": {f"sessions.{mr.REBUILT_MAPS_FIELD}": {"applied_at": "kept"}}}
+    Path(path).write_text(json.dumps(earlier))
+    written = mr.write_backfill_state("2026-09-23", "b", _names(1), path=path, rebuilt_maps=[])
+    assert written["fields"] == earlier["fields"]
+    fresh = mr.write_backfill_state("2026-09-23", "b", _names(1), path=str(tmp_path / "other.json"))
+    assert "fields" not in fresh

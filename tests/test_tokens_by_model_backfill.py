@@ -1963,3 +1963,151 @@ def test_record_earlier_applies_records_only_the_rows_the_state_lacks(
     assert entry["rows_changed_this_run"] == 1
     assert entry["corrected_rows"] == 2
     assert entry["corrected_row_ids"] == sorted(script.row_identities(live, [0, 1], "session_id"))
+
+
+# ---------------------------------------------------------------------------
+# Maps a dedup TOKEN pass rebuilt are not native either. The 2026-09-23 and
+# 2026-09-25 subagent token passes rewrote tokens_by_model on 1060 existing
+# rows, 510 of them outside the by-model set, and the oracle kept counting
+# those as the hook's own. The dedup pass now names them in the state, and
+# --record-earlier-applies derives the earlier ones from its backups.
+# ---------------------------------------------------------------------------
+
+
+def _rebuilt_state(tmp_path: Path, names: list[str]) -> None:
+    _state_path(tmp_path).write_text(
+        json.dumps({"fields": {"sessions.tokens_by_model_rebuilt": {"corrected_row_ids": names}}})
+    )
+
+
+def _live_records(tmp_path: Path) -> list[dict[str, Any]]:
+    return [json.loads(line) for line in _metrics_text(tmp_path).splitlines()]
+
+
+def test_the_oracle_leaves_out_the_maps_a_dedup_pass_rebuilt(script, tmp_path, monkeypatch, capsys):
+    _two_native_session_rows(tmp_path)
+    live = _live_records(tmp_path)
+    _rebuilt_state(tmp_path, script.row_identities(live, [2], "session_id"))
+
+    _argv(monkeypatch, tmp_path)
+    assert script.main() == 0
+
+    out = capsys.readouterr().out
+    assert "oracle: 1 natively written snapshots - 1 checked" in out
+    assert "oracle: maps rebuilt by a dedup pass: 1 " in out
+    assert "written by an earlier backfill: 0" in out
+    assert "--expect-checked 1" in out
+
+
+def test_a_map_both_written_and_rebuilt_is_counted_once_as_written(script, tmp_path):
+    _two_native_session_rows(tmp_path)
+    live = _live_records(tmp_path)
+    both = script.row_identities(live, [1], "session_id")
+    state = {
+        "fields": {
+            "sessions.tokens_by_model": {"corrected_row_ids": both},
+            "sessions.tokens_by_model_rebuilt": {"corrected_row_ids": both},
+        }
+    }
+    written = script.backfilled_rows(live, "session_id", state, "sessions")
+    rebuilt = script.rebuilt_rows(live, "session_id", state, "sessions")
+    assert written == rebuilt == {1}
+
+    report = script.check_against_native(live, "transcript_path", None, written, rebuilt)
+
+    assert (report.backfilled, report.rebuilt) == (1, 0)
+
+
+def _backup(tmp_path: Path, name: str, records: list[dict[str, Any]]) -> None:
+    backups = tmp_path / "backups"
+    backups.mkdir(exist_ok=True)
+    (backups / name).write_text("".join(json.dumps(record) + "\n" for record in records))
+
+
+def _without_map(record: dict[str, Any]) -> dict[str, Any]:
+    return {key: value for key, value in record.items() if key != "tokens_by_model"}
+
+
+def _rebuilt_history(tmp_path: Path) -> list[dict[str, Any]]:
+    """Row 0's map was dropped by a dedup pass and written again by a
+    by-model apply; row 1's native map was rebuilt by a dedup pass; row 2
+    is native and untouched; row 3 was appended after every backup.
+
+    Row 0 is what makes the NEXT state matter: diffed against the live
+    file instead of the backup that followed it, its map reads as
+    rebuilt, when the dedup pass removed it and a by-model apply wrote
+    the one it has now."""
+    _two_native_session_rows(tmp_path)
+    live = _live_records(tmp_path)
+    live[0]["tokens_by_model"] = {"model-alpha": _bucket(input_tokens=10)}
+    tail = {**_without_map(live[1]), "timestamp_end": "2026-08-01T13:00:00Z"}
+    _metrics_file(tmp_path, "sessions", [*live, tail])
+    older = {"model-alpha": _bucket(input_tokens=7)}
+    dropped = {"model-alpha": _bucket(input_tokens=99)}
+    _backup(
+        tmp_path,
+        "sessions.jsonl.backfill-2026-09-23-213839.bak",
+        [
+            {**live[0], "tokens_by_model": dropped},
+            {**live[1], "tokens_by_model": older},
+            live[2],
+        ],
+    )
+    _backup(
+        tmp_path,
+        "sessions.jsonl.tokens-by-model-2026-09-29-125049.bak",
+        [_without_map(live[0]), live[1], live[2]],
+    )
+    _backup(tmp_path, "sessions.jsonl.backfill-2026-09-29-130000.bak", [*live, tail])
+    return [*live, tail]
+
+
+def test_record_earlier_applies_derives_the_rebuilt_maps_from_the_dedup_backups(
+    script, tmp_path, monkeypatch, capsys
+):
+    live = _rebuilt_history(tmp_path)
+    before = _metrics_text(tmp_path)
+
+    _applying_argv(monkeypatch, tmp_path, "--record-earlier-applies")
+    assert script.main() == 0
+    out = capsys.readouterr().out
+    assert "1 row(s) whose map a dedup pass rebuilt, found in 2 dedup backup(s)" in out
+    assert "1 row(s) written by earlier by-model applies" in out
+    assert not _state_path(tmp_path).exists(), "a dry run records nothing"
+
+    _applying_argv(monkeypatch, tmp_path, "--record-earlier-applies", "--apply")
+    assert script.main() == 0
+    capsys.readouterr()
+    state = json.loads(_state_path(tmp_path).read_text())
+    rebuilt = state["fields"]["sessions.tokens_by_model_rebuilt"]["corrected_row_ids"]
+    assert rebuilt == script.row_identities(live, [1], "session_id")
+    assert _recorded_ids(tmp_path) == script.row_identities(live, [0], "session_id")
+    assert _metrics_text(tmp_path) == before, "recording never touches the metrics file"
+
+    _argv(monkeypatch, tmp_path)
+    assert script.main() == 0
+    out = capsys.readouterr().out
+    assert "oracle: 1 natively written snapshots - 1 checked" in out
+    assert "written by an earlier backfill: 1" in out
+    assert "rebuilt by a dedup pass: 1 " in out
+
+    recorded = _state_path(tmp_path).read_bytes()
+    _applying_argv(monkeypatch, tmp_path, "--record-earlier-applies", "--apply")
+    assert script.main() == 0
+    assert "nothing new to record" in capsys.readouterr().out
+    assert _state_path(tmp_path).read_bytes() == recorded
+
+
+def test_record_earlier_applies_refuses_a_dedup_backup_its_next_state_does_not_extend(
+    script, tmp_path, monkeypatch, capsys
+):
+    _rebuilt_history(tmp_path)
+    _backup(
+        tmp_path,
+        "sessions.jsonl.backfill-2026-09-20-000000.bak",
+        [{"session_id": "other", "timestamp_end": "x"}],
+    )
+    _applying_argv(monkeypatch, tmp_path, "--record-earlier-applies", "--apply")
+    assert script.main() == 1
+    assert "is not a prefix" in capsys.readouterr().err
+    assert not _state_path(tmp_path).exists()

@@ -1190,6 +1190,35 @@ def _usable_count(value: Any) -> int | None:
     return None
 
 
+# The "fields" entry a token pass records the rows whose tokens_by_model it
+# rebuilt under (as "<kind>.tokens_by_model_rebuilt"). Such a map was
+# computed by this module, not written by the hook, so the by-model
+# oracle leaves those rows out of its native evidence
+# (scripts/backfill-tokens-by-model.py).
+REBUILT_MAPS_FIELD = "tokens_by_model_rebuilt"
+
+
+def _merge_field_entry(
+    state: dict[str, Any],
+    kind: str,
+    field: str,
+    cutoff: str | None,
+    applied_at: str,
+    identities: list[str],
+) -> None:
+    """Set state["fields"]["<kind>.<field>"] to this run's entry, its row
+    counts cumulative over every earlier run (see cumulative_rows)."""
+    fields = state.get("fields")
+    if not isinstance(fields, dict):
+        fields = state["fields"] = {}
+    key = f"{kind}.{field}"
+    fields[key] = {
+        "cutoff": cutoff,
+        "applied_at": applied_at,
+        **cumulative_rows(fields.get(key), identities),
+    }
+
+
 def write_field_state(
     kind: str,
     field: str,
@@ -1210,15 +1239,7 @@ def write_field_state(
     path = path or BACKFILL_STATE_FILE
     existing = load_backfill_state(path)
     state: dict[str, Any] = existing if isinstance(existing, dict) else {}
-    fields = state.get("fields")
-    if not isinstance(fields, dict):
-        fields = state["fields"] = {}
-    key = f"{kind}.{field}"
-    fields[key] = {
-        "cutoff": cutoff,
-        "applied_at": applied_at,
-        **cumulative_rows(fields.get(key), identities),
-    }
+    _merge_field_entry(state, kind, field, cutoff, applied_at, identities)
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
     with target.open("w") as handle:
@@ -1380,6 +1401,7 @@ def write_backfill_state(
     earliest_corrected: str | None = None,
     path: str | None = None,
     kind: str = "sessions",
+    rebuilt_maps: list[str] | None = None,
 ) -> dict[str, Any]:
     """Record a successful apply, merged into whatever the file holds.
 
@@ -1400,6 +1422,11 @@ def write_backfill_state(
     key) makes it unknown for good - the later run's own earliest row is not
     the boundary of rows it never saw. Cutoff, time and the uncorrectable
     count describe the file as of this run, so they are replaced.
+
+    `rebuilt_maps` names the rows whose tokens_by_model this run rebuilt
+    (see apply_plan). When there are any, they join the fields entry
+    "<kind>.tokens_by_model_rebuilt" (REBUILT_MAPS_FIELD) in the same
+    write; a run that rebuilt none leaves that entry as it was.
     """
     path = path or BACKFILL_STATE_FILE
     existing = load_backfill_state(path)
@@ -1432,6 +1459,8 @@ def write_backfill_state(
         # a count this run no longer carries must go, not linger.
         state.pop("unidentified_earlier_rows", None)
         state.update(entry)
+    if rebuilt_maps:
+        _merge_field_entry(state, kind, REBUILT_MAPS_FIELD, cutoff, applied_at, rebuilt_maps)
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
     with target.open("w") as state_file:
