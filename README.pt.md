@@ -125,7 +125,7 @@ A partir da 2.1.0, os rótulos de tarefa de IA ficam em cache por idioma. Na pri
 
 A partir da 2.2.0, a contagem de ferramentas passa a ser por chamada distinta - cerca de 4x maior que antes para o mesmo trabalho -, enquanto as linhas antigas mantêm a contagem de quando foram gravadas; também a partir da 2.2.0, o consumo de subagente registrado pelo Claude Code 2.1.278 ou mais recente é um piso, porque o Claude Code nem sempre grava o consumo final de uma mensagem de subagente.
 
-A partir da 2.3.0, um total de tokens marcado com "≥" torna esse piso visível: algumas das mensagens daquela linha nunca receberam o registro final de consumo, então o total real pode ser maior que o mostrado. `scripts/backfill-token-dedup.py --fields incomplete_usage` consegue preencher essa marca nas linhas gravadas antes desta versão.
+A partir da 2.3.0, um total de tokens marcado com "≥" torna esse piso visível: algumas das mensagens daquela linha nunca receberam o registro final de consumo, então o total real pode ser maior que o mostrado. `scripts/backfill-token-dedup.py --fields incomplete_usage` consegue preencher essa marca nas linhas gravadas antes desta versão. Uma linha cuja transcrição já não está no disco nunca recebe a marca, e isso não tem volta: sem a transcrição, não há como saber se o consumo ficou incompleto.
 
 ## Contribuindo
 
