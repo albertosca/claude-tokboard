@@ -118,17 +118,37 @@ def stage_showcase(home: Path, now: datetime) -> None:
     on their absence, and that the README should not show a visitor:
 
     - backfill_state.json. Without it both dashboards open on the "token
-      duplication not yet corrected" warning. What is written here is what
-      write_backfill_state records for an apply that found nothing to
-      correct - which is the truth about synthetic data. Written through
-      write_backfill_state itself, so the shape cannot drift from what the
-      dashboards read.
-    - a tokens_by_model map on every session, so the by-model chart shows
-      models instead of one "no model" band.
+      duplication not yet corrected" warning. A tokens_by_model map on
+      every session, so the by-model chart shows models instead of one
+      "no model" band.
 
     Every path here is built from `home` and checked to be inside it; none
     is taken from metrics_core's module constants, which point at the
     REAL ~/.claude/metrics in this process.
+
+    BACKFILL STATE HONESTY (backlog 2026-09-24 #9): this used to write
+    mr.DEFAULT_CUTOFF ("2026-08-13") as the state's cutoff. describe_backfill_
+    state() renders EXACTLY two shapes - the "not yet corrected" warning, or
+    "duplication corrected for sessions that ended before {cutoff} (applied
+    on {applied})" - there is no third, silent shape (read describe_
+    backfill_state itself: any state with a string cutoff AND a string
+    applied_at renders the second one, unconditionally, regardless of how
+    many rows corrected_rows says it touched). DEFAULT_CUTOFF is a real
+    production date that has nothing to do with this fixture's own dates,
+    and build_fixture's oldest record (~50 days before `now`) usually falls
+    BEFORE it - so the demo claimed a correction had been applied to a
+    session that this synthetic fixture never duplicated in the first
+    place, on every machine where "now" made the arithmetic land that way.
+
+    The fix is the shape the backlog item itself points at: a cutoff that
+    predates every session this fixture writes. "sessions that ended before
+    {cutoff}" then describes zero real sessions - vacuously true, not a
+    fabricated claim about any session actually shown - and corrected_rows=0
+    stops being an assertion made by fiat and becomes the literal, provable
+    count of rows below that boundary (there are none). Computed from the
+    fixture's OWN data (the earliest timestamp on any row, minus a day),
+    not a second hard-coded constant that could drift out of sync with
+    build_fixture the next time someone adds an older record.
     """
     metrics = home / ".claude" / "metrics"
     sessions = metrics / "sessions.jsonl"
@@ -145,8 +165,15 @@ def stage_showcase(home: Path, now: datetime) -> None:
     sys.path[:0] = [str(REPO / "lib")]
     import metrics_core as mr
 
+    earliest_session_moment = min(
+        datetime.fromisoformat(value)
+        for row in rows
+        for value in (row["timestamp_start"], row["timestamp_end"])
+    )
+    cutoff_before_every_session = (earliest_session_moment - timedelta(days=1)).date().isoformat()
+
     mr.write_backfill_state(
-        mr.DEFAULT_CUTOFF,
+        cutoff_before_every_session,
         (now - timedelta(days=2)).isoformat(),
         0,
         uncorrectable_rows=0,
@@ -268,6 +295,13 @@ def make_screenshot(home: Path, work: Path, lang: str) -> None:
     shutil.move(str(shot), str(ASSETS / f"dashboard-{lang}.png"))
 
 
+# Fixed 2026-09-24 (found while regenerating for backlog #9): MetricsTUIApp's
+# third positional parameter is `arguments`, and load_data's is
+# `metrics_core_module` - this inline script still called them `args` and
+# `mr`, a rename in dashboard_tui.py this untested (see the module
+# docstring) subprocess script never picked up. Confirmed by running: the
+# recording step raised TypeError before this fix and produced a real GIF
+# after it.
 SHOOT_TUI = """
 import asyncio, os, sys
 from pathlib import Path
@@ -280,7 +314,7 @@ BEATS = __import__("json").loads(sys.argv[3])
 
 async def main():
     args = tui.build_arg_parser().parse_args(["--label-budget", "0"])
-    app = tui.MetricsTUIApp(mr, tui.load_data(args, mr=mr), args=args)
+    app = tui.MetricsTUIApp(mr, tui.load_data(args, metrics_core_module=mr), arguments=args)
     async with app.run_test(size=tuple(__import__("json").loads(sys.argv[4]))) as pilot:
         await pilot.pause()
         for i, keys in enumerate(BEATS):
