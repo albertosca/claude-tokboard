@@ -146,6 +146,7 @@ from metrics_core.backfill import (
     plan_corrections_by_formula,
     plan_incomplete_usage,
     plan_tool_call_corrections,
+    row_identities,
     sha256_bytes,
     sha256_of,
     subagent_transcripts,
@@ -481,7 +482,7 @@ def run_field_pass(
             field,
             arguments.cutoff,
             datetime.now().isoformat(),
-            len(plan.values),
+            row_identities(records, plan.values, id_key),
             path=arguments.state_file,
         )
         print(f"  backfill state recorded: {arguments.state_file}")

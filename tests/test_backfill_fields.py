@@ -333,18 +333,46 @@ def test_apply_field_plan_replaces_in_place_or_appends_and_copies_only_planned_r
     assert flagged[1]["incomplete_usage_messages"] == 3
 
 
-def test_write_field_state_accumulates_per_kind_and_field_and_leaves_the_rest(tmp_path):
+def identified_rows(*ends: str) -> list[dict[str, Any]]:
+    return [{"session_id": "s", "timestamp_end": end} for end in ends]
+
+
+def test_row_identities_name_a_row_by_unit_moment_and_ordinal_not_by_its_values():
+    records = [
+        {"session_id": "s", "timestamp_end": "e1", "tool_call_count": 1},
+        {"session_id": "s", "timestamp_end": "e1", "tool_call_count": 1},  # same moment
+        {"session_id": "other", "timestamp_end": "e1", "tool_call_count": 1},
+    ]
+
+    identities = mr.row_identities(records, [0, 1, 2], "session_id")
+
+    assert len(set(identities)) == 3
+    # A corrected value, or rows appended later, leave a row's identity alone.
+    corrected = [dict(records[0], tool_call_count=9), *records[1:], *identified_rows("e0")]
+    assert mr.row_identities(corrected, [0, 1, 2], "session_id") == identities
+    # Subagent rows are named by their own agent_id, not the parent session.
+    agents = [
+        {"session_id": "s", "agent_id": "a1", "timestamp_end": "e1"},
+        {"session_id": "s", "agent_id": "a2", "timestamp_end": "e1"},
+    ]
+    assert len(set(mr.row_identities(agents, [0, 1], "agent_id"))) == 2
+
+
+def test_write_field_state_counts_a_row_two_runs_corrected_once(tmp_path):
     path = str(tmp_path / "state.json")
     mr.write_backfill_state("2026-09-23", "2026-09-23T12:00:00", 5, path=path)
+    records = identified_rows("e1", "e2", "e3")
+    first_run = mr.row_identities(records, [0, 1], "session_id")
+    second_run = mr.row_identities(records, [1, 2], "session_id")
 
     mr.write_field_state(
-        "sessions", "tool_calls", "2026-09-28", "2026-09-28T10:00:00", 3, path=path
-    )
-    state = mr.write_field_state(
-        "sessions", "tool_calls", "2026-09-29", "2026-09-29T10:00:00", 2, path=path
+        "sessions", "tool_calls", "2026-09-28", "2026-09-28T10:00:00", first_run, path=path
     )
     mr.write_field_state(
-        "subagents", "tool_calls", "2026-09-28", "2026-09-28T11:00:00", 4, path=path
+        "sessions", "tool_calls", "2026-09-29", "2026-09-29T10:00:00", second_run, path=path
+    )
+    mr.write_field_state(
+        "subagents", "tool_calls", "2026-09-28", "2026-09-28T11:00:00", first_run, path=path
     )
 
     state = json.loads(Path(path).read_text())
@@ -352,23 +380,72 @@ def test_write_field_state_accumulates_per_kind_and_field_and_leaves_the_rest(tm
     assert state["fields"]["sessions.tool_calls"] == {
         "cutoff": "2026-09-29",
         "applied_at": "2026-09-29T10:00:00",
-        "corrected_rows": 5,
+        "corrected_rows": 2,  # this run's
+        "total_distinct_rows": 3,  # row e2 was corrected by both runs
+        "corrected_row_ids": sorted(mr.row_identities(records, [0, 1, 2], "session_id")),
     }
-    assert state["fields"]["subagents.tool_calls"]["corrected_rows"] == 4
+    assert state["fields"]["subagents.tool_calls"]["total_distinct_rows"] == 2
     # The dashboards' note still reads the token entry only.
     assert mr.describe_backfill_state(state, lang="en") == mr.describe_backfill_state(
         mr.load_backfill_state(path), lang="en"
     )
 
 
+def test_write_field_state_over_an_old_state_leaves_the_distinct_total_unknown(tmp_path):
+    # The shape every state written before row identities has: one count
+    # that added each run's rows, so a row corrected twice counted twice.
+    path = tmp_path / "state.json"
+    old = {
+        "cutoff": "2026-09-23",
+        "applied_at": "2026-09-23T21:38:39",
+        "corrected_rows": 2839,
+        "fields": {
+            "sessions.tool_calls": {
+                "cutoff": "2026-09-28",
+                "applied_at": "2026-09-29T10:58:52",
+                "corrected_rows": 2034,
+            }
+        },
+    }
+    path.write_text(json.dumps(old))
+    note = mr.describe_backfill_state(mr.load_backfill_state(str(path)), lang="en")
+    records = identified_rows("e1", "e2")
+
+    for index, applied_at in ((0, "t1"), (1, "t2")):
+        state = mr.write_field_state(
+            "sessions",
+            "tool_calls",
+            "c",
+            applied_at,
+            mr.row_identities(records, [index], "session_id"),
+            path=str(path),
+        )
+
+    entry = state["fields"]["sessions.tool_calls"]
+    assert entry["corrected_rows"] == 1
+    # The earlier rows have no identities, so how many are distinct is not
+    # known - and never becomes known - but what they reported is kept.
+    assert entry["total_distinct_rows"] is None
+    assert entry["unidentified_earlier_rows"] == 2034
+    assert entry["corrected_row_ids"] == sorted(mr.row_identities(records, [0, 1], "session_id"))
+    assert mr.describe_backfill_state(state, lang="en") == note
+
+
 def test_write_field_state_replaces_a_fields_entry_that_is_not_a_dict(tmp_path):
     path = tmp_path / "state.json"
     path.write_text(json.dumps({"fields": "junk"}))
+    identities = mr.row_identities(identified_rows("e1"), [0], "session_id")
 
-    state = mr.write_field_state("sessions", "tool_calls", "c", "t", 1, path=str(path))
+    state = mr.write_field_state("sessions", "tool_calls", "c", "t", identities, path=str(path))
 
     assert state["fields"] == {
-        "sessions.tool_calls": {"cutoff": "c", "applied_at": "t", "corrected_rows": 1}
+        "sessions.tool_calls": {
+            "cutoff": "c",
+            "applied_at": "t",
+            "corrected_rows": 1,
+            "total_distinct_rows": 1,
+            "corrected_row_ids": identities,
+        }
     }
 
 
@@ -467,6 +544,9 @@ def test_tool_calls_apply_backs_up_rewrites_one_field_records_state_and_is_idemp
     assert new[1] == old[1]
     state = json.loads(paths["state"].read_text())
     assert state["fields"]["sessions.tool_calls"]["corrected_rows"] == 1
+    assert state["fields"]["sessions.tool_calls"]["corrected_row_ids"] == mr.row_identities(
+        old, [0], "session_id"
+    )
     assert "corrected_rows" not in state  # the token entry was never written
 
     capsys.readouterr()

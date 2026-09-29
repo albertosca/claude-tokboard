@@ -562,6 +562,10 @@ def test_the_script_moves_a_time_cut_count_to_the_file_cut_and_then_leaves_it(
         row("s", "2026-08-01T10:00:06Z", 150, tool_call_count=2, transcript_path=transcript),
     ]
     metrics.write_text("".join(json.dumps(item) + "\n" for item in rows))
+    # The earlier time-cut run already corrected row 0 once.
+    state_path = tmp_path / "state.json"
+    earlier = mr.row_identities(rows, [0], "session_id")
+    mr.write_field_state("sessions", "tool_calls", "c", "t", earlier, path=str(state_path))
     monkeypatch.setattr(
         "sys.argv",
         [
@@ -591,6 +595,10 @@ def test_the_script_moves_a_time_cut_count_to_the_file_cut_and_then_leaves_it(
     ) in out
     written = [json.loads(line) for line in metrics.read_text().splitlines()]
     assert [item["tool_call_count"] for item in written] == [1, 2]
+    entry = json.loads(state_path.read_text())["fields"]["sessions.tool_calls"]
+    assert entry["corrected_rows"] == 1
+    assert entry["total_distinct_rows"] == 1  # the same row, corrected twice
+    assert entry["corrected_row_ids"] == earlier
 
     assert script.main() == 0
     assert "nothing to correct" in capsys.readouterr().out

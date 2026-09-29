@@ -12,6 +12,7 @@ import collections
 import hashlib
 import json
 import os
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any, BinaryIO, NamedTuple, cast
 
@@ -1067,18 +1068,53 @@ def apply_field_plan(
     return corrected
 
 
+def row_identities(records: list[dict[str, Any]], indexes: Iterable[int], id_key: str) -> list[str]:
+    """A stable name for each of the rows at `indexes`, in that order.
+
+    A row is named by its unit (`id_key`), its timestamp_end and its
+    ordinal among the unit's earlier rows with the same timestamp_end in
+    file order - never by a value a pass may change, so a row keeps its
+    name when it is corrected, and rows appended later do not rename it.
+    Hashed, so the state file holds no session ids.
+    """
+    ordinals: dict[int, int] = {}
+    seen: collections.Counter[tuple[Any, Any]] = collections.Counter()
+    for index, record in enumerate(records):
+        moment = (record.get(id_key), record.get("timestamp_end"))
+        ordinals[index] = seen[moment]
+        seen[moment] += 1
+    identities = []
+    for index in indexes:
+        record = records[index]
+        name = json.dumps([record.get(id_key), record.get("timestamp_end"), ordinals[index]])
+        identities.append(sha256_bytes(name.encode("utf-8"))[:16])
+    return identities
+
+
 def write_field_state(
     kind: str,
     field: str,
     cutoff: str,
     applied_at: str,
-    corrected_rows: int,
+    identities: list[str],
     path: str | None = None,
 ) -> dict[str, Any]:
     """Record a successful field pass under state["fields"]["<kind>.<field>"],
-    leaving the token entries - the ones the dashboards read - untouched. A
-    later pass of the same kind and field adds its rows to the earlier ones',
-    as write_backfill_state does."""
+    leaving the token entries - the ones the dashboards read - untouched.
+
+    `identities` names the rows this run changed (see row_identities).
+    `corrected_rows` is how many that is; `corrected_row_ids` gathers the
+    names every run of this kind and field changed, so a row corrected by
+    two runs counts once in `total_distinct_rows`. Adding each run's count,
+    as this did before 2026-09-29, counted it twice: the tool_calls pass
+    re-corrected 2 session rows its 2026-09-28 run had written, and the
+    state said 2034 rows where 2032 distinct ones had changed.
+
+    An entry written before then has a count but no names: which of its
+    rows a later run touches again cannot be told, so the distinct total
+    stays unknown (None) for good, and the count it reported is kept as
+    `unidentified_earlier_rows`.
+    """
     path = path or BACKFILL_STATE_FILE
     existing = load_backfill_state(path)
     state: dict[str, Any] = existing if isinstance(existing, dict) else {}
@@ -1087,9 +1123,25 @@ def write_field_state(
         fields = state["fields"] = {}
     key = f"{kind}.{field}"
     previous = fields.get(key)
+    names = set(identities)
+    unidentified: int | None = None
     if isinstance(previous, dict):
-        corrected_rows += previous.get("corrected_rows") or 0
-    fields[key] = {"cutoff": cutoff, "applied_at": applied_at, "corrected_rows": corrected_rows}
+        earlier = previous.get("corrected_row_ids")
+        if isinstance(earlier, list):
+            names.update(earlier)
+            unidentified = previous.get("unidentified_earlier_rows")
+        else:
+            unidentified = previous.get("corrected_rows") or 0
+    entry: dict[str, Any] = {
+        "cutoff": cutoff,
+        "applied_at": applied_at,
+        "corrected_rows": len(identities),
+        "total_distinct_rows": len(names) if unidentified is None else None,
+        "corrected_row_ids": sorted(names),
+    }
+    if unidentified is not None:
+        entry["unidentified_earlier_rows"] = unidentified
+    fields[key] = entry
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
     with target.open("w") as handle:
