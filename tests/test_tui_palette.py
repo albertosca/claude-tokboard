@@ -131,6 +131,13 @@ def test_delta_e_measures_what_it_claims() -> None:
     assert delta_e("#98e024", "#9d65ff") == delta_e("#9d65ff", "#98e024")
 
 
+def test_the_palette_has_room_for_every_model_seen_so_far_and_then_some() -> None:
+    # The model chart gives each model its own PANE_COLORS slot. The
+    # author's history held 8 models on 2026-09-29; 12 leaves headroom
+    # for the next few before the overflow marker comes back.
+    assert len(tui.PANE_COLORS) >= 12
+
+
 def test_every_project_colour_is_distinct_on_screen() -> None:
     palette = [*tui.PANE_COLORS, tui.PANE_OTHER_COLOR]
     shown = rendered_colors(palette)

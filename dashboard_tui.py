@@ -602,6 +602,14 @@ PlotColor = str | tuple[int, int, int]
 # pairs of projects shared a colour. An RGB tuple is not remapped. Mint and cream were picked to sit
 # at least 57 delta E from every themed colour here and from the "other"
 # gray; tests/test_tui_palette.py measures the rendered result.
+#
+# Twelve, not seven (2026-09-29): the model chart gives every model its
+# own slot, and the author's history already held 8 models, so the
+# newest was drawn in a borrowed colour. The five added RGB tuples (pink,
+# hot magenta, deep blue, forest green, red) were picked greedily to
+# keep the closest pair of the whole palette, gray included, as far
+# apart as possible: 48.2 CIE76 delta E, against the test's floor of 20.
+# The project pane still uses only the first PANE_MAXIMUM_PROJECTS.
 PANE_COLORS: list[PlotColor] = [
     "green",
     "blue",
@@ -610,6 +618,11 @@ PANE_COLORS: list[PlotColor] = [
     "cyan",
     (0, 255, 180),
     (255, 240, 180),
+    (255, 180, 240),
+    (255, 0, 195),
+    (0, 120, 210),
+    (45, 135, 45),
+    (255, 30, 0),
 ]
 PANE_OTHER_COLOR = "gray"
 PANE_OTHER_KEY = "__outros__"
@@ -951,9 +964,13 @@ class TrendChart(PlotextPlot):
                 pane_series_label(self.metrics_core_module, series_key, lang=self.lang)
                 for series_key in series_keys
             ]
+            # The "outros" bucket is gray by its key, not by running past the
+            # palette's end: PANE_COLORS outgrew PANE_MAXIMUM_PROJECTS when the
+            # model chart needed more colours, so the bucket's index is now a
+            # real colour.
             palette = [
-                PANE_COLORS[palette_index] if palette_index < len(PANE_COLORS) else PANE_OTHER_COLOR
-                for palette_index in range(len(series_keys))
+                PANE_OTHER_COLOR if series_key == PANE_OTHER_KEY else PANE_COLORS[palette_index]
+                for palette_index, series_key in enumerate(series_keys)
             ]
             if self.project_highlighted:
                 color = [

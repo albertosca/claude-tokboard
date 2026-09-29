@@ -289,9 +289,10 @@ def test_overflow_projects_beyond_pane_colors_get_the_other_color(
 ) -> None:
     """9 distinct, distinctly-ranked projects: PANE_MAXIMUM_PROJECTS (7) go
     into top_keys, the rest collapse into one "outros" bucket, so
-    series_keys has exactly 8 entries - one more than len(PANE_COLORS) (7).
-    That 8th entry (index 7) is the only one the `i < len(PANE_COLORS)`
-    boundary controls."""
+    series_keys has exactly 8 entries. PANE_COLORS has more than 8
+    colours since the model chart needed them (2026-09-29), so the 8th
+    entry (index 7) has a real colour at its index - the bucket must
+    still be gray, by its key."""
     records = [
         _daily(f"/projects/p{index:02d}", day, (9 - index) * 10)
         for index in range(9)
@@ -303,13 +304,13 @@ def test_overflow_projects_beyond_pane_colors_get_the_other_color(
     color = captured["color"]
     assert len(chart.pane_series_keys) == 8
     assert chart.pane_series_keys[-1] == tui.PANE_OTHER_KEY
-    assert color[:7] == tui.PANE_COLORS, (
+    assert len(tui.PANE_COLORS) > tui.PANE_MAXIMUM_PROJECTS
+    assert color[:7] == tui.PANE_COLORS[:7], (
         "the 7 real top projects must use the named palette in order"
     )
     assert color[7] == tui.PANE_OTHER_COLOR, (
-        "the overflow ('outros') bucket must use PANE_OTHER_COLOR - a boundary "
-        "shift here (i <= len(PANE_COLORS)) would try PANE_COLORS[7], which "
-        "does not exist"
+        "the overflow ('outros') bucket must use PANE_OTHER_COLOR, not the "
+        "palette colour that happens to sit at its index"
     )
 
 

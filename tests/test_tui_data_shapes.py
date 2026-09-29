@@ -1214,25 +1214,47 @@ def test_the_dashboard_hands_its_chart_the_slots_settled_over_the_whole_history(
     assert asyncio.run(drive()) == [expected, expected]
 
 
-def test_a_model_past_the_last_colour_reuses_an_earlier_one_and_is_marked():
-    # Eight models, seven colours: the eighth REUSES an earlier model's
-    # colour (backlog sweep 3 package M) rather than sharing the "other"
-    # colour with the unattributed band - the two would otherwise be
-    # visually indistinguishable from "no model" data. The TUI has no
-    # click-to-highlight, so the marker in its legend label is what a
-    # reader has instead to tell an overflow model apart from the one
-    # whose colour it borrowed.
-    models = [f"model-{index}" for index in range(8)]
+def _render_model_legend(model_count: int) -> tuple[list[str], str]:
+    # Zero-padded: _legend_colour finds a label by substring, so an
+    # unpadded "model-1" would also match the legend line of "model-10".
+    models = [f"model-{index:02d}" for index in range(model_count)]
+    # First half on day 1, the rest on day 2, so the models first appear
+    # in list order and the LAST one is the one past the palette.
     records = [
-        _model_session(f"s{index}", 1 + index % 2, {model: _m(input_tokens=100)}, total=200)
+        _model_session(
+            f"s{index}", 1 + 2 * index // model_count, {model: _m(input_tokens=100)}, total=200
+        )
         for index, model in enumerate(models)
     ]
     chart = tui.TrendChart(mr, records, mode="model", lang="pt")
     chart.render_chart(now=datetime(2026, 8, 12, 0, 0).astimezone())
     raw = chart.plt.build()
-    colours = [_legend_colour(raw, model) for model in models]
-    assert len(set(colours)) == 7, colours
-    assert colours.count(colours[-1]) == 2, "the eighth model must land on an already-used colour"
-    assert "model-7 *" in raw, "the overflow marker must reach the rendered legend"
+    return [_legend_colour(raw, model) for model in models], raw
+
+
+def test_eight_models_each_get_their_own_colour_and_no_overflow_marker():
+    # The author's real history held 8 models on 2026-09-29 while the
+    # palette had 7 colours, so the newest model was drawn in a borrowed
+    # colour and marked " *". The palette now has room for them all.
+    colours, raw = _render_model_legend(8)
+    assert len(set(colours)) == 8, colours
+    assert " *" not in raw, "no model may be marked as overflow while the palette has room"
+
+
+def test_a_model_past_the_last_colour_reuses_an_earlier_one_and_is_marked():
+    # One model more than there are colours: the last REUSES an earlier
+    # model's colour (backlog sweep 3 package M) rather than sharing the
+    # "other" colour with the unattributed band - the two would otherwise
+    # be visually indistinguishable from "no model" data. The TUI has no
+    # click-to-highlight, so the marker in its legend label is what a
+    # reader has instead to tell an overflow model apart from the one
+    # whose colour it borrowed.
+    palette_size = len(tui.PANE_COLORS)
+    colours, raw = _render_model_legend(palette_size + 1)
+    assert len(set(colours)) == palette_size, colours
+    assert colours.count(colours[-1]) == 2, "the last model must land on an already-used colour"
+    assert f"model-{palette_size:02d} *" in raw, (
+        "the overflow marker must reach the rendered legend"
+    )
     unattributed_colour = _legend_colour(raw, mr.t("no_model", "pt"))
     assert unattributed_colour not in colours, "no model must stay a colour no real model wears"
