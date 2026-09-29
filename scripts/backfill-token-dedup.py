@@ -153,6 +153,7 @@ from metrics_core.backfill import (
     plan_incomplete_usage,
     plan_tool_call_corrections,
     row_identities,
+    script_invocation,
     sha256_bytes,
     sha256_of,
     subagent_transcripts,
@@ -745,7 +746,7 @@ def main() -> int:
     recovery_command = " ".join(
         shlex.quote(word)
         for word in (
-            "backfill-tokens-by-model.py",
+            *script_invocation("backfill-tokens-by-model.py"),
             "--file",
             arguments.kind,
             "--metrics-file",

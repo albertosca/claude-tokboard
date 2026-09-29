@@ -12,7 +12,6 @@ import importlib.util
 import json
 import os
 import shlex
-import subprocess
 import sys
 import types
 from collections.abc import Iterable
@@ -20,6 +19,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from pasted_command import run_as_pasted
 
 SCRIPT_PATH = Path(__file__).resolve().parent.parent / "scripts" / "backfill-tokens-by-model.py"
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
@@ -1935,32 +1935,6 @@ def _printed_command(output: str, marker: str, stop: str = "\n") -> list[str]:
     return shlex.split(rest[: rest.index(stop)] if stop in rest else rest)
 
 
-def _run_as_pasted(words: list[str], base: Path) -> subprocess.CompletedProcess[str]:
-    """Run a printed command the way an operator pastes it: from the
-    repository root, as its own process. `python3` becomes this
-    interpreter (a version-manager shim on PATH can resolve through HOME),
-    and the environment is only a PATH and a HOME that is not the real one."""
-    assert words[0] == "python3"
-    home = base / "home"
-    home.mkdir(exist_ok=True)
-    return subprocess.run(
-        [sys.executable, *words[1:]],
-        cwd=SCRIPT_PATH.parent.parent,
-        env={"PATH": "/usr/bin:/bin", "HOME": str(home)},
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-
-
-def _run_printed(
-    script: types.ModuleType, monkeypatch: pytest.MonkeyPatch, words: list[str]
-) -> int:
-    monkeypatch.setattr(sys, "argv", ["backfill-tokens-by-model.py", *words])
-    result: int = script.main()
-    return result
-
-
 def _fail_state_write(script: types.ModuleType, monkeypatch: pytest.MonkeyPatch) -> None:
     def fail(*arguments: Any, **keywords: Any) -> None:
         raise OSError("disk full")
@@ -1978,12 +1952,13 @@ def test_the_warning_names_a_recovery_that_records_the_rows(script, tmp_path, mo
     assert script.main() == 0
     warning = capsys.readouterr().err
     words = _printed_command(warning, "from the backup this run took: ")
-    assert words[0] == "backfill-tokens-by-model.py"
+    assert words[:2] == ["python3", "scripts/backfill-tokens-by-model.py"]
     assert words[words.index("--metrics-dir") + 1] == str(base / "metrics")
     assert words[words.index("--backup-dir") + 1] == str(base / "backups")
 
     monkeypatch.setattr(script, "write_field_state", real_write)
-    assert _run_printed(script, monkeypatch, words[1:]) == 0
+    recording = run_as_pasted(words, base)
+    assert recording.returncode == 0, recording.stderr
     records = _live_records(base)
     assert _recorded_ids(base) == script.row_identities(records, [0], "session_id")
 
@@ -2014,7 +1989,7 @@ def test_the_dry_run_prints_commands_aimed_at_the_files_it_read(
     assert words[:2] == ["python3", "scripts/backfill-tokens-by-model.py"]
     assert words[words.index("--metrics-dir") + 1] == str(base / "metrics")
     assert words[words.index("--backup-dir") + 1] == str(base / "backups")
-    recording = _run_as_pasted(words, base)
+    recording = run_as_pasted(words, base)
     assert recording.returncode == 0, recording.stderr
     assert len(_recorded_ids(base)) == 2
 
@@ -2033,7 +2008,7 @@ def test_the_dry_run_prints_commands_aimed_at_the_files_it_read(
     assert words[words.index("--projects-dir") + 1] == str(base / "projects")
     # Every row here already has its map: pasted, the command passes the
     # evidence floor it names and finds nothing left to write.
-    writing = _run_as_pasted(words, base)
+    writing = run_as_pasted(words, base)
     assert writing.returncode == 0, writing.stderr
     assert "nothing to write; leaving the file untouched" in writing.stdout
 
@@ -2047,7 +2022,7 @@ def test_the_printed_write_command_writes_when_pasted(script, tmp_path, monkeypa
     words = _printed_command(capsys.readouterr().out, "To write: ", " (and read")
     assert _refused_to_write(base)
 
-    writing = _run_as_pasted(words, base)
+    writing = run_as_pasted(words, base)
 
     assert writing.returncode == 0, writing.stderr
     assert f"backfill state recorded: {_state_path(base)}" in writing.stdout
@@ -2087,7 +2062,7 @@ def test_an_explicit_metrics_file_and_state_file_carry_into_the_printed_command(
     assert words[words.index("--metrics-file") + 1] == str(renamed)
     assert words[words.index("--state-file") + 1] == str(state)
 
-    recording = _run_as_pasted(words, base)
+    recording = run_as_pasted(words, base)
     assert recording.returncode == 0, recording.stderr
     entry = json.loads(state.read_text())["fields"]["sessions.tokens_by_model"]
     assert entry["corrected_row_ids"] == sorted(script.row_identities(live, [0, 1], "session_id"))

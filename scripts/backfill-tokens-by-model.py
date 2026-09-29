@@ -161,6 +161,7 @@ from metrics_core.backfill import (
     resolve_transcript,
     row_identities,
     scan_unit,
+    script_invocation,
     sha256_bytes,
     sha256_of,
     token_sum,
@@ -1098,10 +1099,8 @@ def print_plan_summary(
         print(f"Earliest snapshot that would be written: {earliest}")
 
 
-# How a printed command names this program: run by python3 from the
-# repository root, the way scripts/README.md runs its scripts - the file
-# is not executable, so a bare name would not run.
-PROGRAM = ("python3", f"scripts/{Path(__file__).name}")
+# How every printed command names this program (see script_invocation).
+PROGRAM = script_invocation(__file__)
 
 
 def shell_command(*words: str) -> str:
@@ -1368,7 +1367,7 @@ def main() -> int:
         # The backup this run took names these rows, so the one-time
         # recovery path records them - aimed at the same files.
         recovery = shell_command(
-            Path(__file__).name,
+            *PROGRAM,
             "--file",
             arguments.file,
             "--record-earlier-applies",

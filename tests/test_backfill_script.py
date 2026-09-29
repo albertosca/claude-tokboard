@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from pasted_command import run_as_pasted
 
 SCRIPT_PATH = Path(__file__).resolve().parent.parent / "scripts" / "backfill-token-dedup.py"
 
@@ -1311,17 +1312,11 @@ def test_a_token_pass_whose_state_write_fails_names_the_recovery(
     assert "the backfill state could not be recorded" in warning
     marker = "the backup this run took: "
     words = shlex.split(warning[warning.index(marker) + len(marker) :].splitlines()[0])
-    assert words[:3] == ["backfill-tokens-by-model.py", "--file", "subagents"]
+    assert words[:4] == ["python3", "scripts/backfill-tokens-by-model.py", "--file", "subagents"]
 
-    # And the command does what the warning says it does.
-    by_model_path = SCRIPT_PATH.parent / "backfill-tokens-by-model.py"
-    spec = importlib.util.spec_from_file_location("by_model_for_recovery", by_model_path)
-    assert spec is not None
-    assert spec.loader is not None
-    by_model = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(by_model)
-    monkeypatch.setattr("sys.argv", words)
-    assert by_model.main() == 0
+    # And the command, pasted, does what the warning says it does.
+    recording = run_as_pasted(words, tmp_path)
+    assert recording.returncode == 0, recording.stderr
     records = [json.loads(line) for line in metrics.read_text().splitlines()]
     entry = json.loads(state.read_text())["fields"]["subagents.tokens_by_model_rebuilt"]
     assert entry["corrected_row_ids"] == script.row_identities(records, [0], "agent_id")

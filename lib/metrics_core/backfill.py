@@ -1422,6 +1422,15 @@ def verify_fields(
     return problems
 
 
+def script_invocation(script_file: str) -> tuple[str, str]:
+    """How a printed command names the script `script_file` (a path or a
+    bare file name under scripts/): python3 and its path from the
+    repository root, the way scripts/README.md runs its scripts. The
+    scripts are not executable, so a bare name would not run; every
+    command the backfill scripts print starts with these two words."""
+    return ("python3", f"scripts/{Path(script_file).name}")
+
+
 class UnreadableStateError(Exception):
     """A backfill state file that exists but cannot be read as a JSON object."""
 
