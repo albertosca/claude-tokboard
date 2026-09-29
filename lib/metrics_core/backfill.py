@@ -884,9 +884,12 @@ def _tool_reading(
     return None
 
 
-def _explained_time_cut_count(facts: list[EntryFacts], end_timestamp: str) -> int | None:
+def _explained_time_cut_count(
+    facts: list[EntryFacts], count: int, end_timestamp: str
+) -> int | None:
     """The distinct tool count at the time cut, or None when the entries
-    lying between it and a file cut do not explain how it differs.
+    lying between it and the file cut after `count` entries do not explain
+    how it differs.
 
     The time cut is trusted only when it IS a file prefix: the first `size`
     entries, where `size` is how many are stamped at or before
@@ -898,9 +901,21 @@ def _explained_time_cut_count(facts: list[EntryFacts], end_timestamp: str) -> in
     entry further down while skipping one between the cuts can match a
     stored count by coincidence - even with the same number of distinct
     calls as the prefix of its size - and is not trusted.
+
+    The entries between the cuts must also belong to ONE message, as the
+    measured ones did: past that the move is not the known mechanism (40
+    entries of 40 messages stamped at the end could otherwise move a count
+    from 41 to 1). An entry without a message id is a message of its own.
     """
     size = sum(1 for fact in facts if fact.stamp <= end_timestamp)
     if any(fact.stamp > end_timestamp for fact in facts[:size]):
+        return None
+    low, high = sorted((count, size))
+    messages = {
+        fact.message_id if fact.message_id is not None else ("no id", position)
+        for position, fact in enumerate(facts[low:high])
+    }
+    if len(messages) > 1:
         return None
     return tool_calls_as_of(facts[:size], None).distinct
 
@@ -945,9 +960,12 @@ def plan_tool_call_corrections(
             end = record["timestamp_end"]
             counts = reproducing_cuts(_stored_tokens(record), cut_points.get(end, ()), file_sums)
             if counts:
-                time_cut_count = _explained_time_cut_count(facts, end)
                 readings = {
-                    _tool_reading(stored, tool_calls_as_of(facts[:count], None), time_cut_count)
+                    _tool_reading(
+                        stored,
+                        tool_calls_as_of(facts[:count], None),
+                        _explained_time_cut_count(facts, count, end),
+                    )
                     for count in counts
                 }
             else:

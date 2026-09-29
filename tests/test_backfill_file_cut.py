@@ -487,6 +487,49 @@ def test_a_time_cut_that_only_counts_like_the_file_prefix_of_its_size_is_refused
     assert plan.stats == {"untouched: session has a row matching no formula": 1}
 
 
+def test_a_time_cut_more_than_one_message_away_from_the_file_cut_is_refused(tmp_path):
+    # The measured mechanism is ONE in-flight message written below the
+    # hook's last read. Here two messages stamped at the end sit between
+    # the cuts: the time cut is still a file prefix, but a move of that
+    # distance is not what an earlier run's time cut is known to explain.
+    transcripts = {
+        "s": write(
+            tmp_path / "s.jsonl",
+            [
+                assistant("2026-08-01T10:00:00Z", "m1", 100, tools=("t1",)),
+                other("2026-08-01T10:00:05Z"),
+                assistant("2026-08-01T10:00:05Z", "m2", 1, tools=("t2",)),
+                assistant("2026-08-01T10:00:05Z", "m3", 1, tools=("t3",)),
+            ],
+        )
+    }
+    records = [row("s", "2026-08-01T10:00:05Z", 100, tool_call_count=3)]
+
+    plan = mr.plan_tool_call_corrections(records, transcripts, "2026-09-01")
+
+    assert plan.values == {}
+    assert plan.stats == {"untouched: session has a row matching no formula": 1}
+
+
+def test_an_entry_between_the_cuts_without_a_message_id_counts_as_its_own_message(tmp_path):
+    transcripts = {
+        "s": write(
+            tmp_path / "s.jsonl",
+            [
+                assistant("2026-08-01T10:00:00Z", "m1", 100, tools=("t1",)),
+                other("2026-08-01T10:00:05Z"),
+                assistant("2026-08-01T10:00:04Z", None, 0, tools=("t2",)),
+                assistant("2026-08-01T10:00:04Z", None, 0, tools=("t3",)),
+            ],
+        )
+    }
+    records = [row("s", "2026-08-01T10:00:05Z", 100, tool_call_count=3)]
+
+    plan = mr.plan_tool_call_corrections(records, transcripts, "2026-09-01")
+
+    assert plan.stats == {"untouched: session has a row matching no formula": 1}
+
+
 # --- one read per unit ---------------------------------------------------------
 
 
