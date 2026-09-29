@@ -61,15 +61,19 @@ HOOKS: list[HookSpec] = [
 # first is what makes the first "over" and so counted - a lone unfinalised
 # message is always excluded as possibly still in progress. This is what
 # exercises the incomplete_usage_messages key end to end under 3.9, not
-# just the four token fields. Both entries also carry the same "version"
-# (backlog 2026-09-28 #5), so the check below exercises claude_code_version
-# too - the entry-level field parse_transcript now reads regardless of
-# entry type, same as it already does for gitBranch.
+# just the four token fields. The two entries also carry DIFFERENT
+# "version"s (backlog 2026-09-28 #5), as a session that spanned an upgrade
+# does, so the check below exercises both claude_code_version (the last)
+# and claude_code_version_first - the entry-level field parse_transcript
+# reads regardless of entry type, same as it already does for gitBranch.
+# With one version the hook never writes claude_code_version_first, and
+# that key went unchecked under 3.9.
+SYNTHETIC_TRANSCRIPT_VERSION_FIRST = "2.1.283"
 SYNTHETIC_TRANSCRIPT_VERSION = "2.1.284"
 SYNTHETIC_TRANSCRIPT_ENTRY = {
     "type": "assistant",
     "timestamp": "2026-01-01T00:00:00.000Z",
-    "version": SYNTHETIC_TRANSCRIPT_VERSION,
+    "version": SYNTHETIC_TRANSCRIPT_VERSION_FIRST,
     "message": {
         "id": "msg_check_1",
         "model": "claude-check",
@@ -155,6 +159,12 @@ def check_hook(
             return (
                 f"{hook_path.name} did not write claude_code_version="
                 f"{SYNTHETIC_TRANSCRIPT_VERSION!r}: {record!r}"
+            )
+        if record.get("claude_code_version_first") != SYNTHETIC_TRANSCRIPT_VERSION_FIRST:
+            return (
+                f"{hook_path.name} did not write claude_code_version_first="
+                f"{SYNTHETIC_TRANSCRIPT_VERSION_FIRST!r} for a transcript that spans an "
+                f"upgrade: {record!r}"
             )
         return None
 

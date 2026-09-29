@@ -134,12 +134,12 @@ def test_check_hook_reports_a_missing_incomplete_usage_messages_value(
 def test_check_hook_reports_a_missing_claude_code_version_value(
     tmp_path: Path, script: types.ModuleType
 ) -> None:
-    # Backlog 2026-09-28 #5: both synthetic entries carry the same
-    # "version", so a hook that correctly runs parse_transcript must write
-    # claude_code_version equal to it - a fake hook that writes the right
-    # token totals and incomplete_usage_messages but omits the version (or
-    # gets it wrong) is exactly the shape of a hook whose new field
-    # silently regressed.
+    # Backlog 2026-09-28 #5: the synthetic entries carry a "version", so a
+    # hook that correctly runs parse_transcript must write
+    # claude_code_version equal to the last one - a fake hook that writes
+    # the right token totals and incomplete_usage_messages but omits the
+    # version (or gets it wrong) is exactly the shape of a hook whose new
+    # field silently regressed.
     hook = tmp_path / "omits_claude_code_version.py"
     _write_fake_hook(
         hook,
@@ -156,6 +156,37 @@ def test_check_hook_reports_a_missing_claude_code_version_value(
 
     assert failure is not None
     assert "claude_code_version" in failure
+
+
+def test_the_synthetic_transcript_spans_an_upgrade(script: types.ModuleType) -> None:
+    # Two different versions, so the hook must write claude_code_version_first
+    # as well - with one version it never does, and the key went unchecked
+    # under 3.9.
+    first = script.SYNTHETIC_TRANSCRIPT_ENTRY["version"]
+    last = script.SYNTHETIC_TRANSCRIPT_ENTRY_2["version"]
+    assert first != last
+
+
+def test_check_hook_reports_a_missing_claude_code_version_first_value(
+    tmp_path: Path, script: types.ModuleType
+) -> None:
+    hook = tmp_path / "omits_claude_code_version_first.py"
+    _write_fake_hook(
+        hook,
+        "import os, json\n"
+        "from pathlib import Path\n"
+        'metrics = Path(os.environ["HOME"]) / ".claude" / "metrics" / "sessions.jsonl"\n'
+        "metrics.parent.mkdir(parents=True, exist_ok=True)\n"
+        "metrics.write_text(json.dumps({\n"
+        '    "input_tokens": 10, "output_tokens": 5, "incomplete_usage_messages": 1,\n'
+        f'    "claude_code_version": {script.SYNTHETIC_TRANSCRIPT_ENTRY_2["version"]!r}\n'
+        '}) + "\\n")\n',
+    )
+
+    failure = script.check_hook(hook, "sessions.jsonl", "transcript_path", sys.executable)
+
+    assert failure is not None
+    assert "claude_code_version_first" in failure
 
 
 def test_main_reports_every_failing_hook_on_stderr_and_exits_1(
