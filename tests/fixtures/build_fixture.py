@@ -112,7 +112,7 @@ def _record(
     return record
 
 
-def build_fixture(home_dir: str, now: datetime) -> dict[str, Any]:
+def build_fixture(home_directory: str, now: datetime) -> dict[str, Any]:
     records = [
         # The span-overlap case this entire filter design exists for: opened
         # a month ago, still working yesterday. A start-date filter would
@@ -162,15 +162,15 @@ def build_fixture(home_dir: str, now: datetime) -> dict[str, Any]:
         _record("old-1", "/projects/gamma", _at(now, 50, 10), _at(now, 49, 10), (5, 5, 500, 40)),
     ]
 
-    metrics_dir = Path(home_dir) / ".claude" / "metrics"
-    metrics_dir.mkdir(parents=True, exist_ok=True)
-    with (metrics_dir / "sessions.jsonl").open("w") as f:
+    metrics_directory = Path(home_directory) / ".claude" / "metrics"
+    metrics_directory.mkdir(parents=True, exist_ok=True)
+    with (metrics_directory / "sessions.jsonl").open("w") as sessions_file:
         for record in records:
-            f.write(json.dumps(record) + "\n")
+            sessions_file.write(json.dumps(record) + "\n")
     # An empty subagents file, not a missing one: load_records tolerates
     # absence, but an empty file is what a real install actually looks like
     # before any subagent has run.
-    (metrics_dir / "subagents.jsonl").touch()
+    (metrics_directory / "subagents.jsonl").touch()
 
     # Expected values come from metrics_core - the tested data layer - with
     # no help from the rendering code. The page then has to reproduce them
@@ -180,7 +180,7 @@ def build_fixture(home_dir: str, now: datetime) -> dict[str, Any]:
         window = mr.resolve_period(period.id, now)
         scoped = mr.filter_sessions_by_window(records, window)
         expected[period.id] = {
-            "session_ids": {r["session_id"] for r in scoped},
-            "token_total": sum(mr.record_token_total(r) for r in scoped),
+            "session_ids": {scoped_record["session_id"] for scoped_record in scoped},
+            "token_total": sum(mr.record_token_total(scoped_record) for scoped_record in scoped),
         }
     return {"expected": expected, "records": records}

@@ -82,11 +82,11 @@ def test_aggregate_by_day_buckets_records_and_reports_granularity():
         ]
     )
     assert granularity == "day"
-    assert [b["day"] for b in buckets] == ["2026-03-07", "2026-03-17"]
+    assert [bucket["day"] for bucket in buckets] == ["2026-03-07", "2026-03-17"]
     assert len(buckets) == 2
     first, second = buckets
-    assert [r["marker"] for r in first["records"]] == ["a", "b"]
-    assert [r["marker"] for r in second["records"]] == ["c"]
+    assert [bucket_record["marker"] for bucket_record in first["records"]] == ["a", "b"]
+    assert [bucket_record["marker"] for bucket_record in second["records"]] == ["c"]
 
 
 def test_aggregate_by_day_uses_minute_granularity_for_a_short_span():
@@ -100,14 +100,14 @@ def test_aggregate_by_day_uses_minute_granularity_for_a_short_span():
         ]
     )
     assert granularity == "minute"
-    assert [b["day"] for b in buckets] == ["2026-03-07T12:00", "2026-03-07T12:30"]
+    assert [bucket["day"] for bucket in buckets] == ["2026-03-07T12:00", "2026-03-07T12:30"]
 
 
 def test_aggregate_by_day_skips_records_with_no_timestamp():
     _granularity, buckets = mr.aggregate_by_day(
         [record(at().isoformat(), "kept"), {"marker": "no timestamp"}, record("", "empty")]
     )
-    assert sum(len(b["records"]) for b in buckets) == 1
+    assert sum(len(bucket["records"]) for bucket in buckets) == 1
     assert buckets[0]["records"][0]["marker"] == "kept"
 
 
@@ -115,7 +115,7 @@ def test_aggregate_by_day_skips_unparseable_timestamps():
     _granularity, buckets = mr.aggregate_by_day(
         [record(at().isoformat(), "kept"), record("not a timestamp", "dropped")]
     )
-    assert sum(len(b["records"]) for b in buckets) == 1
+    assert sum(len(bucket["records"]) for bucket in buckets) == 1
     assert buckets[0]["records"][0]["marker"] == "kept"
 
 
@@ -129,7 +129,7 @@ def test_aggregate_by_day_sorts_buckets_even_when_input_is_reversed():
     _granularity, buckets = mr.aggregate_by_day(
         [record(at(days=10).isoformat(), "later"), record(at().isoformat(), "earlier")]
     )
-    assert [r["records"][0]["marker"] for r in buckets] == ["earlier", "later"]
+    assert [bucket["records"][0]["marker"] for bucket in buckets] == ["earlier", "later"]
 
 
 # --- partial_bucket_fraction -------------------------------------------

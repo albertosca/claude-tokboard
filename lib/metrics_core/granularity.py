@@ -101,26 +101,28 @@ def aggregate_by_day(
 ) -> tuple[str, list[dict[str, Any]]]:
     dated: list[tuple[datetime, dict[str, Any]]] = []
     timestamps: list[datetime] = []
-    for r in records:
-        timestamp_start = r.get("timestamp_start")
+    for record in records:
+        timestamp_start = record.get("timestamp_start")
         if not timestamp_start:
             continue
         try:
-            dt = datetime.fromisoformat(timestamp_start.replace("Z", "+00:00")).astimezone()
+            parsed_moment = datetime.fromisoformat(
+                timestamp_start.replace("Z", "+00:00")
+            ).astimezone()
         except (ValueError, AttributeError, TypeError):
             continue
-        dated.append((dt, r))
-        timestamps.append(dt)
+        dated.append((parsed_moment, record))
+        timestamps.append(parsed_moment)
 
     granularity = choose_granularity(timestamps)
-    key_fmt = GRANULARITY_CONFIG[granularity]["key_fmt"]
+    key_format = GRANULARITY_CONFIG[granularity]["key_fmt"]
     buckets: dict[str, list[dict[str, Any]]] = {}
     bucket_order: list[str] = []
-    for dt, r in dated:
-        key = dt.strftime(key_fmt)
+    for parsed_moment, record in dated:
+        key = parsed_moment.strftime(key_format)
         if key not in buckets:
             buckets[key] = []
             bucket_order.append(key)
-        buckets[key].append(r)
+        buckets[key].append(record)
     bucket_order.sort()
     return granularity, [{"day": key, "records": buckets[key]} for key in bucket_order]

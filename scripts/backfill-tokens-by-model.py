@@ -138,8 +138,8 @@ from metrics_core.backfill import (
 from metrics_core.records import load_records
 from metrics_core.transcript_ingest import TOKEN_FIELDS
 
-METRICS_DIR = str(Path("~/.claude/metrics").expanduser())
-PROJECTS_DIR = str(Path("~/.claude/projects").expanduser())
+METRICS_DIRECTORY = str(Path("~/.claude/metrics").expanduser())
+PROJECTS_DIRECTORY = str(Path("~/.claude/projects").expanduser())
 
 FIELD = "tokens_by_model"
 
@@ -215,7 +215,7 @@ class NativeRows(NamedTuple):
     unreachable: list[int]
 
 
-def index_for_file(file_name: str, projects_dir: str) -> tuple[dict[str, str], list[str]]:
+def index_for_file(file_name: str, projects_directory: str) -> tuple[dict[str, str], list[str]]:
     """The by-id transcript index for one metrics file, and its ambiguities.
 
     The two files key on different ids and store their transcripts at
@@ -223,8 +223,8 @@ def index_for_file(file_name: str, projects_dir: str) -> tuple[dict[str, str], l
     that knows which - everything downstream just takes a dict.
     """
     if file_name == "subagents":
-        return index_subagent_transcripts(projects_dir)
-    return index_transcripts(projects_dir), []
+        return index_subagent_transcripts(projects_directory)
+    return index_transcripts(projects_directory), []
 
 
 def rows_by_unit(records: list[dict[str, Any]], id_key: str) -> dict[Any, list[int]]:
@@ -380,7 +380,9 @@ def series_goes_down(
     floored away.
     """
     seen: dict[str, dict[str, int]] = {}
-    for index in sorted(indexes, key=lambda i: records[i].get("duration_seconds") or 0):
+    for index in sorted(
+        indexes, key=lambda row_index: records[row_index].get("duration_seconds") or 0
+    ):
         for model, bucket in maps[index].items():
             previous = seen.setdefault(model, dict.fromkeys(TOKEN_FIELDS, 0))
             for field in TOKEN_FIELDS:
@@ -680,7 +682,7 @@ def apply_backfill(
     path: str,
     plan: dict[int, ModelMap],
     records: list[dict[str, Any]],
-    backup_dir: str | None = None,
+    backup_directory: str | None = None,
 ) -> None:
     """Write the planned maps into the metrics file, or write nothing at all.
 
@@ -710,7 +712,7 @@ def apply_backfill(
             f"not rows of the {len(records)} records it was built from"
         )
 
-    backups = Path(backup_dir) if backup_dir else target.parent / "backups"
+    backups = Path(backup_directory) if backup_directory else target.parent / "backups"
     backups.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now().strftime("%Y-%m-%d-%H%M%S")
     backup = backups / f"{target.name}.tokens-by-model-{stamp}.bak"
@@ -744,12 +746,12 @@ def apply_backfill(
         # so a line that lands on the old file after it can still be carried
         # over (carry_late_appends) instead of vanishing with the old inode.
         with target.open("rb") as old:
-            with os.fdopen(handle, "wb") as f:
-                f.write(body)
+            with os.fdopen(handle, "wb") as temporary_handle:
+                temporary_handle.write(body)
                 tail = tail_after_prefix(old.read(), records)
-                f.write(tail)
-                f.flush()
-                os.fsync(f.fileno())
+                temporary_handle.write(tail)
+                temporary_handle.flush()
+                os.fsync(temporary_handle.fileno())
             temporary.chmod(mode)
             temporary.replace(target)
             late = carry_late_appends(old, target, stamp)
@@ -847,8 +849,8 @@ def main() -> int:
         default="sessions",
         help="which metrics file to plan against",
     )
-    parser.add_argument("--metrics-dir", default=METRICS_DIR)
-    parser.add_argument("--projects-dir", default=PROJECTS_DIR)
+    parser.add_argument("--metrics-dir", default=METRICS_DIRECTORY)
+    parser.add_argument("--projects-dir", default=PROJECTS_DIRECTORY)
     parser.add_argument(
         "--backup-dir",
         default=None,
@@ -868,10 +870,10 @@ def main() -> int:
             "read off the dry run; --apply refuses below it. Required with --apply"
         ),
     )
-    args = parser.parse_args()
+    arguments = parser.parse_args()
 
-    id_key, transcript_key = UNIT_KEYS[args.file]
-    path = Path(args.metrics_dir) / f"{args.file}.jsonl"
+    id_key, transcript_key = UNIT_KEYS[arguments.file]
+    path = Path(arguments.metrics_dir) / f"{arguments.file}.jsonl"
     if not path.exists():
         print(f"no metrics file at {path}", file=sys.stderr)
         return 1
@@ -882,8 +884,11 @@ def main() -> int:
     # Indexed before the gate runs, not after: the oracle needs it to follow
     # a transcript that has moved between project slugs, and a row it cannot
     # reach is a row it cannot check.
-    transcripts, ambiguous = index_for_file(args.file, args.projects_dir)
-    print(f"indexed {len(transcripts)} {args.file[:-1]} transcripts under {args.projects_dir}")
+    transcripts, ambiguous = index_for_file(arguments.file, arguments.projects_dir)
+    print(
+        f"indexed {len(transcripts)} {arguments.file[:-1]} transcripts under "
+        f"{arguments.projects_dir}"
+    )
     if ambiguous:
         print(
             f"  {len(ambiguous)} id(s) found under more than one project slug and "
@@ -939,19 +944,19 @@ def main() -> int:
     # are left out on purpose - they agree and prove nothing, and a total
     # propped up by them is the shape of a gate that has stopped looking.
     checked = report.exact + report.tolerated
-    if not args.apply:
+    if not arguments.apply:
         # --file is part of the printed command, not left to the default.
         # Without it, a subagents dry run hands the operator a line that runs
         # against sessions.jsonl - and the hazard is asymmetric, so it
         # survives casual reading: the subagent file's smaller count clears
         # the session file's floor and writes, while the reverse refuses.
         print(
-            f"\nDRY RUN - nothing written. To write: --file {args.file} --apply "
+            f"\nDRY RUN - nothing written. To write: --file {arguments.file} --apply "
             f"--expect-checked {checked} (and read the oracle line above before you do)."
         )
         return 0
 
-    if args.expect_checked is None:
+    if arguments.expect_checked is None:
         print(
             "--apply requires --expect-checked N: the number of natively written "
             "snapshots the oracle verified in the dry run you just read (exact plus "
@@ -969,10 +974,10 @@ def main() -> int:
             file=sys.stderr,
         )
         return 1
-    if checked < args.expect_checked:
+    if checked < arguments.expect_checked:
         print(
             f"refusing to write: the oracle verified {checked} snapshot(s), fewer than "
-            f"the {args.expect_checked} this run was told to expect. Either it has "
+            f"the {arguments.expect_checked} this run was told to expect. Either it has "
             "stopped reaching rows it used to reach, or --expect-checked is stale - "
             "both are worth stopping for.",
             file=sys.stderr,
@@ -982,7 +987,7 @@ def main() -> int:
     if not plan:
         print("\nnothing to write; leaving the file untouched")
         return 0
-    apply_backfill(str(path), plan, records, args.backup_dir)
+    apply_backfill(str(path), plan, records, arguments.backup_dir)
     return 0
 
 

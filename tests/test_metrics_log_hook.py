@@ -1,15 +1,15 @@
 """Tests for hooks/metrics-log.py.
 
-DANGER: this module's METRICS_DIR/METRICS_FILE constants resolve at import
-time to Alberto's real, irreplaceable metrics history
+DANGER: this module's METRICS_DIRECTORY/METRICS_FILE constants resolve at
+import time to Alberto's real, irreplaceable metrics history
 (~/.claude/metrics/sessions.jsonl - roughly 8,000 records going back
 months, and actively appended to by other running Claude sessions).
 monkeypatch.setenv("HOME", ...) does NOT redirect them, since they are
 already-resolved Path objects on the module object by the time any test
 runs. Every test in this file that can write MUST monkeypatch.setattr both
-METRICS_DIR and METRICS_FILE on the loaded `script` module before calling
-anything that appends. Never point those constants at anything under
-~/.claude/.
+METRICS_DIRECTORY and METRICS_FILE on the loaded `script` module before
+calling anything that appends. Never point those constants at anything
+under ~/.claude/.
 """
 
 import importlib.util
@@ -41,11 +41,11 @@ def script() -> types.ModuleType:
 def _isolate_metrics(
     monkeypatch: pytest.MonkeyPatch, script: types.ModuleType, tmp_path: Path
 ) -> Path:
-    """Redirect METRICS_DIR/METRICS_FILE to a throwaway location under
+    """Redirect METRICS_DIRECTORY/METRICS_FILE to a throwaway location under
     tmp_path. Must be called by every test that can reach append_record."""
-    metrics_dir = tmp_path / "metrics"
-    metrics_file = metrics_dir / "sessions.jsonl"
-    monkeypatch.setattr(script, "METRICS_DIR", metrics_dir)
+    metrics_directory = tmp_path / "metrics"
+    metrics_file = metrics_directory / "sessions.jsonl"
+    monkeypatch.setattr(script, "METRICS_DIRECTORY", metrics_directory)
     monkeypatch.setattr(script, "METRICS_FILE", metrics_file)
     return metrics_file
 
@@ -68,8 +68,8 @@ def test_get_tmux_window_returns_none_without_tmux_env(script, monkeypatch):
 def test_get_tmux_window_returns_stripped_name_on_success(script, monkeypatch):
     monkeypatch.setenv("TMUX", "/tmp/tmux-1000/default,1234,0")
 
-    def fake_run(*args, **kwargs):
-        return subprocess.CompletedProcess(args, 0, stdout="  my-window  \n", stderr="")
+    def fake_run(*arguments, **keyword_arguments):
+        return subprocess.CompletedProcess(arguments, 0, stdout="  my-window  \n", stderr="")
 
     monkeypatch.setattr(script.subprocess, "run", fake_run)
 
@@ -79,8 +79,8 @@ def test_get_tmux_window_returns_stripped_name_on_success(script, monkeypatch):
 def test_get_tmux_window_returns_none_for_whitespace_only_output(script, monkeypatch):
     monkeypatch.setenv("TMUX", "/tmp/tmux-1000/default,1234,0")
 
-    def fake_run(*args, **kwargs):
-        return subprocess.CompletedProcess(args, 0, stdout="   \n", stderr="")
+    def fake_run(*arguments, **keyword_arguments):
+        return subprocess.CompletedProcess(arguments, 0, stdout="   \n", stderr="")
 
     monkeypatch.setattr(script.subprocess, "run", fake_run)
 
@@ -90,7 +90,7 @@ def test_get_tmux_window_returns_none_for_whitespace_only_output(script, monkeyp
 def test_get_tmux_window_returns_none_when_subprocess_raises(script, monkeypatch):
     monkeypatch.setenv("TMUX", "/tmp/tmux-1000/default,1234,0")
 
-    def fake_run(*args, **kwargs):
+    def fake_run(*arguments, **keyword_arguments):
         raise OSError("tmux not found")
 
     monkeypatch.setattr(script.subprocess, "run", fake_run)
@@ -109,7 +109,7 @@ def test_get_internal_name_returns_none_for_falsy_session_id(script, tmp_path):
 
 
 def test_get_internal_name_defaults_sessions_dir_to_the_real_claude_sessions_path(script):
-    # sessions_dir is optional; when omitted it must default to
+    # sessions_directory is optional; when omitted it must default to
     # ~/.claude/sessions. This only *reads* that directory (glob + json.load
     # on whatever real session files exist, if any) - it never writes
     # anything, so it is safe to exercise against the real path. A session
@@ -119,74 +119,74 @@ def test_get_internal_name_defaults_sessions_dir_to_the_real_claude_sessions_pat
 
 
 def test_get_internal_name_finds_match_via_ppid_file_first(script, tmp_path, monkeypatch):
-    sessions_dir = tmp_path / "sessions"
-    sessions_dir.mkdir()
+    sessions_directory = tmp_path / "sessions"
+    sessions_directory.mkdir()
     monkeypatch.setattr(script.os, "getppid", lambda: 4242)
-    (sessions_dir / "4242.json").write_text(
+    (sessions_directory / "4242.json").write_text(
         json.dumps({"sessionId": "target", "nameSource": None, "name": "from-ppid"})
     )
 
-    assert script.get_internal_name("target", sessions_dir) == "from-ppid"
+    assert script.get_internal_name("target", sessions_directory) == "from-ppid"
 
 
 def test_get_internal_name_falls_through_to_glob_when_ppid_file_missing(
     script, tmp_path, monkeypatch
 ):
-    sessions_dir = tmp_path / "sessions"
-    sessions_dir.mkdir()
+    sessions_directory = tmp_path / "sessions"
+    sessions_directory.mkdir()
     monkeypatch.setattr(script.os, "getppid", lambda: 999999)  # no such file
-    (sessions_dir / "other.json").write_text(
+    (sessions_directory / "other.json").write_text(
         json.dumps({"sessionId": "target", "nameSource": None, "name": "from-glob"})
     )
 
-    assert script.get_internal_name("target", sessions_dir) == "from-glob"
+    assert script.get_internal_name("target", sessions_directory) == "from-glob"
 
 
 def test_get_internal_name_skips_unparseable_json_without_crashing(script, tmp_path, monkeypatch):
-    sessions_dir = tmp_path / "sessions"
-    sessions_dir.mkdir()
+    sessions_directory = tmp_path / "sessions"
+    sessions_directory.mkdir()
     monkeypatch.setattr(script.os, "getppid", lambda: 999999)
-    (sessions_dir / "broken.json").write_text("not valid json{{{")
+    (sessions_directory / "broken.json").write_text("not valid json{{{")
 
-    assert script.get_internal_name("target", sessions_dir) is None
+    assert script.get_internal_name("target", sessions_directory) is None
 
 
 def test_get_internal_name_skips_when_session_id_does_not_match(script, tmp_path, monkeypatch):
-    sessions_dir = tmp_path / "sessions"
-    sessions_dir.mkdir()
+    sessions_directory = tmp_path / "sessions"
+    sessions_directory.mkdir()
     monkeypatch.setattr(script.os, "getppid", lambda: 999999)
-    (sessions_dir / "other.json").write_text(
+    (sessions_directory / "other.json").write_text(
         json.dumps({"sessionId": "someone-else", "nameSource": None, "name": "nope"})
     )
 
-    assert script.get_internal_name("target", sessions_dir) is None
+    assert script.get_internal_name("target", sessions_directory) is None
 
 
 def test_get_internal_name_skips_when_name_source_is_not_none(script, tmp_path, monkeypatch):
     # Directly targets the named mutation of flipping `nameSource is None`
     # to `nameSource is not None`: under the mutation this record would
     # match and the test would fail.
-    sessions_dir = tmp_path / "sessions"
-    sessions_dir.mkdir()
+    sessions_directory = tmp_path / "sessions"
+    sessions_directory.mkdir()
     monkeypatch.setattr(script.os, "getppid", lambda: 999999)
-    (sessions_dir / "other.json").write_text(
+    (sessions_directory / "other.json").write_text(
         json.dumps({"sessionId": "target", "nameSource": "cli-flag", "name": "user-named"})
     )
 
-    assert script.get_internal_name("target", sessions_dir) is None
+    assert script.get_internal_name("target", sessions_directory) is None
 
 
 def test_get_internal_name_returns_none_when_matched_name_is_not_a_string(
     script, tmp_path, monkeypatch
 ):
-    sessions_dir = tmp_path / "sessions"
-    sessions_dir.mkdir()
+    sessions_directory = tmp_path / "sessions"
+    sessions_directory.mkdir()
     monkeypatch.setattr(script.os, "getppid", lambda: 999999)
-    (sessions_dir / "other.json").write_text(
+    (sessions_directory / "other.json").write_text(
         json.dumps({"sessionId": "target", "nameSource": None, "name": 42})
     )
 
-    assert script.get_internal_name("target", sessions_dir) is None
+    assert script.get_internal_name("target", sessions_directory) is None
 
 
 def test_get_internal_name_does_not_reparse_the_ppid_file_seen_again_via_glob(
@@ -195,25 +195,25 @@ def test_get_internal_name_does_not_reparse_the_ppid_file_seen_again_via_glob(
     # The ppid candidate also shows up in the `*.json` glob (same file).
     # This pins the `seen` dedup: json.load must be called exactly once for
     # that path, not twice.
-    sessions_dir = tmp_path / "sessions"
-    sessions_dir.mkdir()
+    sessions_directory = tmp_path / "sessions"
+    sessions_directory.mkdir()
     monkeypatch.setattr(script.os, "getppid", lambda: 7777)
-    (sessions_dir / "7777.json").write_text(
+    (sessions_directory / "7777.json").write_text(
         json.dumps({"sessionId": "someone-else", "nameSource": None, "name": "irrelevant"})
     )
 
     real_load = script.json.load
     calls = []
 
-    def counting_load(f):
+    def counting_load(file_handle):
         calls.append(1)
         if len(calls) > 1:
             raise AssertionError("ppid candidate file was parsed more than once")
-        return real_load(f)
+        return real_load(file_handle)
 
     monkeypatch.setattr(script.json, "load", counting_load)
 
-    result = script.get_internal_name("target", sessions_dir)
+    result = script.get_internal_name("target", sessions_directory)
 
     assert result is None
     assert len(calls) == 1
@@ -540,6 +540,86 @@ def test_parse_transcript_counts_tool_calls_carried_by_later_entries_of_a_messag
     assert parsed["turn_count"] == 1
 
 
+def _message(message_id: str, output: int, stop_reason: str | None = None) -> str:
+    """One assistant entry; `stop_reason` set marks the entry Claude Code
+    writes when a message is final (measured 2026-09-25: every id that has
+    one carries its largest output there)."""
+    return json.dumps(
+        {
+            "type": "assistant",
+            "timestamp": "2026-01-01T00:00:00Z",
+            "message": {
+                "id": message_id,
+                "model": "model-alpha",
+                "stop_reason": stop_reason,
+                "usage": {"input_tokens": 1, "output_tokens": output},
+            },
+        }
+    )
+
+
+def test_parse_transcript_counts_messages_that_never_got_a_final_entry(script, tmp_path):
+    # m1 streamed placeholders and was never finalised, but m2 came after it,
+    # so m1 is over: its usage will never be written.
+    path = tmp_path / "t.jsonl"
+    _write_lines(path, [_message("m1", 1), _message("m1", 3), _message("m2", 50, "end_turn")])
+
+    parsed = script.parse_transcript(str(path))
+
+    assert parsed["incomplete_usage_messages"] == 1
+
+
+def test_parse_transcript_does_not_flag_a_streamed_message_that_was_finalised(script, tmp_path):
+    path = tmp_path / "t.jsonl"
+    _write_lines(
+        path,
+        [_message("m1", 1), _message("m1", 40, "tool_use"), _message("m2", 9, "end_turn")],
+    )
+
+    assert script.parse_transcript(str(path))["incomplete_usage_messages"] == 0
+
+
+def test_parse_transcript_does_not_flag_the_last_message_which_may_still_be_streaming(
+    script, tmp_path
+):
+    # A snapshot taken mid-response sees the newest message without its final
+    # entry yet; flagging it would mark every in-progress snapshot.
+    path = tmp_path / "t.jsonl"
+    _write_lines(path, [_message("m1", 9, "end_turn"), _message("m2", 1)])
+
+    assert script.parse_transcript(str(path))["incomplete_usage_messages"] == 0
+
+
+def test_parse_transcript_counts_an_unfinalised_message_even_when_it_is_replayed_last(
+    script, tmp_path
+):
+    # "Last" is the message first seen last, not the last line: a replay of
+    # an older message at the end of the file does not make it in progress.
+    path = tmp_path / "t.jsonl"
+    _write_lines(
+        path,
+        [_message("m1", 2), _message("m2", 9, "end_turn"), _message("m1", 2)],
+    )
+
+    assert script.parse_transcript(str(path))["incomplete_usage_messages"] == 1
+
+
+def test_parse_transcript_replayed_final_entries_do_not_flag_or_double_count(script, tmp_path):
+    path = tmp_path / "t.jsonl"
+    final = _message("m1", 9, "end_turn")
+    _write_lines(path, [final, _message("m2", 1), _message("m2", 5, "end_turn"), final])
+
+    assert script.parse_transcript(str(path))["incomplete_usage_messages"] == 0
+
+
+def test_parse_transcript_entries_without_an_id_are_never_flagged(script, tmp_path):
+    path = tmp_path / "t.jsonl"
+    no_id = json.dumps({"type": "assistant", "message": {"usage": {"output_tokens": 2}}})
+    _write_lines(path, [no_id, _message("m2", 9, "end_turn"), no_id])
+
+    assert script.parse_transcript(str(path))["incomplete_usage_messages"] == 0
+
+
 def test_parse_transcript_duration_is_difference_of_first_and_last_timestamp(script, tmp_path):
     path = tmp_path / "t.jsonl"
     _write_lines(
@@ -672,7 +752,9 @@ def test_parse_transcript_tokens_by_model_totals_reconcile_with_the_record_total
     parsed = script.parse_transcript(str(path))
 
     for field in ("input_tokens", "output_tokens", "cache_read_tokens", "cache_creation_tokens"):
-        assert sum(b[field] for b in parsed["tokens_by_model"].values()) == parsed[field], field
+        assert (
+            sum(bucket[field] for bucket in parsed["tokens_by_model"].values()) == parsed[field]
+        ), field
 
 
 def test_parse_transcript_tokens_by_model_replayed_message_counts_once_too(script, tmp_path):
@@ -688,7 +770,8 @@ def test_parse_transcript_tokens_by_model_replayed_message_counts_once_too(scrip
     assert parsed["tokens_by_model"]["model-alpha"]["input_tokens"] == 10
     assert parsed["tokens_by_model"]["model-alpha"]["output_tokens"] == 20
     assert (
-        sum(b["input_tokens"] for b in parsed["tokens_by_model"].values()) == parsed["input_tokens"]
+        sum(bucket["input_tokens"] for bucket in parsed["tokens_by_model"].values())
+        == parsed["input_tokens"]
     )
 
 
@@ -751,7 +834,9 @@ def test_parse_transcript_tokens_by_model_buckets_a_synthetic_message_that_carri
         "cache_creation_tokens": 0,
     }
     for field in ("input_tokens", "output_tokens", "cache_read_tokens", "cache_creation_tokens"):
-        assert sum(b[field] for b in parsed["tokens_by_model"].values()) == parsed[field], field
+        assert (
+            sum(bucket[field] for bucket in parsed["tokens_by_model"].values()) == parsed[field]
+        ), field
 
 
 def test_parse_transcript_tokens_by_model_is_empty_when_there_are_no_assistant_entries(
@@ -803,7 +888,9 @@ def test_parse_transcript_tokens_by_model_buckets_a_missing_model_under_unknown(
         "cache_creation_tokens": 0,
     }
     for field in ("input_tokens", "output_tokens", "cache_read_tokens", "cache_creation_tokens"):
-        assert sum(b[field] for b in parsed["tokens_by_model"].values()) == parsed[field], field
+        assert (
+            sum(bucket[field] for bucket in parsed["tokens_by_model"].values()) == parsed[field]
+        ), field
 
 
 # ---------------------------------------------------------------------------
@@ -821,6 +908,7 @@ _PARSED_STUB = {
     "cache_creation_tokens": 4,
     "turn_count": 5,
     "tool_call_count": 6,
+    "incomplete_usage_messages": 0,
     "tokens_by_model": {
         "model-alpha": {
             "input_tokens": 1,
@@ -855,7 +943,7 @@ _EXPECTED_RECORD_KEYS = {
 def test_build_record_has_exact_key_set_and_correct_values(script, monkeypatch):
     monkeypatch.setattr(script, "get_tmux_window", lambda: "my-window")
     monkeypatch.setattr(
-        script, "get_internal_name", lambda session_id, sessions_dir=None: "my-name"
+        script, "get_internal_name", lambda session_id, sessions_directory=None: "my-name"
     )
     monkeypatch.setenv("CLAUDE_METRIC_TAG", "my-tag")
 
@@ -883,7 +971,9 @@ def test_build_record_has_exact_key_set_and_correct_values(script, monkeypatch):
 
 def test_build_record_tag_is_none_when_env_var_unset(script, monkeypatch):
     monkeypatch.setattr(script, "get_tmux_window", lambda: None)
-    monkeypatch.setattr(script, "get_internal_name", lambda session_id, sessions_dir=None: None)
+    monkeypatch.setattr(
+        script, "get_internal_name", lambda session_id, sessions_directory=None: None
+    )
     monkeypatch.delenv("CLAUDE_METRIC_TAG", raising=False)
 
     record = script.build_record({"session_id": "s", "cwd": "/x"}, _PARSED_STUB)
@@ -893,7 +983,9 @@ def test_build_record_tag_is_none_when_env_var_unset(script, monkeypatch):
 
 def test_build_record_carries_tokens_by_model_through(script, monkeypatch):
     monkeypatch.setattr(script, "get_tmux_window", lambda: None)
-    monkeypatch.setattr(script, "get_internal_name", lambda session_id, sessions_dir=None: None)
+    monkeypatch.setattr(
+        script, "get_internal_name", lambda session_id, sessions_directory=None: None
+    )
     parsed = dict(_PARSED_STUB)
     parsed["tokens_by_model"] = {
         "model-alpha": {
@@ -992,7 +1084,9 @@ def test_main_returns_silently_when_transcript_path_does_not_exist(script, tmp_p
 def test_main_appends_exactly_one_record_on_the_happy_path(script, tmp_path, monkeypatch):
     metrics_file = _isolate_metrics(monkeypatch, script, tmp_path)
     monkeypatch.setattr(script, "get_tmux_window", lambda: None)
-    monkeypatch.setattr(script, "get_internal_name", lambda session_id, sessions_dir=None: None)
+    monkeypatch.setattr(
+        script, "get_internal_name", lambda session_id, sessions_directory=None: None
+    )
 
     transcript = tmp_path / "transcript.jsonl"
     transcript.write_text(
@@ -1028,7 +1122,7 @@ def test_module_guard_calls_main_and_exits_zero_when_run_as_a_script(tmp_path, m
     # loads a second, independent copy of it with __name__ pre-set to
     # "__main__", which is a test technique, not a production change.
     # HOME is redirected to tmp_path BEFORE exec, because
-    # METRICS_DIR/METRICS_FILE are computed the moment this fresh copy
+    # METRICS_DIRECTORY/METRICS_FILE are computed the moment this fresh copy
     # executes its top-level code - there is no chance to
     # monkeypatch.setattr them afterwards the way every other test here
     # does. The hook input carries no transcript_path, so main() takes its
@@ -1074,7 +1168,9 @@ def test_main_swallows_exceptions_and_writes_nothing(script, tmp_path, monkeypat
 
 def test_build_record_records_the_project_root_when_claude_provides_it(script, monkeypatch):
     monkeypatch.setattr(script, "get_tmux_window", lambda: None)
-    monkeypatch.setattr(script, "get_internal_name", lambda session_id, sessions_dir=None: None)
+    monkeypatch.setattr(
+        script, "get_internal_name", lambda session_id, sessions_directory=None: None
+    )
     monkeypatch.setenv("CLAUDE_PROJECT_DIR", "/work/my-api")
 
     record = script.build_record({"session_id": "s", "cwd": "/work/my-api/docs"}, _PARSED_STUB)
@@ -1089,7 +1185,9 @@ def test_build_record_omits_the_project_root_when_claude_does_not_provide_it(scr
     # null would be a value the reader has to interpret, and the whole
     # historical corpus has no key at all.
     monkeypatch.setattr(script, "get_tmux_window", lambda: None)
-    monkeypatch.setattr(script, "get_internal_name", lambda session_id, sessions_dir=None: None)
+    monkeypatch.setattr(
+        script, "get_internal_name", lambda session_id, sessions_directory=None: None
+    )
     monkeypatch.delenv("CLAUDE_PROJECT_DIR", raising=False)
 
     record = script.build_record({"session_id": "s", "cwd": "/x"}, _PARSED_STUB)
@@ -1099,9 +1197,26 @@ def test_build_record_omits_the_project_root_when_claude_does_not_provide_it(scr
 
 def test_build_record_ignores_an_empty_project_root(script, monkeypatch):
     monkeypatch.setattr(script, "get_tmux_window", lambda: None)
-    monkeypatch.setattr(script, "get_internal_name", lambda session_id, sessions_dir=None: None)
+    monkeypatch.setattr(
+        script, "get_internal_name", lambda session_id, sessions_directory=None: None
+    )
     monkeypatch.setenv("CLAUDE_PROJECT_DIR", "")
 
     record = script.build_record({"session_id": "s", "cwd": "/x"}, _PARSED_STUB)
 
     assert "project_root" not in record
+
+
+def test_build_record_records_incomplete_usage_messages_only_when_there_are_some(
+    script, monkeypatch
+):
+    # Absent means zero: the whole historical corpus has no such key, and a
+    # key on every row would only grow the file.
+    monkeypatch.setattr(script, "get_tmux_window", lambda: None)
+    monkeypatch.setattr(
+        script, "get_internal_name", lambda session_id, sessions_directory=None: None
+    )
+    flagged = dict(_PARSED_STUB, incomplete_usage_messages=3)
+
+    assert script.build_record({"session_id": "s"}, flagged)["incomplete_usage_messages"] == 3
+    assert "incomplete_usage_messages" not in script.build_record({"session_id": "s"}, _PARSED_STUB)

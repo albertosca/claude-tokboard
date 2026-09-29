@@ -71,7 +71,7 @@ def spy(monkeypatch: pytest.MonkeyPatch) -> Spy:
 
 @pytest.fixture(autouse=True)
 def forbid_real_subprocess(monkeypatch: pytest.MonkeyPatch) -> None:
-    def fail(*args: Any, **kwargs: Any) -> Any:
+    def fail(*arguments: Any, **keyword_arguments: Any) -> Any:
         raise AssertionError("real subprocess.run must never be called in tests")
 
     monkeypatch.setattr(subprocess, "run", fail)
@@ -82,7 +82,7 @@ def forbid_real_subprocess(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_an_old_cache_migrates_as_portuguese_with_nothing_lost(files: LabelFiles) -> None:
     files.task.write_text(json.dumps(OLD))
-    assert labels.load_label_cache() == {k: {"pt": v} for k, v in OLD.items()}
+    assert labels.load_label_cache() == {key: {"pt": value} for key, value in OLD.items()}
 
 
 def test_the_first_save_keeps_a_one_time_backup_of_the_old_file(files: LabelFiles) -> None:
@@ -101,7 +101,7 @@ def test_a_failed_write_leaves_the_old_file_whole(
 ) -> None:
     files.task.write_text(json.dumps(OLD))
 
-    def raise_disk_full(*args: Any) -> None:
+    def raise_disk_full(*arguments: Any) -> None:
         raise OSError("disk full")
 
     monkeypatch.setattr(labels.os, "replace", raise_disk_full)
@@ -115,7 +115,7 @@ def test_a_failed_write_does_not_leave_a_stray_tmp_file(
 ) -> None:
     files.task.write_text(json.dumps(OLD))
 
-    def raise_disk_full(*args: Any) -> None:
+    def raise_disk_full(*arguments: Any) -> None:
         raise OSError("disk full")
 
     monkeypatch.setattr(labels.os, "replace", raise_disk_full)
@@ -130,9 +130,9 @@ def test_a_failed_write_does_not_leave_a_stray_tmp_file(
     # pass from fail" trap. Glob by the same prefix/suffix mkstemp was
     # given instead.
     leftover = [
-        p
-        for p in files.task.parent.iterdir()
-        if p.name.startswith(files.task.name + ".") and p.name.endswith(".tmp")
+        path
+        for path in files.task.parent.iterdir()
+        if path.name.startswith(files.task.name + ".") and path.name.endswith(".tmp")
     ]
     assert leftover == []
 
@@ -187,7 +187,9 @@ def test_missing_file_still_returns_an_empty_cache(files: LabelFiles) -> None:
 
 def test_an_old_agent_cache_migrates_as_portuguese_with_nothing_lost(files: LabelFiles) -> None:
     files.agent.write_text(json.dumps(AGENT_OLD))
-    assert labels.load_agent_label_cache() == {k: {"pt": v} for k, v in AGENT_OLD.items()}
+    assert labels.load_agent_label_cache() == {
+        key: {"pt": value} for key, value in AGENT_OLD.items()
+    }
 
 
 def test_the_first_agent_save_keeps_a_one_time_backup_of_the_old_file(files: LabelFiles) -> None:
@@ -206,7 +208,7 @@ def test_an_agent_failed_write_leaves_the_old_file_whole(
 ) -> None:
     files.agent.write_text(json.dumps(AGENT_OLD))
 
-    def raise_disk_full(*args: Any) -> None:
+    def raise_disk_full(*arguments: Any) -> None:
         raise OSError("disk full")
 
     monkeypatch.setattr(labels.os, "replace", raise_disk_full)

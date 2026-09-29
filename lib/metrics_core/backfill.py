@@ -20,6 +20,7 @@ from .records import expand_records_to_daily_deltas
 from .transcript_ingest import (
     SYNTHETIC_MODEL,
     TOKEN_FIELDS,
+    count_incomplete,
     model_key,
     usage_increment,
     usage_values,
@@ -41,11 +42,11 @@ UNIT_ID_KEYS: dict[str, str] = {"sessions": "session_id", "subagents": "agent_id
 
 
 def sha256_of(path: str) -> str:
-    h = hashlib.sha256()
-    with Path(path).open("rb") as f:
-        for chunk in iter(lambda: f.read(1 << 20), b""):
-            h.update(chunk)
-    return h.hexdigest()
+    hasher = hashlib.sha256()
+    with Path(path).open("rb") as input_file:
+        for chunk in iter(lambda: input_file.read(1 << 20), b""):
+            hasher.update(chunk)
+    return hasher.hexdigest()
 
 
 def sha256_bytes(data: bytes) -> str:
@@ -78,14 +79,14 @@ def carry_late_appends(old: BinaryIO, target: Path, stamp: str) -> int:
             f"a live append landed during the rename and ends mid-line; its "
             f"{len(late)} byte(s) were saved to {rescue} and NOT added to {target}"
         )
-    with target.open("ab") as f:
-        f.write(late)
-        f.flush()
-        os.fsync(f.fileno())
+    with target.open("ab") as target_file:
+        target_file.write(late)
+        target_file.flush()
+        os.fsync(target_file.fileno())
     return late.count(b"\n")
 
 
-def index_transcripts(projects_dir: str) -> dict[str, str]:
+def index_transcripts(projects_directory: str) -> dict[str, str]:
     """session_id -> transcript path.
 
     Session transcripts live at <projects>/<slug>/<session_id>.jsonl. Deeper
@@ -97,7 +98,7 @@ def index_transcripts(projects_dir: str) -> dict[str, str]:
     index: dict[str, str] = {}
     # Path.glob (unlike glob.glob) also matches dot-prefixed entries; safe here
     # because Claude Code's own naming scheme never produces a leading dot.
-    for path in (str(p) for p in Path(projects_dir).glob("*/*.jsonl")):
+    for path in (str(found_path) for found_path in Path(projects_directory).glob("*/*.jsonl")):
         session_id = Path(path).name[: -len(".jsonl")]
         current = index.get(session_id)
         if current is None or Path(path).stat().st_size > Path(current).stat().st_size:
@@ -105,7 +106,9 @@ def index_transcripts(projects_dir: str) -> dict[str, str]:
     return index
 
 
-def index_subagent_transcripts(projects_dir: str) -> tuple[dict[str, str], list[str]]:
+def index_subagent_transcripts(
+    projects_directory: str, found: dict[str, list[str]] | None = None
+) -> tuple[dict[str, str], list[str]]:
     """agent_id -> transcript path, for the files index_transcripts excludes.
 
     Subagent transcripts sit one level deeper than session ones, at
@@ -127,23 +130,48 @@ def index_subagent_transcripts(projects_dir: str) -> tuple[dict[str, str], list[
     therefore builds an index that looks populated and never matches - the
     same class of failure as handing over the session index, one level down.
 
-    An agent id found under more than one slug is AMBIGUITY, not a match:
-    nothing here can tell which copy the record was parsed from, and picking
-    the bigger or the first would be a guess dressed as a resolution. Those
-    ids are left out of the index and returned so the run can name them.
+    An agent id found under more than one slug whose copies are
+    BYTE-IDENTICAL is one transcript stored twice - measured 2026-09-28, all
+    93 such ids on disk were (a renamed project directory, a migrated
+    worktree slug) - so the first path in sorted order stands for all of
+    them: which copy is read cannot change a number. Copies that DIFFER are
+    ambiguity, not a match: nothing here can tell which one the record was
+    parsed from, and picking the bigger or the first would be a guess dressed
+    as a resolution. Those ids are left out of the index and returned so the
+    run can name them - and so subagent_transcripts can try the row's own
+    parent session, the one piece of the row's data that tells copies apart.
+
+    `found` is find_subagent_transcripts' result, for a caller that also
+    needs the copies; without it the tree is walked here.
 
     Shared by scripts/backfill-tokens-by-model.py and
     scripts/backfill-token-dedup.py, so both find a subagent's transcript
     the same way.
     """
+    if found is None:
+        found = find_subagent_transcripts(projects_directory)
+    index: dict[str, str] = {}
+    ambiguous: list[str] = []
+    for agent_id, paths in sorted(found.items()):
+        if len({sha256_of(path) for path in paths}) == 1:
+            index[agent_id] = paths[0]
+        else:
+            ambiguous.append(agent_id)
+    return index, ambiguous
+
+
+def find_subagent_transcripts(projects_directory: str) -> dict[str, list[str]]:
+    """agent_id -> every copy of its transcript on disk, in sorted order.
+
+    See index_subagent_transcripts for the path shape and the `agent-`
+    filename prefix the record's own agent_id does not carry.
+    """
     prefix = "agent-"
     found: dict[str, list[str]] = collections.defaultdict(list)
-    for path in Path(projects_dir).glob("*/*/subagents/*.jsonl"):
+    for path in Path(projects_directory).glob("*/*/subagents/*.jsonl"):
         stem = path.name[: -len(".jsonl")]
         found[stem.removeprefix(prefix)].append(str(path))
-    index = {agent_id: paths[0] for agent_id, paths in found.items() if len(paths) == 1}
-    ambiguous = sorted(agent_id for agent_id, paths in found.items() if len(paths) > 1)
-    return index, ambiguous
+    return {agent_id: sorted(paths) for agent_id, paths in found.items()}
 
 
 def resolve_transcript(
@@ -169,7 +197,24 @@ def resolve_transcript(
     return transcripts.get(unit_id)
 
 
-def subagent_transcripts(records: list[dict[str, Any]], index: dict[str, str]) -> dict[str, str]:
+def resolve_by_parent(record: dict[str, Any], copies: list[str]) -> str | None:
+    """The one copy of an ambiguous subagent transcript that sits under this
+    row's own parent session - <slug>/<session_id>/subagents/ - or None when
+    none or several do. A row that recorded no path resolves to None here as
+    everywhere else: the parent picks between known copies of a transcript
+    the row did record, it does not invent one."""
+    if not record.get("agent_transcript_path"):
+        return None
+    parent = record.get("session_id")
+    matches = [path for path in copies if Path(path).parent.parent.name == parent]
+    return matches[0] if len(matches) == 1 else None
+
+
+def subagent_transcripts(
+    records: list[dict[str, Any]],
+    index: dict[str, str],
+    candidates: dict[str, list[str]] | None = None,
+) -> dict[str, str]:
     """agent_id -> the one transcript every row of that subagent resolves to.
 
     The subagent counterpart of index_transcripts, in the shape
@@ -179,13 +224,21 @@ def subagent_transcripts(records: list[dict[str, Any]], index: dict[str, str]) -
     reports it as having no transcript - when any row fails to resolve, or
     when its rows resolve to different files: nothing here can say which of
     two files a single as-of series was parsed from.
+
+    `candidates` maps an ambiguous agent id (differing copies, see
+    index_subagent_transcripts) to its copies; a row that resolves nowhere
+    else is then tried against them through resolve_by_parent.
     """
+    candidates = candidates or {}
     resolved: dict[str, set[str | None]] = collections.defaultdict(set)
     for record in records:
         agent_id = record.get("agent_id")
         if not agent_id:
             continue
-        resolved[agent_id].add(resolve_transcript(record, index, "agent_transcript_path", agent_id))
+        path = resolve_transcript(record, index, "agent_transcript_path", agent_id)
+        if path is None and agent_id in candidates:
+            path = resolve_by_parent(record, candidates[agent_id])
+        resolved[agent_id].add(path)
     units: dict[str, str] = {}
     for agent_id, paths in resolved.items():
         (only, *others) = paths
@@ -267,8 +320,8 @@ def scan_transcript(path: str) -> list[TimelineEntry]:
     """
     timeline: list[TimelineEntry] = []
     seen_ids: set[Any] = set()
-    with Path(path).open() as f:
-        for line in f:
+    with Path(path).open() as transcript_file:
+        for line in transcript_file:
             line = line.strip()
             if not line:
                 continue
@@ -312,12 +365,12 @@ def build_prefix_sums(timeline: list[TimelineEntry]) -> PrefixSums:
     peaks: dict[Any, tuple[int, ...]] = {}
     for _stamp, is_duplicate, values, _model, message_id in ordered:
         increment = usage_increment(peaks, message_id, values)
-        peak.append([peak[-1][i] + increment[i] for i in range(4)])
-        raw.append([raw[-1][i] + values[i] for i in range(4)])
+        peak.append([peak[-1][field_index] + increment[field_index] for field_index in range(4)])
+        raw.append([raw[-1][field_index] + values[field_index] for field_index in range(4)])
         if is_duplicate:
             first.append(list(first[-1]))
         else:
-            first.append([first[-1][i] + values[i] for i in range(4)])
+            first.append([first[-1][field_index] + values[field_index] for field_index in range(4)])
     return PrefixSums(stamps, peak, first, raw)
 
 
@@ -528,6 +581,308 @@ def plan_corrections(
     return result.values, result.stats, result.factors
 
 
+# --- non-token fields --------------------------------------------------------
+#
+# The token correction above rewrites only the four token fields. Two other
+# fields of a historical row can be rebuilt from the same transcript, as of
+# the same timestamp_end, each in its own explicitly requested pass
+# (scripts/backfill-token-dedup.py --fields): tool_call_count, which every
+# hook before 2026-09-23 undercounted, and incomplete_usage_messages, which
+# no hook before 2026-09-25 recorded.
+
+
+class EntryFacts(NamedTuple):
+    """What one assistant entry says about tool calls and finalisation."""
+
+    stamp: str
+    message_id: Any
+    finalised: bool
+    # tool_use block ids in content order; None for a block without an id.
+    tool_ids: tuple[Any, ...]
+
+
+def scan_entry_facts(path: str) -> list[EntryFacts]:
+    """Every assistant entry of a transcript, in FILE order - the order the
+    hook read them in, which decides first occurrences."""
+    facts: list[EntryFacts] = []
+    with Path(path).open() as handle:
+        for line in handle:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                entry = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if entry.get("type") != "assistant":
+                continue
+            message = entry.get("message") or {}
+            content = message.get("content") or []
+            tool_ids = tuple(
+                block.get("id")
+                for block in (content if isinstance(content, list) else [])
+                if isinstance(block, dict) and block.get("type") == "tool_use"
+            )
+            facts.append(
+                EntryFacts(
+                    entry.get("timestamp") or "",
+                    message.get("id"),
+                    message.get("stop_reason") is not None,
+                    tool_ids,
+                )
+            )
+    return facts
+
+
+def _entries_as_of(facts: list[EntryFacts], end_timestamp: str | None) -> list[EntryFacts]:
+    """The entries at or before a moment, still in file order - what a hook
+    that wrote a row at `end_timestamp` had read (a replay keeps its original
+    timestamp, so it sorts with the turn it repeats)."""
+    if end_timestamp is None:
+        return list(facts)
+    return [fact for fact in facts if fact.stamp <= end_timestamp]
+
+
+class ToolCounts(NamedTuple):
+    """tool_call_count by each rule a hook has used.
+
+    `distinct` is the current rule (transcript_ingest.parse_transcript): each
+    tool_use block id once, wherever in the message's entries it appears; a
+    block without an id on its message's first entry only. `first` is the
+    2026-08-11 hook's: the blocks of each message's first entry only, which
+    misses every block a streamed message writes in a later entry. `raw` is
+    the original hook's: every block of every entry, replays included.
+    raw >= distinct >= first always, so a row recognised as raw can only
+    fall and one recognised as first can only rise.
+    """
+
+    distinct: int
+    first: int
+    raw: int
+
+
+def tool_calls_as_of(facts: list[EntryFacts], end_timestamp: str | None) -> ToolCounts:
+    distinct = first = raw = 0
+    seen_messages: set[Any] = set()
+    seen_tools: set[Any] = set()
+    for fact in _entries_as_of(facts, end_timestamp):
+        first_occurrence = fact.message_id is None or fact.message_id not in seen_messages
+        if fact.message_id is not None:
+            seen_messages.add(fact.message_id)
+        raw += len(fact.tool_ids)
+        if first_occurrence:
+            first += len(fact.tool_ids)
+        for tool_id in fact.tool_ids:
+            if tool_id is None:
+                distinct += first_occurrence
+            elif tool_id not in seen_tools:
+                seen_tools.add(tool_id)
+                distinct += 1
+    return ToolCounts(distinct, first, raw)
+
+
+def incomplete_as_of(facts: list[EntryFacts], end_timestamp: str | None) -> int:
+    """incomplete_usage_messages as the current hook would have written it at
+    `end_timestamp` - through the hook's own count_incomplete."""
+    order: list[Any] = []
+    seen: set[Any] = set()
+    finalised: set[Any] = set()
+    for fact in _entries_as_of(facts, end_timestamp):
+        if fact.message_id is None:
+            continue
+        if fact.message_id not in seen:
+            seen.add(fact.message_id)
+            order.append(fact.message_id)
+        if fact.finalised:
+            finalised.add(fact.message_id)
+    return count_incomplete(order, finalised)
+
+
+class FieldPlan(NamedTuple):
+    """What a field pass decided: each planned row index's new value, the
+    formula it was recognised as (tool calls only), and every disposition."""
+
+    values: dict[int, int]
+    formulas: dict[int, str]
+    stats: collections.Counter[str]
+
+
+def _eligible_units(
+    records: list[dict[str, Any]],
+    transcripts: dict[str, str],
+    cutoff: str,
+    id_key: str,
+    stats: collections.Counter[str],
+) -> list[tuple[list[int], str]]:
+    """(row indexes, transcript) of every unit a field pass may look at, with
+    the same two unit-level refusals as the token correction: no transcript
+    on disk, or any row without a timestamp_end or at/after the cutoff."""
+    unit_noun = "agent" if id_key == "agent_id" else "session"
+    rows_by_unit: dict[Any, list[int]] = collections.defaultdict(list)
+    for index, record in enumerate(records):
+        rows_by_unit[record.get(id_key)].append(index)
+    units = []
+    for unit_id, indexes in rows_by_unit.items():
+        transcript = transcripts.get(unit_id)
+        if transcript is None:
+            stats["untouched: no transcript on disk"] += len(indexes)
+        elif any(
+            not records[index].get("timestamp_end") or records[index]["timestamp_end"] >= cutoff
+            for index in indexes
+        ):
+            stats[f"untouched: {unit_noun} spans the cutoff"] += len(indexes)
+        else:
+            units.append((indexes, transcript))
+    return units
+
+
+TOOL_CALL_REASONS = {
+    RAW: "corrected: stored the every-entry count",
+    FIRST: "corrected: stored the first-entry count",
+}
+
+
+def plan_tool_call_corrections(
+    records: list[dict[str, Any]],
+    transcripts: dict[str, str],
+    cutoff: str,
+    id_key: str = "session_id",
+) -> FieldPlan:
+    """Which rows' tool_call_count to rebuild by the current rule, and to what.
+
+    The same evidence rule as the token correction: a row is rewritten only
+    when its stored count EXACTLY equals, as of its own timestamp_end, the
+    count one of the two earlier hooks would have written - proof of which
+    hook wrote it, and that the reconstruction models it. A row equal to the
+    current rule is left alone (so a second run is a no-op); a row matching
+    none refuses its whole unit, and a unit is corrected all or nothing, so
+    one agent's series never mixes two rules.
+    """
+    unit_noun = "agent" if id_key == "agent_id" else "session"
+    stats: collections.Counter[str] = collections.Counter()
+    values: dict[int, int] = {}
+    formulas: dict[int, str] = {}
+    for indexes, transcript in _eligible_units(records, transcripts, cutoff, id_key, stats):
+        facts = scan_entry_facts(transcript)
+        proposals: dict[int, tuple[int, str]] = {}
+        refused = False
+        for index in indexes:
+            stored = records[index].get("tool_call_count")
+            now = tool_calls_as_of(facts, records[index]["timestamp_end"])
+            if stored == now.distinct:
+                continue
+            if stored == now.raw:
+                proposals[index] = (now.distinct, RAW)
+            elif stored == now.first:
+                proposals[index] = (now.distinct, FIRST)
+            else:
+                refused = True
+                break
+        if refused:
+            stats[f"untouched: {unit_noun} has a row matching no formula"] += len(indexes)
+            continue
+        stats["untouched: already correct"] += len(indexes) - len(proposals)
+        for index, (value, formula) in proposals.items():
+            stats[TOOL_CALL_REASONS[formula]] += 1
+            values[index] = value
+            formulas[index] = formula
+    return FieldPlan(values, formulas, stats)
+
+
+def plan_incomplete_usage(
+    records: list[dict[str, Any]],
+    transcripts: dict[str, str],
+    cutoff: str,
+    id_key: str = "session_id",
+) -> FieldPlan:
+    """Which rows gain incomplete_usage_messages, and with what count.
+
+    There is no earlier formula to recognise - no hook wrote the key before
+    2026-09-25 - so the evidence that the as-of reconstruction models a row
+    is its TOKENS: every row of the unit must equal the transcript's as-of
+    peak total exactly, or the unit is refused. A row that already carries
+    the key must carry what the transcript gives, or the unit is refused.
+    Only positive counts are added (absent means zero, as the hooks write
+    it), so a row with nothing to flag is left byte-for-byte alone.
+    """
+    unit_noun = "agent" if id_key == "agent_id" else "session"
+    stats: collections.Counter[str] = collections.Counter()
+    values: dict[int, int] = {}
+    for indexes, transcript in _eligible_units(records, transcripts, cutoff, id_key, stats):
+        sums = build_prefix_sums(scan_transcript(transcript))
+        facts = scan_entry_facts(transcript)
+        proposals: dict[int, int] = {}
+        refusal = None
+        for index in indexes:
+            record = records[index]
+            stored_tokens = [record.get(field, 0) or 0 for field in TOKEN_FIELDS]
+            if stored_tokens != as_of(sums, record["timestamp_end"]).peak:
+                refusal = "has a row whose tokens the transcript does not reproduce"
+                break
+            count = incomplete_as_of(facts, record["timestamp_end"])
+            if "incomplete_usage_messages" in record:
+                if record["incomplete_usage_messages"] != count:
+                    refusal = "has a recorded count the transcript does not reproduce"
+                    break
+            elif count:
+                proposals[index] = count
+        if refusal:
+            stats[f"untouched: {unit_noun} {refusal}"] += len(indexes)
+            continue
+        stats["untouched: already correct"] += len(indexes) - len(proposals)
+        if proposals:
+            stats["flagged: messages without a final usage entry"] += len(proposals)
+            values.update(proposals)
+    return FieldPlan(values, {}, stats)
+
+
+def apply_field_plan(
+    records: list[dict[str, Any]], field: str, values: dict[int, int]
+) -> list[dict[str, Any]]:
+    """The records with `field` set on each planned row - replaced in place
+    where the row has it, appended where it does not. Unplanned rows are the
+    same objects; planned ones are copies."""
+    corrected = []
+    for index, record in enumerate(records):
+        if index in values:
+            updated = dict(record)
+            updated[field] = values[index]
+            corrected.append(updated)
+        else:
+            corrected.append(record)
+    return corrected
+
+
+def write_field_state(
+    kind: str,
+    field: str,
+    cutoff: str,
+    applied_at: str,
+    corrected_rows: int,
+    path: str | None = None,
+) -> dict[str, Any]:
+    """Record a successful field pass under state["fields"]["<kind>.<field>"],
+    leaving the token entries - the ones the dashboards read - untouched. A
+    later pass of the same kind and field adds its rows to the earlier ones',
+    as write_backfill_state does."""
+    path = path or BACKFILL_STATE_FILE
+    existing = load_backfill_state(path)
+    state: dict[str, Any] = existing if isinstance(existing, dict) else {}
+    fields = state.get("fields")
+    if not isinstance(fields, dict):
+        fields = state["fields"] = {}
+    key = f"{kind}.{field}"
+    previous = fields.get(key)
+    if isinstance(previous, dict):
+        corrected_rows += previous.get("corrected_rows") or 0
+    fields[key] = {"cutoff": cutoff, "applied_at": applied_at, "corrected_rows": corrected_rows}
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with target.open("w") as handle:
+        json.dump(state, handle, indent=2)
+    return state
+
+
 def find_nonmonotonic_sessions(
     records: list[dict[str, Any]], id_key: str = "session_id"
 ) -> set[Any]:
@@ -547,11 +902,11 @@ def find_nonmonotonic_sessions(
         by_session[record.get(id_key)].append(record)
     offenders: set[Any] = set()
     for session_id, snapshots in by_session.items():
-        snapshots = sorted(snapshots, key=lambda r: r.get("duration_seconds") or 0)
+        snapshots = sorted(snapshots, key=lambda snapshot: snapshot.get("duration_seconds") or 0)
         previous = [0] * 4
         for snapshot in snapshots:
             current = [snapshot.get(field, 0) or 0 for field in TOKEN_FIELDS]
-            if any(current[i] < previous[i] for i in range(4)):
+            if any(current[field_index] < previous[field_index] for field_index in range(4)):
                 offenders.add(session_id)
                 break
             previous = current
@@ -593,7 +948,7 @@ def apply_plan(
 def daily_totals(records: list[dict[str, Any]], days: int | None) -> list[tuple[str, int]]:
     """Per-day token totals through the same code path the trend chart uses."""
     totals: collections.Counter[str] = collections.Counter()
-    for delta in expand_records_to_daily_deltas([dict(r) for r in records]):
+    for delta in expand_records_to_daily_deltas([dict(record) for record in records]):
         moment = delta.get("timestamp_start")
         if not moment:
             continue
@@ -668,8 +1023,8 @@ def load_backfill_state(path: str | None = None) -> dict[str, Any] | None:
     if not Path(path).exists():
         return None
     try:
-        with Path(path).open() as f:
-            return cast("dict[str, Any]", json.load(f))
+        with Path(path).open() as state_file:
+            return cast("dict[str, Any]", json.load(state_file))
     except (json.JSONDecodeError, OSError):
         return None
 
@@ -729,8 +1084,8 @@ def write_backfill_state(
         state.update(entry)
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
-    with target.open("w") as f:
-        json.dump(state, f, indent=2)
+    with target.open("w") as state_file:
+        json.dump(state, state_file, indent=2)
     return state
 
 

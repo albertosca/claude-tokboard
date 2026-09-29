@@ -22,8 +22,8 @@ def load_records(path: str) -> list[dict[str, Any]]:
     records: list[dict[str, Any]] = []
     if not Path(path).exists():
         return records
-    with Path(path).open() as f:
-        for line in f:
+    with Path(path).open() as records_file:
+        for line in records_file:
             line = line.strip()
             if not line:
                 continue
@@ -50,16 +50,18 @@ def dedupe_by_key(records: list[dict[str, Any]], key_field: str) -> list[dict[st
     best_by_id: dict[Any, dict[str, Any]] = {}
     order: list[Any] = []
     no_id_records: list[dict[str, Any]] = []
-    for r in records:
-        key = r.get(key_field)
+    for record in records:
+        key = record.get(key_field)
         if key is None:
-            no_id_records.append(r)
+            no_id_records.append(record)
             continue
         if key not in best_by_id:
             order.append(key)
-            best_by_id[key] = r
-        elif (r.get("duration_seconds") or 0) >= (best_by_id[key].get("duration_seconds") or 0):
-            best_by_id[key] = r
+            best_by_id[key] = record
+        elif (record.get("duration_seconds") or 0) >= (
+            best_by_id[key].get("duration_seconds") or 0
+        ):
+            best_by_id[key] = record
     return [best_by_id[key] for key in order] + no_id_records
 
 
@@ -123,25 +125,27 @@ def normalize_project_paths(
     # so taking it would merge every worktree back into its project and
     # lose the "project / worktree" the chart has always shown.
     authoritative: set[str] = set()
-    for r in records:
-        root = r.get("project_root")
-        path = r.get("project_path")
+    for record in records:
+        root = record.get("project_root")
+        path = record.get("project_path")
         if (
             isinstance(root, str)
             and root
             and isinstance(path, str)
             and split_worktree(path.rstrip("/")) is None
         ):
-            r["project_path"] = root
+            record["project_path"] = root
             authoritative.add(root)
 
     known_paths: set[str] = {
-        cast(str, r.get("project_path")) for r in records if r.get("project_path")
+        cast(str, record.get("project_path")) for record in records if record.get("project_path")
     }
     marker = "/.claude/worktrees/"
-    max_children_to_collapse = 2
+    maximum_children_to_collapse = 2
 
-    roots = sorted((r.rstrip("/") for r in project_roots if r.rstrip("/")), key=len, reverse=True)
+    roots = sorted(
+        (root.rstrip("/") for root in project_roots if root.rstrip("/")), key=len, reverse=True
+    )
 
     def declared_root_of(path: str) -> str | None:
         """The project a declared root says this path belongs to, or None
@@ -188,22 +192,22 @@ def normalize_project_paths(
             canonical[path] = path
             continue
         collapse_parent = parent_of.get(path)
-        if collapse_parent and children_count[collapse_parent] <= max_children_to_collapse:
+        if collapse_parent and children_count[collapse_parent] <= maximum_children_to_collapse:
             canonical[path] = collapse_parent
         else:
             canonical[path] = path
-    for r in records:
-        p = r.get("project_path")
-        if p in canonical and canonical[p] != p:
-            r["project_path"] = canonical[p]
+    for record in records:
+        project_path = record.get("project_path")
+        if project_path in canonical and canonical[project_path] != project_path:
+            record["project_path"] = canonical[project_path]
     # A session cwd'd into a scratchpad/tmp dir isn't a "project" (2026-07-21:
     # "tem um scratchpad que não faço ideia do que seja") - fold these into
     # the same "sem projeto" bucket None already means, rather than giving
     # every random ephemeral path its own legend entry.
-    for r in records:
-        p = r.get("project_path")
-        if p and is_ephemeral_path(p):
-            r["project_path"] = None
+    for record in records:
+        project_path = record.get("project_path")
+        if project_path and is_ephemeral_path(project_path):
+            record["project_path"] = None
     return records
 
 
@@ -229,9 +233,9 @@ def filter_records(
 ) -> list[dict[str, Any]]:
     filtered = records
     if tag is not None:
-        filtered = [r for r in filtered if r.get("tag") == tag]
+        filtered = [record for record in filtered if record.get("tag") == tag]
     if project is not None:
-        filtered = [r for r in filtered if r.get("project_path") == project]
+        filtered = [record for record in filtered if record.get("project_path") == project]
     return filtered
 
 
@@ -240,16 +244,18 @@ def filter_by_days(records: list[dict[str, Any]], days: int | None) -> list[dict
         return records
     cutoff = datetime.now().astimezone() - timedelta(days=days)
     filtered = []
-    for r in records:
-        timestamp_start = r.get("timestamp_start")
+    for record in records:
+        timestamp_start = record.get("timestamp_start")
         if not timestamp_start:
             continue
         try:
-            dt = datetime.fromisoformat(timestamp_start.replace("Z", "+00:00")).astimezone()
+            parsed_start = datetime.fromisoformat(
+                timestamp_start.replace("Z", "+00:00")
+            ).astimezone()
         except (ValueError, AttributeError, TypeError):
             continue
-        if dt >= cutoff:
-            filtered.append(r)
+        if parsed_start >= cutoff:
+            filtered.append(record)
     return filtered
 
 
@@ -309,6 +315,18 @@ def filter_deltas_by_window(
     return kept
 
 
+def incomplete_usage_messages(record: dict[str, Any]) -> int:
+    """How many of this record's messages never got their final usage entry,
+    so its output is a floor - 0 when the key is absent (every row written
+    before 2026-09-25, and every complete one since) or not a positive int
+    (the file is hand-editable). `type(value) is int`, not `isinstance`:
+    bool is an int subclass, so isinstance(True, int) is True and would let
+    a hand-edited `"incomplete_usage_messages": true` return as the
+    non-int value True instead of being rejected like every other non-int."""
+    value = record.get("incomplete_usage_messages")
+    return value if type(value) is int and value > 0 else 0
+
+
 def record_token_total(record: dict[str, Any]) -> int:
     # Every token a record consumed, all four kinds. Cache dominates real
     # usage by orders of magnitude - measured 2026-08-10 against Claude
@@ -326,10 +344,10 @@ def record_token_total(record: dict[str, Any]) -> int:
 
 def compute_token_type_totals(records: list[dict[str, Any]]) -> dict[str, int]:
     return {
-        "series-1": sum(r.get("input_tokens", 0) or 0 for r in records),
-        "series-2": sum(r.get("output_tokens", 0) or 0 for r in records),
-        "series-3": sum(r.get("cache_read_tokens", 0) or 0 for r in records),
-        "series-4": sum(r.get("cache_creation_tokens", 0) or 0 for r in records),
+        "series-1": sum(record.get("input_tokens", 0) or 0 for record in records),
+        "series-2": sum(record.get("output_tokens", 0) or 0 for record in records),
+        "series-3": sum(record.get("cache_read_tokens", 0) or 0 for record in records),
+        "series-4": sum(record.get("cache_creation_tokens", 0) or 0 for record in records),
     }
 
 
@@ -443,7 +461,7 @@ def expand_records_to_daily_deltas(raw_records: list[dict[str, Any]]) -> list[di
 
     deltas: list[dict[str, Any]] = []
     for snapshots in by_id.values():
-        snapshots.sort(key=lambda r: r.get("duration_seconds") or 0)
+        snapshots.sort(key=lambda snapshot: snapshot.get("duration_seconds") or 0)
         previous = dict.fromkeys(TOKEN_FIELDS, 0)
         previous_by_model: dict[str, dict[str, int]] = {}
         for snapshot in snapshots:
@@ -521,7 +539,12 @@ def fold_subagent_tokens_into_sessions(
     # in-place so every list derived from the same dicts earlier in the
     # pipeline (all_time_records, chart_records, the day/limit-filtered
     # records) picks up the fold automatically.
+    #
+    # incomplete_usage_messages folds the same way: once a session's output
+    # includes a subagent's, it is a floor whenever that subagent's is. It is
+    # only ever ADDED when positive, so absent keeps meaning zero.
     subagent_totals_by_session: dict[Any, dict[str, int]] = {}
+    incomplete_by_session: dict[Any, int] = {}
     for subagent in subagent_records:
         session_id = subagent.get("session_id")
         if session_id is None:
@@ -529,10 +552,18 @@ def fold_subagent_tokens_into_sessions(
         totals = subagent_totals_by_session.setdefault(session_id, dict.fromkeys(TOKEN_FIELDS, 0))
         for field in TOKEN_FIELDS:
             totals[field] += subagent.get(field, 0) or 0
+        incomplete_by_session[session_id] = incomplete_by_session.get(
+            session_id, 0
+        ) + incomplete_usage_messages(subagent)
     for record in records:
-        session_totals = subagent_totals_by_session.get(record.get("session_id"))
+        session_id = record.get("session_id")
+        session_totals = subagent_totals_by_session.get(session_id)
         if not session_totals:
             continue
         for field in TOKEN_FIELDS:
             record[field] = (record.get(field, 0) or 0) + session_totals[field]
+        if incomplete_by_session[session_id]:
+            record["incomplete_usage_messages"] = (
+                incomplete_usage_messages(record) + incomplete_by_session[session_id]
+            )
     return records

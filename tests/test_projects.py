@@ -11,11 +11,11 @@ WORKTREE = "/home/me/proj/.claude/worktrees/feature-x"
 def record(
     project_path: str | None, timestamp_start: str | None = None, **tokens: int
 ) -> dict[str, Any]:
-    r: dict[str, Any] = {"project_path": project_path}
+    data: dict[str, Any] = {"project_path": project_path}
     if timestamp_start is not None:
-        r["timestamp_start"] = timestamp_start
-    r.update(tokens)
-    return r
+        data["timestamp_start"] = timestamp_start
+    data.update(tokens)
+    return data
 
 
 # --- compute_project_first_seen / compute_project_last_seen ----------
@@ -127,7 +127,7 @@ def test_project_days_running_counts_days_since_first_use():
 
 
 @pytest.mark.parametrize(
-    ("days_ago", "en", "pt"),
+    ("days_ago", "english_text", "portuguese_text"),
     [
         (0, " · first used today", " · 1º uso hoje"),
         (1, " · first used 1 day ago", " · 1º uso há 1 dia"),
@@ -135,13 +135,13 @@ def test_project_days_running_counts_days_since_first_use():
     ],
 )
 def test_project_days_running_zero_and_small_counts_in_both_languages(
-    days_ago: int, en: str, pt: str
+    days_ago: int, english_text: str, portuguese_text: str
 ) -> None:
     # A few seconds' slack keeps `.days` from landing on the boundary below
     # the intended count (e.g. 1 day minus a few ms truncating to 0).
     first_seen = (datetime.now().astimezone() - timedelta(days=days_ago, seconds=5)).isoformat()
-    assert mr.project_days_running({"/a": first_seen}, "/a", lang="en") == en
-    assert mr.project_days_running({"/a": first_seen}, "/a", lang="pt") == pt
+    assert mr.project_days_running({"/a": first_seen}, "/a", lang="en") == english_text
+    assert mr.project_days_running({"/a": first_seen}, "/a", lang="pt") == portuguese_text
 
 
 def test_project_days_running_treats_a_future_first_seen_as_today() -> None:
@@ -225,16 +225,16 @@ def test_get_open_projects_skips_unreadable_and_cwd_less_entries(tmp_path):
 
 
 def test_get_open_projects_resolves_the_real_default_sessions_directory(monkeypatch, tmp_path):
-    # No sessions_dir given - exercises the sessions_dir is None branch,
+    # No sessions_directory given - exercises the sessions_directory is None branch,
     # which must expand to ~/.claude/sessions. HOME is monkeypatched so
     # that expansion lands inside tmp_path instead of touching this
     # machine's real sessions directory, and the seeded file's cwd is
     # asserted exactly - a broken default (e.g. missing the ".claude"
     # segment, or landing outside tmp_path) would return set() instead.
     monkeypatch.setenv("HOME", str(tmp_path))
-    sessions_dir = tmp_path / ".claude" / "sessions"
-    sessions_dir.mkdir(parents=True)
-    (sessions_dir / "one.json").write_text(json.dumps({"cwd": "/home/me/somewhere"}))
+    sessions_directory = tmp_path / ".claude" / "sessions"
+    sessions_directory.mkdir(parents=True)
+    (sessions_directory / "one.json").write_text(json.dumps({"cwd": "/home/me/somewhere"}))
     assert mr.get_open_projects() == {"/home/me/somewhere"}
 
 
@@ -266,7 +266,7 @@ def test_assign_group_colors_marks_a_pathless_record():
 
 
 def test_assign_group_colors_wraps_after_thirty_slots():
-    colors = mr.assign_group_colors([record(f"/p{i}") for i in range(31)])
+    colors = mr.assign_group_colors([record(f"/p{index}") for index in range(31)])
     assert colors["/p0"] == "group-color-1"
     assert colors["/p29"] == "group-color-30"
     assert colors["/p30"] == "group-color-1"
@@ -282,15 +282,19 @@ def test_build_project_groups_groups_by_canonical_key_newest_first():
     records = [record("/b", "1"), record("/a", "2")]
     colors = mr.assign_group_colors(records)
     groups = mr.build_project_groups(records, colors)
-    assert [g["project"] for g in groups] == ["/a", "/b"]
+    assert [group["project"] for group in groups] == ["/a", "/b"]
 
     # A second record on "/a" must come back newest-first inside its
     # own group, not in input order.
-    records_with_two_on_a = [record("/b", "1"), record("/a", "2"), record("/a", "3")]
-    colors2 = mr.assign_group_colors(records_with_two_on_a)
-    groups2 = mr.build_project_groups(records_with_two_on_a, colors2)
+    records_with_two_on_first_project = [
+        record("/b", "1"),
+        record("/a", "2"),
+        record("/a", "3"),
+    ]
+    colors2 = mr.assign_group_colors(records_with_two_on_first_project)
+    groups2 = mr.build_project_groups(records_with_two_on_first_project, colors2)
     assert len(groups2[0]["records"]) == 2
-    assert [r["timestamp_start"] for r in groups2[0]["records"]] == ["3", "2"]
+    assert [entry["timestamp_start"] for entry in groups2[0]["records"]] == ["3", "2"]
 
 
 def test_build_project_groups_merges_a_worktree_into_its_parent():

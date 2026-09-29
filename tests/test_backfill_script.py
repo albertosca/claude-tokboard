@@ -8,6 +8,7 @@ import sys
 import tempfile
 import types
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -199,8 +200,8 @@ def test_write_atomically_preserves_a_concurrent_append_verbatim(tmp_path, scrip
     path.write_bytes(b'{"a": 1}\n')
     snapshot = path.read_bytes()
     # Simulate a live Stop hook appending a row after the snapshot was read.
-    with path.open("ab") as f:
-        f.write(b'{"a": "live-append"}\n')
+    with path.open("ab") as append_file:
+        append_file.write(b'{"a": "live-append"}\n')
 
     appended = script.write_atomically(str(path), snapshot, [b'{"a": "corrected"}'], 0o644)
 
@@ -219,8 +220,8 @@ def _append_just_before_the_rename(
 
     def replace(self: Path, destination: Path) -> Path:
         if Path(destination) == target:
-            with target.open("ab") as f:
-                f.write(data)
+            with target.open("ab") as append_file:
+                append_file.write(data)
         return real_replace(self, destination)
 
     monkeypatch.setattr(Path, "replace", replace)
@@ -291,13 +292,11 @@ def test_write_atomically_except_handler_tolerates_a_temp_file_already_gone(
 
     real_mkstemp = tempfile.mkstemp
 
-    def mkstemp_then_unlink(
-        suffix: str | None = None,
-        prefix: str | None = None,
-        dir: str | None = None,
-        text: bool = False,
-    ) -> tuple[int, str]:
-        handle, name = real_mkstemp(suffix=suffix, prefix=prefix, dir=dir, text=text)
+    def mkstemp_then_unlink(*arguments: Any, **keyword_arguments: Any) -> tuple[int, str]:
+        # Forwards whatever tempfile.mkstemp's real callers pass (the
+        # production code calls it with dir=, prefix=, suffix=) rather than
+        # repeating stdlib's own "dir" keyword as a declared parameter name.
+        handle, name = real_mkstemp(*arguments, **keyword_arguments)
         Path(name).unlink()
         return handle, name
 
@@ -317,9 +316,9 @@ def test_main_leaves_the_backfill_state_alone_when_an_apply_has_nothing_to_corre
     # note both dashboards render would have lost its date. This test used
     # to assert exactly that overwrite.
     metrics_file = tmp_path / "sessions.jsonl"
-    projects_dir = tmp_path / "projects"
-    projects_dir.mkdir()
-    backup_dir = tmp_path / "backups"
+    projects_directory = tmp_path / "projects"
+    projects_directory.mkdir()
+    backup_directory = tmp_path / "backups"
     state_path = tmp_path / "backfill_state.json"
     previous = (
         b'{"cutoff": "2026-08-21", "applied_at": "2026-08-21T19:49:23", '
@@ -340,9 +339,9 @@ def test_main_leaves_the_backfill_state_alone_when_an_apply_has_nothing_to_corre
             "--metrics-file",
             str(metrics_file),
             "--projects-dir",
-            str(projects_dir),
+            str(projects_directory),
             "--backup-dir",
-            str(backup_dir),
+            str(backup_directory),
             "--apply",
             "--state-file",
             str(state_path),
@@ -355,15 +354,15 @@ def test_main_leaves_the_backfill_state_alone_when_an_apply_has_nothing_to_corre
     assert "nothing to correct; leaving the file and the backfill state untouched" in out
     assert state_path.read_bytes() == previous
     assert metrics_file.read_bytes() == before
-    assert not backup_dir.exists()
+    assert not backup_directory.exists()
 
 
 def test_main_records_uncorrectable_rows_beside_the_corrected_ones(tmp_path, script, monkeypatch):
     # The retention boundary's other half: rows no transcript can reach are
     # counted into the state of a run that corrected something.
-    projects_dir = tmp_path / "projects"
-    slug_dir = projects_dir / "some-project"
-    slug_dir.mkdir(parents=True)
+    projects_directory = tmp_path / "projects"
+    slug_directory = projects_directory / "some-project"
+    slug_directory.mkdir(parents=True)
     usage = {
         "input_tokens": 100,
         "output_tokens": 0,
@@ -371,7 +370,7 @@ def test_main_records_uncorrectable_rows_beside_the_corrected_ones(tmp_path, scr
         "cache_creation_input_tokens": 0,
     }
     _write_transcript(
-        slug_dir / "s1.jsonl",
+        slug_directory / "s1.jsonl",
         [("2026-08-01T10:00:00", "msg-1", usage), ("2026-08-01T10:00:01", "msg-1", usage)],
     )
     metrics_file = tmp_path / "sessions.jsonl"
@@ -390,7 +389,7 @@ def test_main_records_uncorrectable_rows_beside_the_corrected_ones(tmp_path, scr
             "--metrics-file",
             str(metrics_file),
             "--projects-dir",
-            str(projects_dir),
+            str(projects_directory),
             "--backup-dir",
             str(tmp_path / "backups"),
             "--state-file",
@@ -432,9 +431,9 @@ def _write_transcript(path: Path, entries: list[tuple[str, str, dict[str, int]]]
     """entries: list of (timestamp, message_id, usage_dict). Mirrors
     tests/test_backfill.py's write_transcript/usage helpers - see that
     file for the JSON shape index_transcripts/scan_transcript expect."""
-    with path.open("w") as f:
+    with path.open("w") as transcript_file:
         for timestamp, message_id, usage in entries:
-            f.write(
+            transcript_file.write(
                 json.dumps(
                     {
                         "type": "assistant",
@@ -455,11 +454,11 @@ def test_main_rewrites_the_file_through_the_real_backup_and_write_path(
     # actually runs the backup-creation, backup-verification, and
     # write_atomically block, not just the `if not plan:` shortcut.
     metrics_file = tmp_path / "sessions.jsonl"
-    projects_dir = tmp_path / "projects"
-    # index_transcripts globs <projects_dir>/*/<session_id>.jsonl.
-    slug_dir = projects_dir / "some-project"
-    slug_dir.mkdir(parents=True)
-    backup_dir = tmp_path / "backups"
+    projects_directory = tmp_path / "projects"
+    # index_transcripts globs <projects_directory>/*/<session_id>.jsonl.
+    slug_directory = projects_directory / "some-project"
+    slug_directory.mkdir(parents=True)
+    backup_directory = tmp_path / "backups"
     state_path = tmp_path / "backfill_state.json"
 
     usage = {
@@ -469,7 +468,7 @@ def test_main_rewrites_the_file_through_the_real_backup_and_write_path(
         "cache_creation_input_tokens": 0,
     }
     _write_transcript(
-        slug_dir / "s1.jsonl",
+        slug_directory / "s1.jsonl",
         [
             ("2026-08-01T10:00:00", "msg-1", usage),
             ("2026-08-01T10:00:01", "msg-1", usage),  # replay: the broken hook's bug
@@ -498,9 +497,9 @@ def test_main_rewrites_the_file_through_the_real_backup_and_write_path(
             "--metrics-file",
             str(metrics_file),
             "--projects-dir",
-            str(projects_dir),
+            str(projects_directory),
             "--backup-dir",
-            str(backup_dir),
+            str(backup_directory),
             "--apply",
             "--state-file",
             str(state_path),
@@ -511,7 +510,7 @@ def test_main_rewrites_the_file_through_the_real_backup_and_write_path(
     assert exit_code == 0
 
     # the backup block ran and left exactly one verified backup behind
-    backups = list(backup_dir.glob("sessions.jsonl.backfill-*.bak"))
+    backups = list(backup_directory.glob("sessions.jsonl.backfill-*.bak"))
     assert len(backups) == 1
     assert (
         backups[0].read_bytes() == b'{"session_id": "s1", "timestamp_end": '
@@ -547,8 +546,8 @@ def test_main_aborts_when_no_metrics_file_exists_at_the_given_path(
 def test_main_aborts_on_a_line_that_is_not_valid_json(tmp_path, script, monkeypatch, capsys):
     metrics_file = tmp_path / "sessions.jsonl"
     metrics_file.write_text("not json at all\n")
-    projects_dir = tmp_path / "projects"
-    projects_dir.mkdir()
+    projects_directory = tmp_path / "projects"
+    projects_directory.mkdir()
 
     monkeypatch.setattr(
         "sys.argv",
@@ -557,7 +556,7 @@ def test_main_aborts_on_a_line_that_is_not_valid_json(tmp_path, script, monkeypa
             "--metrics-file",
             str(metrics_file),
             "--projects-dir",
-            str(projects_dir),
+            str(projects_directory),
         ],
     )
 
@@ -577,9 +576,9 @@ def test_main_aborts_when_field_verification_reports_a_problem(
     # is exactly what verify_fields exists to catch before anything is
     # written.
     metrics_file = tmp_path / "sessions.jsonl"
-    projects_dir = tmp_path / "projects"
-    slug_dir = projects_dir / "some-project"
-    slug_dir.mkdir(parents=True)
+    projects_directory = tmp_path / "projects"
+    slug_directory = projects_directory / "some-project"
+    slug_directory.mkdir(parents=True)
 
     usage = {
         "input_tokens": 100,
@@ -588,7 +587,7 @@ def test_main_aborts_when_field_verification_reports_a_problem(
         "cache_creation_input_tokens": 0,
     }
     _write_transcript(
-        slug_dir / "s1.jsonl",
+        slug_directory / "s1.jsonl",
         [
             ("2026-08-01T10:00:00", "msg-1", usage),
             ("2026-08-01T10:00:01", "msg-1", usage),  # replay
@@ -615,16 +614,16 @@ def test_main_aborts_when_field_verification_reports_a_problem(
             "--metrics-file",
             str(metrics_file),
             "--projects-dir",
-            str(projects_dir),
+            str(projects_directory),
         ],
     )
 
     exit_code = script.main()
 
     assert exit_code == 1
-    err = capsys.readouterr().err
-    assert "FIELD VERIFICATION FAILED" in err
-    assert "key set changed" in err
+    error_output = capsys.readouterr().err
+    assert "FIELD VERIFICATION FAILED" in error_output
+    assert "key set changed" in error_output
     # dry run (no --apply): the live file must be untouched either way.
     assert "cache_creation_tokens" not in metrics_file.read_text()
 
@@ -640,9 +639,9 @@ def test_main_aborts_on_a_monotonicity_regression_introduced_by_the_rewrite(
     # gets corrected down to 100 - which is now LESS than the other row's
     # untouched 150, introducing a decrease that was not there before.
     metrics_file = tmp_path / "sessions.jsonl"
-    projects_dir = tmp_path / "projects"
-    slug_dir = projects_dir / "some-project"
-    slug_dir.mkdir(parents=True)
+    projects_directory = tmp_path / "projects"
+    slug_directory = projects_directory / "some-project"
+    slug_directory.mkdir(parents=True)
 
     usage = {
         "input_tokens": 100,
@@ -657,7 +656,7 @@ def test_main_aborts_on_a_monotonicity_regression_introduced_by_the_rewrite(
         "cache_creation_input_tokens": 0,
     }
     _write_transcript(
-        slug_dir / "s1.jsonl",
+        slug_directory / "s1.jsonl",
         [
             ("2026-08-01T10:00:00", "msg-1", usage),
             ("2026-08-01T10:00:01", "msg-1", usage),  # replay: raw-as-of(T1)=200, deduped=100
@@ -693,21 +692,21 @@ def test_main_aborts_on_a_monotonicity_regression_introduced_by_the_rewrite(
             "--metrics-file",
             str(metrics_file),
             "--projects-dir",
-            str(projects_dir),
+            str(projects_directory),
         ],
     )
 
     exit_code = script.main()
 
     assert exit_code == 1
-    err = capsys.readouterr().err
-    assert "MONOTONICITY REGRESSION in ['s1']" in err
+    error_output = capsys.readouterr().err
+    assert "MONOTONICITY REGRESSION in ['s1']" in error_output
 
 
 def test_main_dry_run_returns_zero_and_writes_nothing(tmp_path, script, monkeypatch, capsys):
     metrics_file = tmp_path / "sessions.jsonl"
-    projects_dir = tmp_path / "projects"
-    projects_dir.mkdir()
+    projects_directory = tmp_path / "projects"
+    projects_directory.mkdir()
     state_path = tmp_path / "backfill_state.json"
     metrics_file.write_text(
         json.dumps(
@@ -731,7 +730,7 @@ def test_main_dry_run_returns_zero_and_writes_nothing(tmp_path, script, monkeypa
             "--metrics-file",
             str(metrics_file),
             "--projects-dir",
-            str(projects_dir),
+            str(projects_directory),
             "--state-file",
             str(state_path),
         ],
@@ -753,10 +752,10 @@ def test_main_dry_run_returns_zero_and_writes_nothing(tmp_path, script, monkeypa
 
 def test_main_aborts_when_the_backup_does_not_verify(tmp_path, script, monkeypatch, capsys):
     metrics_file = tmp_path / "sessions.jsonl"
-    projects_dir = tmp_path / "projects"
-    slug_dir = projects_dir / "some-project"
-    slug_dir.mkdir(parents=True)
-    backup_dir = tmp_path / "backups"
+    projects_directory = tmp_path / "projects"
+    slug_directory = projects_directory / "some-project"
+    slug_directory.mkdir(parents=True)
+    backup_directory = tmp_path / "backups"
     state_path = tmp_path / "backfill_state.json"
 
     usage = {
@@ -766,7 +765,7 @@ def test_main_aborts_when_the_backup_does_not_verify(tmp_path, script, monkeypat
         "cache_creation_input_tokens": 0,
     }
     _write_transcript(
-        slug_dir / "s1.jsonl",
+        slug_directory / "s1.jsonl",
         [
             ("2026-08-01T10:00:00", "msg-1", usage),
             ("2026-08-01T10:00:01", "msg-1", usage),  # replay
@@ -800,9 +799,9 @@ def test_main_aborts_when_the_backup_does_not_verify(tmp_path, script, monkeypat
             "--metrics-file",
             str(metrics_file),
             "--projects-dir",
-            str(projects_dir),
+            str(projects_directory),
             "--backup-dir",
-            str(backup_dir),
+            str(backup_directory),
             "--apply",
             "--state-file",
             str(state_path),
@@ -819,10 +818,10 @@ def test_main_aborts_when_the_backup_does_not_verify(tmp_path, script, monkeypat
 
 def test_main_aborts_on_a_written_line_count_mismatch(tmp_path, script, monkeypatch, capsys):
     metrics_file = tmp_path / "sessions.jsonl"
-    projects_dir = tmp_path / "projects"
-    slug_dir = projects_dir / "some-project"
-    slug_dir.mkdir(parents=True)
-    backup_dir = tmp_path / "backups"
+    projects_directory = tmp_path / "projects"
+    slug_directory = projects_directory / "some-project"
+    slug_directory.mkdir(parents=True)
+    backup_directory = tmp_path / "backups"
     state_path = tmp_path / "backfill_state.json"
 
     usage = {
@@ -832,7 +831,7 @@ def test_main_aborts_on_a_written_line_count_mismatch(tmp_path, script, monkeypa
         "cache_creation_input_tokens": 0,
     }
     _write_transcript(
-        slug_dir / "s1.jsonl",
+        slug_directory / "s1.jsonl",
         [
             ("2026-08-01T10:00:00", "msg-1", usage),
             ("2026-08-01T10:00:01", "msg-1", usage),  # replay
@@ -858,8 +857,8 @@ def test_main_aborts_on_a_written_line_count_mismatch(tmp_path, script, monkeypa
     # main() disagrees exactly the way a lost or duplicated write would.
     real_write_atomically = script.write_atomically
 
-    def lying_write_atomically(*args: object, **kwargs: object) -> int:
-        real_write_atomically(*args, **kwargs)
+    def lying_write_atomically(*arguments: object, **keyword_arguments: object) -> int:
+        real_write_atomically(*arguments, **keyword_arguments)
         return 999
 
     monkeypatch.setattr(script, "write_atomically", lying_write_atomically)
@@ -871,9 +870,9 @@ def test_main_aborts_on_a_written_line_count_mismatch(tmp_path, script, monkeypa
             "--metrics-file",
             str(metrics_file),
             "--projects-dir",
-            str(projects_dir),
+            str(projects_directory),
             "--backup-dir",
-            str(backup_dir),
+            str(backup_directory),
             "--apply",
             "--state-file",
             str(state_path),
@@ -1086,9 +1085,9 @@ def test_main_refuses_a_subagents_run_on_a_sessions_file(tmp_path, script, monke
 
     assert script.main() == 1
 
-    err = capsys.readouterr().err
-    assert "refusing: --kind subagents" in err
-    assert "1 of 1 rows have no agent_id" in err
+    error_output = capsys.readouterr().err
+    assert "refusing: --kind subagents" in error_output
+    assert "1 of 1 rows have no agent_id" in error_output
     assert paths["metrics"].read_bytes() == before
     assert not paths["backups"].exists()
     assert "subagents" not in json.loads(paths["state"].read_text())
@@ -1106,9 +1105,9 @@ def test_main_refuses_a_sessions_run_on_a_subagents_file(tmp_path, script, monke
 
     assert script.main() == 1
 
-    err = capsys.readouterr().err
-    assert "refusing: --kind sessions" in err
-    assert "3 of 3 rows carry an agent_id" in err
+    error_output = capsys.readouterr().err
+    assert "refusing: --kind sessions" in error_output
+    assert "3 of 3 rows carry an agent_id" in error_output
     assert paths["metrics"].read_bytes() == before
     assert not paths["backups"].exists()
 
@@ -1173,7 +1172,7 @@ def test_main_raises_a_row_that_stored_the_first_occurrence_sum(
     assert "  output_tokens                         +176\n" in out
     assert "  cache_read_tokens                       +0\n" in out
     row = json.loads(paths["metrics"].read_text())
-    assert [row[f] for f in ("input_tokens", "output_tokens")] == [2, 179]
+    assert [row[field] for field in ("input_tokens", "output_tokens")] == [2, 179]
     assert row["tokens_by_model"] == {
         "unknown": {
             "input_tokens": 2,
@@ -1206,12 +1205,35 @@ def test_main_refuses_a_rewritten_map_that_does_not_reconcile(
 
     assert script.main() == 1
 
-    err = capsys.readouterr().err
-    assert "line 1: tokens_by_model output_tokens sums to 180, the row says 179" in err
+    error_output = capsys.readouterr().err
+    assert "line 1: tokens_by_model output_tokens sums to 180, the row says 179" in error_output
     assert paths["metrics"].read_bytes() == before
 
 
 def test_main_names_ambiguous_subagent_transcripts(tmp_path, script, monkeypatch, capsys):
+    paths = _subagents_fixture(tmp_path)
+    twin = paths["projects"] / "other-project" / "parent" / "subagents"
+    twin.mkdir(parents=True)
+    # A copy that DIFFERS (one replay fewer), under a directory named for the
+    # same parent session - so neither the content nor the row's parent can
+    # tell the two apart.
+    _write_transcript(twin / "agent-a2.jsonl", _replayed("2026-08-01T11:00:00", "m2", 50, 4))
+    monkeypatch.setattr("sys.argv", _subagents_argv(paths))
+
+    assert script.main() == 0
+
+    out = capsys.readouterr().out
+    assert (
+        "1 id(s) found under more than one project slug with differing copies, left "
+        "unindexed (a row may still pick its copy by its parent session): ['a2']"
+    ) in out
+    # a2's recorded path is stale and its id is ambiguous: uncorrectable.
+    assert "Lines: 3 read, 1 would change" in out
+
+
+def test_main_corrects_a_subagent_whose_copies_under_two_slugs_are_identical(
+    tmp_path, script, monkeypatch, capsys
+):
     paths = _subagents_fixture(tmp_path)
     twin = paths["projects"] / "other-project" / "parent" / "subagents"
     twin.mkdir(parents=True)
@@ -1221,6 +1243,6 @@ def test_main_names_ambiguous_subagent_transcripts(tmp_path, script, monkeypatch
     assert script.main() == 0
 
     out = capsys.readouterr().out
-    assert "1 id(s) found under more than one project slug and left unindexed: ['a2']" in out
-    # a2's recorded path is stale and its id is ambiguous: uncorrectable.
-    assert "Lines: 3 read, 1 would change" in out
+    assert "differing copies" not in out
+    # a2's stale path now resolves to the one transcript both copies are.
+    assert "Lines: 3 read, 2 would change" in out

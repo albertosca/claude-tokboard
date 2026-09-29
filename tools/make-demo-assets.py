@@ -100,11 +100,11 @@ def split_by_model(record: dict[str, object]) -> dict[str, dict[str, int]]:
     rng = random.Random(str(record.get("session_id")))
     models = rng.sample(DEMO_MODELS, rng.choice((2, 3)))
     weights = [rng.randint(1, 6) for _ in models]
-    split: dict[str, dict[str, int]] = {m: {} for m in models}
+    split: dict[str, dict[str, int]] = {model: {} for model in models}
     for field in ("input_tokens", "output_tokens", "cache_read_tokens", "cache_creation_tokens"):
         raw = record.get(field)
         total = raw if isinstance(raw, int) else 0
-        shares = [total * w // sum(weights) for w in weights]
+        shares = [total * weight // sum(weights) for weight in weights]
         shares[0] += total - sum(shares)
         for model, share in zip(models, shares, strict=True):
             split[model][field] = share
@@ -118,17 +118,37 @@ def stage_showcase(home: Path, now: datetime) -> None:
     on their absence, and that the README should not show a visitor:
 
     - backfill_state.json. Without it both dashboards open on the "token
-      duplication not yet corrected" warning. What is written here is what
-      write_backfill_state records for an apply that found nothing to
-      correct - which is the truth about synthetic data. Written through
-      write_backfill_state itself, so the shape cannot drift from what the
-      dashboards read.
-    - a tokens_by_model map on every session, so the by-model chart shows
-      models instead of one "no model" band.
+      duplication not yet corrected" warning. A tokens_by_model map on
+      every session, so the by-model chart shows models instead of one
+      "no model" band.
 
     Every path here is built from `home` and checked to be inside it; none
     is taken from metrics_core's module constants, which point at the
     REAL ~/.claude/metrics in this process.
+
+    BACKFILL STATE HONESTY (backlog 2026-09-24 #9): this used to write
+    mr.DEFAULT_CUTOFF ("2026-08-13") as the state's cutoff. describe_backfill_
+    state() renders EXACTLY two shapes - the "not yet corrected" warning, or
+    "duplication corrected for sessions that ended before {cutoff} (applied
+    on {applied})" - there is no third, silent shape (read describe_
+    backfill_state itself: any state with a string cutoff AND a string
+    applied_at renders the second one, unconditionally, regardless of how
+    many rows corrected_rows says it touched). DEFAULT_CUTOFF is a real
+    production date that has nothing to do with this fixture's own dates,
+    and build_fixture's oldest record (~50 days before `now`) usually falls
+    BEFORE it - so the demo claimed a correction had been applied to a
+    session that this synthetic fixture never duplicated in the first
+    place, on every machine where "now" made the arithmetic land that way.
+
+    The fix is the shape the backlog item itself points at: a cutoff that
+    predates every session this fixture writes. "sessions that ended before
+    {cutoff}" then describes zero real sessions - vacuously true, not a
+    fabricated claim about any session actually shown - and corrected_rows=0
+    stops being an assertion made by fiat and becomes the literal, provable
+    count of rows below that boundary (there are none). Computed from the
+    fixture's OWN data (the earliest timestamp on any row, minus a day),
+    not a second hard-coded constant that could drift out of sync with
+    build_fixture the next time someone adds an older record.
     """
     metrics = home / ".claude" / "metrics"
     sessions = metrics / "sessions.jsonl"
@@ -145,8 +165,15 @@ def stage_showcase(home: Path, now: datetime) -> None:
     sys.path[:0] = [str(REPO / "lib")]
     import metrics_core as mr
 
+    earliest_session_moment = min(
+        datetime.fromisoformat(value)
+        for row in rows
+        for value in (row["timestamp_start"], row["timestamp_end"])
+    )
+    cutoff_before_every_session = (earliest_session_moment - timedelta(days=1)).date().isoformat()
+
     mr.write_backfill_state(
-        mr.DEFAULT_CUTOFF,
+        cutoff_before_every_session,
         (now - timedelta(days=2)).isoformat(),
         0,
         uncorrectable_rows=0,
@@ -182,7 +209,7 @@ def workspace() -> str:
     return tempfile.mkdtemp(dir="/tmp" if sys.platform == "darwin" else None)
 
 
-def rasterize(src: Path, dest: Path, width: int, height: int) -> None:
+def rasterize(source: Path, destination: Path, width: int, height: int) -> None:
     """Screenshot a local file with headless Chrome.
 
     Chrome's EXIT is not the signal here, and reading it as one cost real
@@ -218,8 +245,8 @@ def rasterize(src: Path, dest: Path, width: int, height: int) -> None:
                     f"--user-data-dir={profile}",
                     "--force-device-scale-factor=2",
                     f"--window-size={width},{height}",
-                    f"--screenshot={dest}",
-                    f"file://{src}",
+                    f"--screenshot={destination}",
+                    f"file://{source}",
                 ],
                 check=True,
                 capture_output=True,
@@ -231,8 +258,8 @@ def rasterize(src: Path, dest: Path, width: int, height: int) -> None:
             )
     finally:
         shutil.rmtree(profile, ignore_errors=True)
-    if not dest.exists() or not dest.read_bytes().endswith(PNG_END):
-        raise SystemExit(f"no complete PNG at {dest} - chrome did not render it")
+    if not destination.exists() or not destination.read_bytes().endswith(PNG_END):
+        raise SystemExit(f"no complete PNG at {destination} - chrome did not render it")
 
 
 def make_screenshot(home: Path, work: Path, lang: str) -> None:
@@ -243,20 +270,22 @@ def make_screenshot(home: Path, work: Path, lang: str) -> None:
     passed because the locale happened to agree with it would prove
     nothing.
     """
-    env = dict(os.environ, HOME=str(home), PYTHONPATH=str(REPO / "lib"), LC_ALL="pt_BR.UTF-8")
+    environment = dict(
+        os.environ, HOME=str(home), PYTHONPATH=str(REPO / "lib"), LC_ALL="pt_BR.UTF-8"
+    )
     # sys.executable, never a bare "python3": python3 on PATH may be an asdf
     # shim, which resolves through $HOME/.asdf and exits 126 the moment HOME
     # is overridden - as it is here.
     subprocess.run(
         [sys.executable, str(REPO / "dashboard_html.py"), "--html", "--label-budget", "0", "--all"],
-        env=env,
+        env=environment,
         cwd=str(REPO),
         check=True,
         capture_output=True,
         timeout=120,
     )
     page = home / ".claude" / "metrics" / "dashboard.html"
-    leaked = [w for w in ("albertosca", "/Users/") if w in page.read_text()]
+    leaked = [marker for marker in ("albertosca", "/Users/") if marker in page.read_text()]
     if leaked:
         raise SystemExit(f"refusing to publish a page mentioning {leaked}")
     shot = work / "dashboard.png"
@@ -266,6 +295,13 @@ def make_screenshot(home: Path, work: Path, lang: str) -> None:
     shutil.move(str(shot), str(ASSETS / f"dashboard-{lang}.png"))
 
 
+# Fixed 2026-09-28 (found while regenerating for backlog #9): MetricsTUIApp's
+# third positional parameter is `arguments`, and load_data's is
+# `metrics_core_module` - this inline script still called them `args` and
+# `mr`, a rename in dashboard_tui.py this untested (see the module
+# docstring) subprocess script never picked up. Confirmed by running: the
+# recording step raised TypeError before this fix and produced a real GIF
+# after it.
 SHOOT_TUI = """
 import asyncio, os, sys
 from pathlib import Path
@@ -278,7 +314,7 @@ BEATS = __import__("json").loads(sys.argv[3])
 
 async def main():
     args = tui.build_arg_parser().parse_args(["--label-budget", "0"])
-    app = tui.MetricsTUIApp(mr, tui.load_data(args, mr=mr), args=args)
+    app = tui.MetricsTUIApp(mr, tui.load_data(args, metrics_core_module=mr), arguments=args)
     async with app.run_test(size=tuple(__import__("json").loads(sys.argv[4]))) as pilot:
         await pilot.pause()
         for i, keys in enumerate(BEATS):
@@ -308,7 +344,9 @@ def shoot_tui(home: Path, work: Path) -> list[float]:
     same reason as in make_screenshot: it has to be config.json, not the
     locale, that decides.
     """
-    env = dict(os.environ, HOME=str(home), PYTHONPATH=str(REPO / "lib"), LC_ALL="pt_BR.UTF-8")
+    environment = dict(
+        os.environ, HOME=str(home), PYTHONPATH=str(REPO / "lib"), LC_ALL="pt_BR.UTF-8"
+    )
     subprocess.run(
         [
             sys.executable,
@@ -319,7 +357,7 @@ def shoot_tui(home: Path, work: Path) -> list[float]:
             json.dumps([keys for keys, _ in BEATS]),
             json.dumps(list(TERMINAL_SIZE)),
         ],
-        env=env,
+        env=environment,
         cwd=str(REPO),
         check=True,
         timeout=180,
@@ -380,7 +418,7 @@ def refuse_if_it_shows_real_data(work: Path, count: int, lang: str) -> None:
     # literal text - a real project named "input" or "date" must NOT be
     # excused just because that word appears inside a template's braces.
     catalog = " ".join(re.sub(r"\{[^{}]*\}", " ", texts[lang]) for texts in mr.MESSAGES.values())
-    vocabulary = {n for n in real if n and _word_pattern(n).search(catalog)}
+    vocabulary = {name for name in real if name and _word_pattern(name).search(catalog)}
     if vocabulary:
         print(
             f"guard: {len(vocabulary)} real name(s) skipped (collide with UI vocabulary)",
@@ -388,14 +426,14 @@ def refuse_if_it_shows_real_data(work: Path, count: int, lang: str) -> None:
         )
     real -= vocabulary
 
-    for i in range(count):
-        svg = (work / f"f{i:02d}.svg").read_text()
-        if not any(p in svg for p in FIXTURE_PROJECTS):
-            raise SystemExit(f"frame {i} names no fixture project - did it render?")
+    for frame_index in range(count):
+        svg = (work / f"f{frame_index:02d}.svg").read_text()
+        if not any(project in svg for project in FIXTURE_PROJECTS):
+            raise SystemExit(f"frame {frame_index} names no fixture project - did it render?")
         text = _plain_text(svg)
-        shown = [n for n in real if n and _word_pattern(n).search(text)]
+        shown = [name for name in real if name and _word_pattern(name).search(text)]
         if shown:
-            raise SystemExit(f"frame {i} shows {len(shown)} real project name(s)")
+            raise SystemExit(f"frame {frame_index} shows {len(shown)} real project name(s)")
 
 
 def svg_size(svg: str) -> tuple[int, int]:
@@ -412,13 +450,16 @@ def svg_size(svg: str) -> tuple[int, int]:
 def make_recording(home: Path, work: Path, lang: str) -> None:
     holds = shoot_tui(home, work)
     refuse_if_it_shows_real_data(work, len(holds), lang)
-    for i in range(len(holds)):
-        print(f"  frame {i + 1}/{len(holds)}", flush=True)
-        svg = work / f"f{i:02d}.svg"
-        rasterize(svg, work / f"f{i:02d}.png", *svg_size(svg.read_text()))
+    for frame_index in range(len(holds)):
+        print(f"  frame {frame_index + 1}/{len(holds)}", flush=True)
+        svg = work / f"f{frame_index:02d}.svg"
+        rasterize(svg, work / f"f{frame_index:02d}.png", *svg_size(svg.read_text()))
     # The concat demuxer ignores the final entry's duration, so the last
     # screen would flash past unless the file is named once more.
-    listing = "".join(f"file 'f{i:02d}.png'\nduration {h:.2f}\n" for i, h in enumerate(holds))
+    listing = "".join(
+        f"file 'f{frame_index:02d}.png'\nduration {hold:.2f}\n"
+        for frame_index, hold in enumerate(holds)
+    )
     listing += f"file 'f{len(holds) - 1:02d}.png'\n"
     (work / "frames.txt").write_text(listing)
     subprocess.run(
@@ -453,9 +494,9 @@ def main() -> None:
     if shutil.which("ffmpeg") is None:
         raise SystemExit("need ffmpeg to encode the GIF")
     ASSETS.mkdir(exist_ok=True)
-    tmp = workspace()
+    temporary_directory = workspace()
     try:
-        home, work = Path(tmp) / "home", Path(tmp) / "work"
+        home, work = Path(temporary_directory) / "home", Path(temporary_directory) / "work"
         home.mkdir()
         work.mkdir()
         seed_home(home)
@@ -468,7 +509,7 @@ def main() -> None:
             print(f"recording the TUI ({lang})...", flush=True)
             make_recording(home, work, lang)
     finally:
-        shutil.rmtree(tmp, ignore_errors=True)
+        shutil.rmtree(temporary_directory, ignore_errors=True)
     for lang in ("en", "pt"):
         for name in (f"dashboard-{lang}.png", f"tui-{lang}.gif"):
             print(f"{name}: {(ASSETS / name).stat().st_size:,} bytes")

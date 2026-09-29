@@ -6,12 +6,15 @@ files, the label caches, get_open_projects, and the output path itself -
 resolves inside a throwaway directory.
 """
 
+import fcntl
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
+import urllib.parse
 from collections.abc import Iterator
 from datetime import datetime
 from pathlib import Path
@@ -45,9 +48,10 @@ class RealClaudeDirWrite(BaseException):
     regressed test green for the wrong reason. Confirmed in scratch that a
     BaseException raised from inside an audit hook propagates past
     `except Exception:` while still aborting the operation. Every raise
-    site also appends to REAL_CLAUDE_DIR_WRITE_HITS below (via _raise) as
-    a second line of defense for the rare downstream `except BaseException:`
-    - see the autouse _fail_loudly_on_swallowed_guard_hits fixture.
+    site also appends to REAL_CLAUDE_DIRECTORY_WRITE_HITS below (via
+    _raise) as a second line of defense for the rare downstream
+    `except BaseException:` - see the autouse
+    _fail_loudly_on_swallowed_guard_hits fixture.
     """
 
 
@@ -59,11 +63,11 @@ class RealClaudeDirWrite(BaseException):
 # pytest.raises(RealClaudeDirWrite) or by exercising a swallow site) must
 # clear it itself before returning, or that assertion fails LOUDLY instead
 # of the hit disappearing unnoticed.
-REAL_CLAUDE_DIR_WRITE_HITS: list[str] = []
+REAL_CLAUDE_DIRECTORY_WRITE_HITS: list[str] = []
 
 
 def _raise(message: str) -> None:
-    REAL_CLAUDE_DIR_WRITE_HITS.append(message)
+    REAL_CLAUDE_DIRECTORY_WRITE_HITS.append(message)
     raise RealClaudeDirWrite(message)
 
 
@@ -81,6 +85,28 @@ _REAL_CLAUDE_DIR = (Path.home() / ".claude").resolve()
 # one before it ever starts. See _child_env_leaves_home_unguarded.
 _REAL_HOME = Path.home().resolve()
 
+# Resolved ONCE, at import time, same reasoning as _REAL_CLAUDE_DIR/_REAL_HOME
+# above - several tests in this suite deliberately empty PATH to build a safe
+# canary (see test_launching_the_real_claude_cli_is_blocked), and a live
+# shutil.which("claude") call from inside the audit hook itself would then
+# always return None for THEM despite the real installation still existing.
+# On the author's own machine, shutil.which("claude") resolves to a shim
+# (~/.local/bin/claude) whose realpath is a VERSIONED file, e.g.
+# ~/.local/share/claude/versions/2.1.284 - a basename that is never the
+# literal word "claude". _CLAUDE_INSTALLATION_DIRECTORY is that versioned
+# file's PARENT directory (the whole "versions" tree), so any executable
+# whose own realpath lives anywhere under it is treated as "claude" too -
+# see _is_real_claude_cli_name. None when `claude` is not on PATH at all
+# (a bare CI runner, which never has it - this repo's own CI matrix is
+# ubuntu-latest with no Claude Code install), in which case that check is
+# simply skipped and the plain basename check still applies.
+_RESOLVED_CLAUDE_CLI_PATH = shutil.which("claude")
+_CLAUDE_INSTALLATION_DIRECTORY = (
+    Path(os.path.realpath(_RESOLVED_CLAUDE_CLI_PATH)).parent
+    if _RESOLVED_CLAUDE_CLI_PATH is not None
+    else None
+)
+
 # The write-ish bits the "open" audit event's int `flags` argument can
 # carry. Confirmed against this exact interpreter (Python 3.14.7, macOS) in
 # a throwaway scratch script: `open(p, "w")` reports flags with
@@ -92,7 +118,7 @@ _REAL_HOME = Path.home().resolve()
 _WRITE_OPEN_FLAGS = os.O_WRONLY | os.O_RDWR | os.O_CREAT | os.O_TRUNC | os.O_APPEND
 
 
-def _resolved_path_or_none(path_arg: object) -> Path | None:
+def _resolved_path_or_none(path_argument: object) -> Path | None:
     """Best-effort turn an audit-event path argument into a resolved
     Path. Never raises: an fd (int), None, or anything else this cannot
     turn into a path yields None rather than crashing the audit hook for
@@ -104,9 +130,9 @@ def _resolved_path_or_none(path_arg: object) -> Path | None:
     filler: fd ints and bytes/PathLike arguments are real shapes the audit
     events above pass in this very suite (verified in scratch).
     """
-    if not isinstance(path_arg, str | bytes | os.PathLike):
+    if not isinstance(path_argument, str | bytes | os.PathLike):
         return None  # e.g. an int fd - nothing to resolve
-    candidate = os.fspath(path_arg)
+    candidate = os.fspath(path_argument)
     if isinstance(candidate, bytes):
         try:
             candidate = candidate.decode("utf-8", "surrogateescape")
@@ -118,7 +144,7 @@ def _resolved_path_or_none(path_arg: object) -> Path | None:
         return None
 
 
-def _lexical_abspath_or_none(path_arg: object) -> Path | None:
+def _lexical_abspath_or_none(path_argument: object) -> Path | None:
     """Fix round 1, M1: the same argument, made absolute WITHOUT following
     any symlink (os.path.abspath never resolves one, unlike
     Path.resolve()). A target like ~/.claude/skills/escape.md, where
@@ -127,9 +153,9 @@ def _lexical_abspath_or_none(path_arg: object) -> Path | None:
     inside the real directory, and a test should not get to rely on some
     symlink there conveniently rerouting a write elsewhere. Never raises,
     for the same reasons as _resolved_path_or_none."""
-    if not isinstance(path_arg, str | bytes | os.PathLike):
+    if not isinstance(path_argument, str | bytes | os.PathLike):
         return None
-    candidate = os.fspath(path_arg)
+    candidate = os.fspath(path_argument)
     if isinstance(candidate, bytes):
         try:
             candidate = candidate.decode("utf-8", "surrogateescape")
@@ -154,9 +180,9 @@ def _same_or_within(candidate: Path, base: Path) -> bool:
     CALL time, not cached, so a test can monkeypatch sys.platform to
     exercise this branch on any machine."""
     if sys.platform == "darwin":
-        candidate_s = str(candidate).casefold()
-        base_s = str(base).casefold()
-        return candidate_s == base_s or candidate_s.startswith(base_s + os.sep)
+        candidate_text = str(candidate).casefold()
+        base_text = str(base).casefold()
+        return candidate_text == base_text or candidate_text.startswith(base_text + os.sep)
     return candidate.is_relative_to(base)
 
 
@@ -167,9 +193,81 @@ def _same_or_within(candidate: Path, base: Path) -> bool:
 _REAL_CLAUDE_DIR_LEXICAL = Path.home() / ".claude"
 
 
-def _inside_real_claude_dir(path_arg: object) -> bool:
-    """True if EITHER the resolved or the lexical form of `path_arg` names
-    a location inside the real ~/.claude - except for the running
+def _resolve_directory_file_descriptor(directory_file_descriptor: object) -> Path | None:
+    """Backlog 2026-09-24 #3: best-effort resolve a dir_fd audit-event
+    argument (an already-open directory file descriptor a caller resolves
+    a RELATIVE path against, instead of the current working directory) back
+    to the directory it names. Returns None (never raises) for -1 (the C
+    default meaning "no dir_fd was passed at all" - most of these events
+    fire with it even for an ordinary, non-dir_fd-relative call), a
+    non-int, or when resolution fails for any reason (the fd was already
+    closed by the time this fires, a permissions error, ...) - callers then
+    fall back to resolving the bare path exactly as before this existed,
+    honestly unable to prove it does NOT name a location inside the real
+    dir (see this module's own docstring for that limit).
+
+    macOS's os.readlink(f"/dev/fd/{fd}") does NOT work for a directory fd -
+    confirmed in scratch: it raises OSError(22, "Invalid argument"), unlike
+    a Linux /proc/self/fd entry (a real symlink there). The primitive that
+    does work on macOS, also confirmed in scratch, is fcntl(fd, F_GETPATH,
+    <a writable buffer>) - it returns the fd's canonical, already
+    symlink-resolved path as its own return value (NOT written into the
+    buffer argument in place, despite the buffer being mutable - also
+    confirmed in scratch, and not how every other fcntl() call on a mutable
+    buffer behaves, which is why this is spelled out here instead of
+    assumed from the man page).
+    """
+    if not isinstance(directory_file_descriptor, int) or directory_file_descriptor < 0:
+        return None
+    try:
+        if sys.platform == "darwin":
+            result_bytes = fcntl.fcntl(directory_file_descriptor, fcntl.F_GETPATH, bytearray(1024))
+            resolved_text = result_bytes[: result_bytes.index(0)].decode("utf-8", "surrogateescape")
+            resolved_path = Path(resolved_text)
+        else:
+            resolved_path = Path(f"/proc/self/fd/{directory_file_descriptor}").readlink()
+        return resolved_path.resolve()
+    except (OSError, ValueError):
+        return None
+
+
+def _joined_with_directory_file_descriptor(
+    path_argument: object, directory_file_descriptor: object
+) -> Path | None:
+    """Backlog 2026-09-24 #3: when `path_argument` is a RELATIVE path and
+    `directory_file_descriptor` names a real, resolvable directory (see
+    _resolve_directory_file_descriptor above), returns the absolute
+    location the pair actually names together - joining that directory
+    with the relative path. POSIX ignores a dir_fd entirely once
+    `path_argument` is already absolute (the ordinary resolved/lexical
+    checks in _inside_real_claude_dir already handle an absolute path
+    correctly on their own), so this returns None for that case, and for a
+    dir_fd that cannot be resolved at all.
+    """
+    if not isinstance(path_argument, str | bytes | os.PathLike):
+        return None
+    raw_path = os.fspath(path_argument)
+    if isinstance(raw_path, bytes):
+        try:
+            raw_path = raw_path.decode("utf-8", "surrogateescape")
+        except UnicodeDecodeError:
+            return None
+    if Path(raw_path).is_absolute():
+        return None
+    directory = _resolve_directory_file_descriptor(directory_file_descriptor)
+    if directory is None:
+        return None
+    try:
+        return (directory / raw_path).resolve()
+    except (OSError, ValueError):
+        return None
+
+
+def _inside_real_claude_dir(
+    path_argument: object, directory_file_descriptor: object = None
+) -> bool:
+    """True if EITHER the resolved or the lexical form of `path_argument`
+    names a location inside the real ~/.claude - except for the running
     checkout's own tree (fix round 1, M4: REPO_ROOT, and everything under
     it - .pytest_cache, .coverage, __pycache__ included, since they all
     live inside REPO_ROOT), which is exempt so the suite can run from an
@@ -178,22 +276,58 @@ def _inside_real_claude_dir(path_arg: object) -> bool:
     That exemption is checked per-candidate, not globally: a write
     elsewhere inside a REAL ~/.claude that merely happens to CONTAIN such
     an installed checkout is still blocked.
+
+    `directory_file_descriptor`, when given (backlog 2026-09-24 #3), is an
+    audit event's own dir_fd argument (-1/None meaning "not dir_fd-relative") - a THIRD
+    candidate is checked, joining the directory it names with
+    `path_argument` when the latter is relative. Without this, a bare
+    relative name like "victim.txt" would only ever be resolved against
+    this test PROCESS's own current working directory, which is never the
+    real ~/.claude - silently missing a dir_fd-relative mutation into it.
     """
-    for candidate, real_dir in (
-        (_resolved_path_or_none(path_arg), _REAL_CLAUDE_DIR),
-        (_lexical_abspath_or_none(path_arg), _REAL_CLAUDE_DIR_LEXICAL),
-    ):
+    candidates: list[tuple[Path | None, Path]] = [
+        (_resolved_path_or_none(path_argument), _REAL_CLAUDE_DIR),
+        (_lexical_abspath_or_none(path_argument), _REAL_CLAUDE_DIR_LEXICAL),
+    ]
+    if directory_file_descriptor is not None:
+        candidates.append(
+            (
+                _joined_with_directory_file_descriptor(path_argument, directory_file_descriptor),
+                _REAL_CLAUDE_DIR,
+            )
+        )
+    for candidate, real_directory in candidates:
         if candidate is None:
             continue
         if _same_or_within(candidate, REPO_ROOT):
             continue
-        if _same_or_within(candidate, real_dir):
+        if _same_or_within(candidate, real_directory):
             return True
     return False
 
 
+def _is_real_claude_cli_name(name: str) -> bool:
+    """Backlog 2026-09-24 #3: True for the literal basename "claude" (the
+    common case), OR for any executable whose realpath lives inside the
+    real Claude installation's own directory tree - closing the gap where
+    `claude` resolves (via a shim at ~/.local/bin/claude) to a VERSIONED
+    path whose basename is a bare version number, e.g.
+    ~/.local/share/claude/versions/2.1.284, never the word "claude" at
+    all. See _CLAUDE_INSTALLATION_DIRECTORY's own docstring for why that
+    is resolved once, at import time, rather than here.
+    """
+    if Path(name).name == "claude":
+        return True
+    if _CLAUDE_INSTALLATION_DIRECTORY is None:
+        return False
+    try:
+        return _same_or_within(Path(os.path.realpath(name)), _CLAUDE_INSTALLATION_DIRECTORY)
+    except (OSError, ValueError):
+        return False
+
+
 def _is_write_open(mode: object, flags: object) -> bool:
-    if isinstance(mode, str) and any(c in mode for c in "wax+"):
+    if isinstance(mode, str) and any(character in mode for character in "wax+"):
         return True
     if isinstance(flags, int):
         return bool(flags & _WRITE_OPEN_FLAGS)
@@ -219,7 +353,7 @@ def _decoded_item_or_none(item: object) -> str | None:
     return _decoded_or_none(item)
 
 
-def _argv_tokens(popen_args: object) -> list[str]:
+def _argv_tokens(popen_arguments: object) -> list[str]:
     """The actual argv, decoded to str where possible: every element of
     `args` if it is a list/tuple (the shape subprocess.Popen's own audit
     event always carries by the time it fires - confirmed in scratch:
@@ -232,11 +366,11 @@ def _argv_tokens(popen_args: object) -> list[str]:
     argv[0] (the overwhelmingly common case), throwing off the
     nice/env wrapper-skipping logic below."""
     raw: list[object] = []
-    if isinstance(popen_args, list | tuple):
-        raw.extend(popen_args)
-    elif isinstance(popen_args, str | bytes | os.PathLike):
-        raw.append(popen_args)
-    return [t for item in raw if (t := _decoded_item_or_none(item))]
+    if isinstance(popen_arguments, list | tuple):
+        raw.extend(popen_arguments)
+    elif isinstance(popen_arguments, str | bytes | os.PathLike):
+        raw.append(popen_arguments)
+    return [token for item in raw if (token := _decoded_item_or_none(item))]
 
 
 _WRAPPER_BASENAMES = frozenset({"nice", "env"})
@@ -250,16 +384,16 @@ def _wrapper_target(argv: list[str]) -> str | None:
     and (for `env`) `VAR=value` assignments - the command such a wrapper
     ultimately runs. argv[0] is the wrapper itself; the caller has
     already checked it."""
-    for tok in argv[1:]:
-        if tok.startswith("-") or tok.isdigit():
+    for token in argv[1:]:
+        if token.startswith("-") or token.isdigit():
             continue
-        if "=" in tok and tok.split("=", 1)[0].isidentifier():
+        if "=" in token and token.split("=", 1)[0].isidentifier():
             continue
-        return tok
+        return token
     return None
 
 
-def _launches_real_claude_cli(executable: object, popen_args: object) -> bool:
+def _launches_real_claude_cli(executable: object, popen_arguments: object) -> bool:
     """Fix round 1, M3: matches the ACTUAL command being run, not any
     argument that merely MENTIONS "claude" - `["echo", "claude"]` and
     `["grep", "-c", "claude", "/dev/null"]` must never match; the earlier
@@ -276,22 +410,30 @@ def _launches_real_claude_cli(executable: object, popen_args: object) -> bool:
     string cannot be parsed safely without a real shell parser and the
     guard would rather block a false positive than miss a real launch
     inside one.
+
+    Backlog 2026-09-24 #3: `executable`/argv[0]/a wrapper target are all
+    checked via _is_real_claude_cli_name rather than a bare basename
+    comparison, so a `claude` launched through its resolved VERSIONED
+    install path (basename a bare version number, not the word "claude")
+    is caught too - see that function's own docstring.
     """
-    argv = _argv_tokens(popen_args)
+    argv = _argv_tokens(popen_arguments)
     exec_name = _decoded_item_or_none(executable) if executable is not None else None
     if exec_name is None and argv:
         exec_name = argv[0]  # CPython always populates `executable` in practice, but defensively
-    if exec_name is not None and Path(exec_name).name == "claude":
+    if exec_name is not None and _is_real_claude_cli_name(exec_name):
         return True
     if not argv:
         return False
     argv_basename = Path(argv[0]).name
     if argv_basename in _WRAPPER_BASENAMES:
         target = _wrapper_target(argv)
-        if target is not None and Path(target).name == "claude":
+        if target is not None and _is_real_claude_cli_name(target):
             return True
-    is_shell_dash_c = argv_basename in _SHELL_BASENAMES and len(argv) >= 3 and argv[1] == "-c"
-    return bool(is_shell_dash_c and _CLAUDE_WORD.search(argv[2]))
+    is_shell_invoked_with_command_flag = (
+        argv_basename in _SHELL_BASENAMES and len(argv) >= 3 and argv[1] == "-c"
+    )
+    return bool(is_shell_invoked_with_command_flag and _CLAUDE_WORD.search(argv[2]))
 
 
 def _is_python_interpreter(token: str) -> bool:
@@ -304,7 +446,7 @@ def _is_python_interpreter(token: str) -> bool:
     return token == sys.executable or Path(token).name.lower().startswith("python")
 
 
-def _child_env_leaves_home_unguarded(env: object) -> bool:
+def _child_env_leaves_home_unguarded(environment: object) -> bool:
     """Fix round 1, Important 2: True unless `env` is a mapping that
     overrides HOME to somewhere other than the real one. subprocess.Popen's
     `env` REPLACES the child's entire environment when given (it does not
@@ -312,9 +454,9 @@ def _child_env_leaves_home_unguarded(env: object) -> bool:
     HOME) and an `env` dict with no "HOME" key at all are both unguarded,
     same as one that explicitly sets HOME back to the real value.
     """
-    if not isinstance(env, dict):
+    if not isinstance(environment, dict):
         return True  # None (inherits the parent's real env), or an unrecognized shape
-    home = env.get("HOME")
+    home = environment.get("HOME")
     if not isinstance(home, str | bytes | os.PathLike):
         return True
     for candidate in (_resolved_path_or_none(home), _lexical_abspath_or_none(home)):
@@ -324,7 +466,7 @@ def _child_env_leaves_home_unguarded(env: object) -> bool:
 
 
 def _launches_an_unguarded_python_child(
-    executable: object, popen_args: object, env: object
+    executable: object, popen_arguments: object, environment: object
 ) -> bool:
     """Fix round 1, Important 2: sys.addaudithook installs are per-process
     - this guard cannot see a single thing a subprocess.Popen'd Python
@@ -337,51 +479,180 @@ def _launches_an_unguarded_python_child(
     _launches_real_claude_cli's own argv check above - see this module's
     docstring for that honestly-stated limit.
     """
-    argv = _argv_tokens(popen_args)
+    argv = _argv_tokens(popen_arguments)
     exec_name = _decoded_item_or_none(executable) if executable is not None else None
     if exec_name is None and argv:
         exec_name = argv[0]
     if exec_name is None or not _is_python_interpreter(exec_name):
         return False
-    return _child_env_leaves_home_unguarded(env)
+    return _child_env_leaves_home_unguarded(environment)
 
 
-def _audit_real_claude_dir_guard(event: str, args: tuple[object, ...]) -> None:
+def _is_read_only_sqlite_uri(database: object) -> bool:
+    """Backlog 2026-09-24 #3: True only for the one shape sqlite3 itself
+    guarantees never creates or mutates a file - an explicit
+    "file:...?mode=ro" URI. sqlite3.connect's own audit event carries only
+    the raw database string (confirmed in scratch: no separate mode/uri
+    flag at all), so a plain path string - even one the caller INTENDED to
+    open read-only via some other mechanism - is conservatively treated as
+    write-capable, since a plain sqlite3.connect() call, by default,
+    CREATES the file if it does not already exist.
+    """
+    if not isinstance(database, str) or not database.startswith("file:"):
+        return False
+    query = urllib.parse.urlsplit(database).query
+    return urllib.parse.parse_qs(query).get("mode") == ["ro"]
+
+
+_PYTHON_WORD = re.compile(r"\bpython3?(\.\d+)?\b")
+
+
+def _system_command_invokes_an_unguarded_python(command_text: str) -> bool:
+    """Backlog 2026-09-24 #3: os.system always runs via `/bin/sh -c` under
+    the CALLING process's OWN environment - there is no env= parameter to
+    redirect HOME the way subprocess.Popen's does, so ANY Python
+    interpreter this launches is unconditionally unguarded; unlike
+    _launches_an_unguarded_python_child, there is no "was HOME redirected"
+    question to even ask. A word-boundary match against the whole command
+    text, not argv-shape parsing - the string can be arbitrarily complex
+    shell syntax (pipes, subshells, quoting) that cannot be parsed safely
+    without a real shell parser, so this deliberately over-blocks rather
+    than risk missing a real unguarded launch, the same preference
+    _launches_real_claude_cli's own shell-string check states.
+    """
+    return bool(_PYTHON_WORD.search(command_text))
+
+
+def _audit_real_claude_dir_guard(event: str, audit_arguments: tuple[object, ...]) -> None:
     if event == "open":
-        path, mode, flags = args
+        # Confirmed in scratch: this event never carries a dir_fd, even
+        # for a dir_fd-relative os.open() call - only the bare relative
+        # path and the flags. Left undetectable (fix round 1's own honest
+        # limit, unchanged) - see _install_real_claude_dir_guard's
+        # docstring.
+        path, mode, flags = audit_arguments
         if _is_write_open(mode, flags) and _inside_real_claude_dir(path):
             _raise(f"write-mode open() of real {path!r}")
-    elif event in ("os.mkdir", "os.rmdir", "os.remove", "os.truncate", "shutil.rmtree"):
-        # All four single-path mutating events; shutil.rmtree fires before
-        # any recursive walk starts, so raising here pre-empts the whole
-        # tree rather than racing it file by file.
-        if _inside_real_claude_dir(args[0]):
-            _raise(f"{event} of real {args[0]!r}")
+    elif event == "os.mkdir":
+        # (path, mode, dir_fd) - confirmed in scratch.
+        path = audit_arguments[0]
+        directory_file_descriptor = audit_arguments[2] if len(audit_arguments) > 2 else None
+        if _inside_real_claude_dir(path, directory_file_descriptor):
+            _raise(f"{event} of real {path!r}")
+    elif event in ("os.rmdir", "os.remove", "shutil.rmtree"):
+        # All three: (path, dir_fd) - confirmed in scratch. shutil.rmtree
+        # fires before any recursive walk starts, so raising here
+        # pre-empts the whole tree rather than racing it file by file.
+        path = audit_arguments[0]
+        directory_file_descriptor = audit_arguments[1] if len(audit_arguments) > 1 else None
+        if _inside_real_claude_dir(path, directory_file_descriptor):
+            _raise(f"{event} of real {path!r}")
+    elif event == "os.truncate":
+        # (path, length) - confirmed in scratch: os.truncate has NO dir_fd
+        # parameter at all (unlike every other event in this function), so
+        # treating audit_arguments[1] as one here would misread a byte
+        # count as a file descriptor number.
+        if _inside_real_claude_dir(audit_arguments[0]):
+            _raise(f"{event} of real {audit_arguments[0]!r}")
+    elif event == "os.chmod":
+        # (path, mode, dir_fd) - confirmed in scratch. Metadata-only (no
+        # data written), but still a mutation of a real file this guard
+        # must refuse, same as os.utime below.
+        path = audit_arguments[0]
+        directory_file_descriptor = audit_arguments[2] if len(audit_arguments) > 2 else None
+        if _inside_real_claude_dir(path, directory_file_descriptor):
+            _raise(f"{event} of real {path!r}")
+    elif event == "os.utime":
+        # (path, times, ns, dir_fd) - confirmed in scratch.
+        path = audit_arguments[0]
+        directory_file_descriptor = audit_arguments[3] if len(audit_arguments) > 3 else None
+        if _inside_real_claude_dir(path, directory_file_descriptor):
+            _raise(f"{event} of real {path!r}")
     elif event == "os.rename":
         # Fired by BOTH os.rename() AND os.replace() (verified in scratch -
-        # there is no separate "os.replace" event). Check both sides: this
-        # covers a real file being moved OUT of ~/.claude just as much as
-        # something being moved in.
-        src, dst = args[0], args[1]
-        if _inside_real_claude_dir(src) or _inside_real_claude_dir(dst):
-            _raise(f"os.rename touching real {src!r} / {dst!r}")
-    elif event in ("os.symlink", "os.link", "shutil.copyfile"):
-        # os.symlink: (link_target_text, link_path, dir_fd) - the path
-        # actually CREATED is args[1]; args[0] is just the link's target
-        # text and need not exist or resolve.
-        # os.link: (src, dst, src_dir_fd, dst_dir_fd) - src is only read.
-        # shutil.copyfile: (src, dst) - fires before the destination is
-        # ever opened, and covers shutil.copy2 too (it calls copyfile
-        # internally).
-        # All three: only the SECOND element is a path being created/
-        # written.
-        if _inside_real_claude_dir(args[1]):
-            _raise(f"{event} creating real {args[1]!r}")
+        # there is no separate "os.replace" event). Shape confirmed in
+        # scratch: (src, dst, src_dir_fd, dst_dir_fd). Checks both sides:
+        # this covers a real file being moved OUT of ~/.claude just as
+        # much as something being moved in.
+        source, destination = audit_arguments[0], audit_arguments[1]
+        source_directory_file_descriptor = audit_arguments[2] if len(audit_arguments) > 2 else None
+        destination_directory_file_descriptor = (
+            audit_arguments[3] if len(audit_arguments) > 3 else None
+        )
+        if _inside_real_claude_dir(
+            source, source_directory_file_descriptor
+        ) or _inside_real_claude_dir(destination, destination_directory_file_descriptor):
+            _raise(f"os.rename touching real {source!r} / {destination!r}")
+    elif event == "os.symlink":
+        # (link_target_text, link_path, dir_fd) - confirmed in scratch.
+        # The path actually CREATED is args[1]; args[0] is just the
+        # link's target text and need not exist or resolve.
+        link_path = audit_arguments[1]
+        directory_file_descriptor = audit_arguments[2] if len(audit_arguments) > 2 else None
+        if _inside_real_claude_dir(link_path, directory_file_descriptor):
+            _raise(f"{event} creating real {link_path!r}")
+    elif event == "os.link":
+        # (src, dst, src_dir_fd, dst_dir_fd) - confirmed in scratch. src is
+        # only read; only dst (args[1]), resolved against dst_dir_fd
+        # (args[3]), is a path being created.
+        destination = audit_arguments[1]
+        destination_directory_file_descriptor = (
+            audit_arguments[3] if len(audit_arguments) > 3 else None
+        )
+        if _inside_real_claude_dir(destination, destination_directory_file_descriptor):
+            _raise(f"{event} creating real {destination!r}")
+    elif event == "shutil.copyfile":
+        # (src, dst) - no dir_fd parameter at all; fires before the
+        # destination is ever opened, and covers shutil.copy2 too (it
+        # calls copyfile internally).
+        destination = audit_arguments[1]
+        if _inside_real_claude_dir(destination):
+            _raise(f"{event} creating real {destination!r}")
+    elif event == "sqlite3.connect":
+        # (database,) - confirmed in scratch: no separate mode/uri flag.
+        (database,) = audit_arguments
+        if not _is_read_only_sqlite_uri(database) and _inside_real_claude_dir(database):
+            _raise(f"sqlite3.connect (non-read-only) into real {database!r}")
+    elif event == "os.system":
+        # (command,) - confirmed in scratch: the command is reported as
+        # BYTES, not str, even when called with a str argument.
+        (command,) = audit_arguments
+        command_text = _decoded_or_none(command)
+        if command_text is None:
+            return
+        if _launches_real_claude_cli(None, ["/bin/sh", "-c", command_text]):
+            _raise(f"os.system launch of the real `claude` CLI: {command_text!r}")
+        elif _system_command_invokes_an_unguarded_python(command_text):
+            _raise(
+                "os.system launch of a Python interpreter - os.system always inherits "
+                "the calling process's real environment with no way to redirect HOME "
+                f"(unlike subprocess.Popen's env= kwarg): {command_text!r}"
+            )
+    elif event == "os.posix_spawn":
+        # (path, argv, env) - confirmed in scratch: fired identically by
+        # both os.posix_spawn and os.posix_spawnp (there is no separate
+        # "os.posix_spawnp" event), and always exactly these three
+        # elements regardless of which optional keyword-only arguments
+        # (setsid, file_actions, ...) were also passed. Shape matches
+        # subprocess.Popen's own (executable, args, env) closely enough to
+        # reuse both of its checks directly - env here is a MANDATORY
+        # positional argument (unlike Popen's optional env= kwarg), but a
+        # caller can still hand it one that does not redirect HOME.
+        path, argv, environment = audit_arguments
+        if _launches_real_claude_cli(path, argv):
+            _raise("os.posix_spawn launch of the real `claude` CLI from a test")
+        elif _launches_an_unguarded_python_child(path, argv, environment):
+            _raise(
+                "os.posix_spawn launch of a Python child whose HOME was not redirected "
+                "away from the real one - sys.addaudithook installs are per-process, so "
+                "this guard cannot see what such a child does; pass env=dict(os.environ, "
+                "HOME=<tmp dir>, ...) the same way subprocess.Popen callers must"
+            )
     elif event == "subprocess.Popen":
-        executable, popen_args, _cwd, env = args
-        if _launches_real_claude_cli(executable, popen_args):
+        executable, popen_arguments, _cwd, environment = audit_arguments
+        if _launches_real_claude_cli(executable, popen_arguments):
             _raise("subprocess launch of the real `claude` CLI from a test")
-        elif _launches_an_unguarded_python_child(executable, popen_args, env):
+        elif _launches_an_unguarded_python_child(executable, popen_arguments, environment):
             _raise(
                 "subprocess launch of a Python child whose HOME was not redirected away "
                 "from the real one - sys.addaudithook installs are per-process, so this "
@@ -406,32 +677,50 @@ def _install_real_claude_dir_guard() -> None:
 
     Stated honestly (fix round 1, Important 2 review comment: the
     original wording here claimed this guard blocks "regardless of what
-    any test does," which is not true) - two limits this guard cannot
-    close:
+    any test does," which is not true) - what this guard still cannot
+    close, after backlog 2026-09-24 #3 closed every OTHER documented gap
+    (os.chmod/os.utime, sqlite3.connect, os.system, os.posix_spawn/
+    os.posix_spawnp, and a `claude` launched through its resolved
+    VERSIONED install path):
 
-    - sys.addaudithook installs are PER-PROCESS. A subprocess.Popen'd
-      Python child runs in its own process, entirely outside this hook -
-      _launches_an_unguarded_python_child only checks, from the parent
-      side, whether such a child's env redirects HOME away from the real
-      one before it starts; it cannot see anything the child does once it
-      has. A non-Python child is covered only by
-      _launches_real_claude_cli's own argv check above, nothing more.
-    - Several ways to touch a file were deliberately left unguarded,
-      because covering them was judged not worth the complexity for this
-      suite (none of them is something any test here actually does):
-      dir_fd-relative opens (os.open(..., dir_fd=...) - the audit event's
-      path argument alone does not say which directory it is relative
-      to), os.chmod/os.utime (metadata-only, no data written), sqlite3
-      (opens its own file handle in C, below the audit-event layer for
-      opens), os.posix_spawn/os.posix_spawnp (a different audit event
-      than subprocess.Popen, unused anywhere in this repo), and
-      os.system (shells out via /bin/sh -c but is its own audit event,
-      distinct from subprocess.Popen).
+    - sys.addaudithook installs are PER-PROCESS. A subprocess.Popen'd (or
+      os.posix_spawn'd) Python child runs in its own process, entirely
+      outside this hook - _launches_an_unguarded_python_child only checks,
+      from the parent side, whether such a child's env redirects HOME away
+      from the real one before it starts; it cannot see anything the child
+      does once it has. A non-Python child launched this way is covered
+      only by _launches_real_claude_cli's own argv check, nothing more. A
+      Python child launched via os.system is ALWAYS unguarded - os.system
+      has no env= parameter at all to redirect HOME with, so this guard
+      refuses any command that looks like it invokes one outright (see
+      _system_command_invokes_an_unguarded_python), rather than trying to
+      ask a question os.system's own API makes impossible to answer.
+    - dir_fd-relative opens (os.open(path, ..., dir_fd=some_fd)) remain
+      undetectable: confirmed in scratch that the "open" audit event's own
+      arguments are exactly (path, mode, flags) - it does not carry the
+      dir_fd at all, unlike os.mkdir/os.rmdir/os.remove/os.rename/
+      os.symlink/os.link/shutil.rmtree (all of which DO carry it, and are
+      now resolved against it - see _resolve_directory_file_descriptor). A bare
+      relative "open" path can therefore not be proven to name a location
+      inside the real ~/.claude OR to name one outside it.
+    - A read-only sqlite3.connect is detected only via the one shape
+      sqlite3 itself guarantees never creates or mutates anything - an
+      explicit "file:...?mode=ro" URI (see _is_read_only_sqlite_uri). The
+      audit event does not carry a `uri=` flag at all, so a plain path
+      string that some OTHER, unenforced convention intended as read-only
+      is still (correctly, conservatively) treated as write-capable.
 
     Every audit event this hook DOES act on was confirmed to actually
     fire, with the exact argument shapes assumed above, by a throwaway
     scratch experiment against this interpreter (Python 3.14.7 / macOS) -
-    not from documentation alone.
+    not from documentation alone. That included the dir_fd-resolution
+    primitive itself: macOS's own os.readlink(f"/dev/fd/{fd}") does NOT
+    work for a directory fd (confirmed in scratch: OSError(22, "Invalid
+    argument")) - _resolve_directory_file_descriptor uses fcntl(fd, F_GETPATH, ...)
+    there instead, falling back to the simpler /proc/self/fd readlink on
+    Linux (this repo's own CI, unverified against a real Linux box from
+    here - the platform split itself is standard, well-documented POSIX
+    behavior, not something this session could confirm on this machine).
     """
     sys.addaudithook(_audit_real_claude_dir_guard)
 
@@ -461,21 +750,21 @@ def _fail_loudly_on_swallowed_guard_hits() -> Iterator[None]:
 
     A test that intentionally triggers a hit (pytest.raises(RealClaudeDirWrite),
     or exercising a known swallow site like _run_label_prompt or a hook's
-    main()) MUST clear REAL_CLAUDE_DIR_WRITE_HITS itself before returning -
+    main()) MUST clear REAL_CLAUDE_DIRECTORY_WRITE_HITS itself before returning -
     otherwise this fixture fails even a test that behaved exactly as
     expected, which is deliberate: an uncleared hit means the test asserted
     on the exception but never confirmed the guard was the one that
     prevented the write, which is the whole point of recording hits at all.
     """
-    REAL_CLAUDE_DIR_WRITE_HITS.clear()
+    REAL_CLAUDE_DIRECTORY_WRITE_HITS.clear()
     yield
-    hits = list(REAL_CLAUDE_DIR_WRITE_HITS)
-    REAL_CLAUDE_DIR_WRITE_HITS.clear()
+    hits = list(REAL_CLAUDE_DIRECTORY_WRITE_HITS)
+    REAL_CLAUDE_DIRECTORY_WRITE_HITS.clear()
     assert not hits, (
         "the real-~/.claude write guard fired during this test but nothing "
         f"propagated it all the way out: {hits} - if this test means to trigger "
         "a hit on purpose, it must assert on RealClaudeDirWrite AND clear "
-        "conftest.REAL_CLAUDE_DIR_WRITE_HITS itself before returning"
+        "conftest.REAL_CLAUDE_DIRECTORY_WRITE_HITS itself before returning"
     )
 
 
@@ -549,7 +838,7 @@ def dashboard_page() -> Iterator[DashboardPage]:
             json.dumps({"language": "pt"})
         )
 
-        env = dict(
+        environment = dict(
             os.environ,
             HOME=home,
             PYTHONPATH=str(REPO_ROOT / "lib"),
@@ -569,7 +858,7 @@ def dashboard_page() -> Iterator[DashboardPage]:
                 "--label-budget",
                 "0",
             ],
-            env=env,
+            env=environment,
             cwd=REPO_ROOT,
             capture_output=True,
             text=True,

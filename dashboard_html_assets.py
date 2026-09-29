@@ -901,6 +901,7 @@ STYLE = """
         border-bottom: 1px solid var(--border);
       }
       .subagent-tokens-cell { display: flex; align-items: center; gap: 6px; }
+      .floor-total { color: var(--text-secondary); }
       .subagent-row > span:not(:last-child) {
         border-right: 1px solid var(--border);
         padding-right: 8px;

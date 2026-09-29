@@ -51,8 +51,10 @@ def _strip(svg: str) -> str:
 
 
 async def _english_screens() -> dict[str, Any]:
-    args = tui.build_arg_parser().parse_args(["--label-budget", "0"])
-    app = tui.MetricsTUIApp(mr, tui.load_data(args, mr=mr), args=args)
+    arguments = tui.build_arg_parser().parse_args(["--label-budget", "0"])
+    app = tui.MetricsTUIApp(
+        mr, tui.load_data(arguments, metrics_core_module=mr), arguments=arguments
+    )
     # notifications=True: run_test() disables the Toast rack by default
     # (Textual 8.2.8's own default, verified 2026-09-23) - without this the
     # notify() call after "p" still records a Notification internally but
@@ -66,8 +68,8 @@ async def _english_screens() -> dict[str, Any]:
         chart = app.export_screenshot()
         await pilot.press("p")
         await pilot.pause()
-        after_p = app.export_screenshot()
-        return {"sessions": sessions, "chart": chart, "after_p": after_p}
+        after_period_press = app.export_screenshot()
+        return {"sessions": sessions, "chart": chart, "after_p": after_period_press}
 
 
 @pytest.fixture(scope="session")
@@ -75,14 +77,14 @@ def english_screens(tmp_path_factory: pytest.TempPathFactory) -> dict[str, str]:
     """The committed fixture, rendered in English - config.json wins over
     the pt_BR locale seeded_tui_home also pins (that is the entire point:
     the config, not the machine, decides the language)."""
-    mp = pytest.MonkeyPatch()
+    monkeypatch = pytest.MonkeyPatch()
     try:
-        home = seeded_tui_home(mp, tmp_path_factory.mktemp("tui-i18n-en-home"))
+        home = seeded_tui_home(monkeypatch, tmp_path_factory.mktemp("tui-i18n-en-home"))
         (home / ".claude" / "metrics" / "config.json").write_text(json.dumps({"language": "en"}))
         raw = asyncio.run(_english_screens())
         return {name: _strip(svg) for name, svg in raw.items()}
     finally:
-        mp.undo()
+        monkeypatch.undo()
 
 
 def test_the_key_bar_is_english(english_screens: dict[str, str]) -> None:
@@ -132,6 +134,6 @@ def test_language_falls_back_to_the_pinned_locale_not_the_real_machines_locale(
     """
     home = seeded_tui_home(monkeypatch, tmp_path)
     (home / ".claude" / "metrics" / "config.json").write_text(json.dumps({}))
-    args = tui.build_arg_parser().parse_args(["--label-budget", "0"])
-    data = tui.load_data(args, mr=mr)
+    arguments = tui.build_arg_parser().parse_args(["--label-budget", "0"])
+    data = tui.load_data(arguments, metrics_core_module=mr)
     assert data["lang"] == "pt"

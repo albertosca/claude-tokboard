@@ -143,6 +143,55 @@ fails the count and not the CPU ceiling; ~2s of pure-Python busy work
 fails the CPU ceiling and not the count. Neither catches a wait that is
 not one of the counted calls (a lock, a C extension blocking without
 an audit event) - nothing here claims to.
+
+A PRESS THAT WAITS ON SOMETHING WITHOUT AN AUDIT EVENT (backlog 2026-09-24
+#8)
+
+A press blocked on a lock, a concurrent.futures.Future, or select() burns
+almost no CPU (passes the CPU ceiling) and raises none of BLOCKING_EVENTS
+above (passes the blocking-call count) - it is invisible to both existing
+guards, by construction, the same way correctness testing was invisible to
+the original 2026-08-17 defect. A third guard closes this: a WALL-CLOCK
+ceiling, but one built to survive the exact failure mode that got the
+first wall-clock ceiling deleted from this file (see WHY CPU TIME above) -
+machine load inflating a press that did no more work than usual.
+
+The fix is MINIMUM, not mean or worst-of-one: drive the same five-press
+sequence k=3 times, each against a FRESH app instance and a fresh seeded
+HOME (never reusing `cycle_timings` - a shared app could let one press's
+extra work leak into another's timing), and take the per-press-position
+minimum across the three runs. Load inflates SOME runs unpredictably (a
+busy neighbor process happens to preempt this one during press 2 of run
+1, press 4 of run 2, ...) - the minimum survives that as long as at least
+one of the three runs got a clean shot at each press. A REAL wait
+(a lock, a future, a sleep-shaped defect) inflates ALL three runs by
+about the same amount, because it is baked into the code path, not into
+scheduler luck - the minimum cannot filter that out, which is exactly
+why it is the statistic asserted, not the mean or the single worst run
+(both of which a load spike can push over any fixed ceiling on their
+own).
+
+Ceiling, measured idle on this machine (three repeats, five presses each,
+this exact k=3/minimum construction, committed eight-record fixture,
+2026-09-28): the heaviest press's minimum-across-repeats wall time was
+0.166s and 0.196s in two separate runs - call it ~0.2s. Backlog item #8
+specifies `max(1.5s, 10x idle min)` when no repeatable contention script
+is available to calibrate against (there was none left over in this
+session's scratchpad from the #1 responsiveness work) - 10x ~0.2s is
+~2.0s, which is also comfortably above the 1.5s floor, so
+MAXIMUM_PRESS_WALL_SECONDS is 2.0. Canary-checked (2026-09-28): a
+`threading.Event().wait(2)` injected into action_cycle_period in a
+throwaway copy of dashboard_tui.py pushed every press's wall time to
+~2.15-2.3s (minimum-across-3-repeats: 2.167s) - comfortably over the
+2.0s ceiling, so this guard catches it - while the SAME run's heaviest
+CPU time (0.201s) stayed far under the unrelated 0.4s CPU ceiling: an
+Event.wait blocks the thread without spending CPU or raising any of
+BLOCKING_EVENTS, exactly the gap this guard exists to close. This still
+cannot see a wait shorter than the ceiling's margin over idle, and
+remains a wall-clock number - it inherits load sensitivity the CPU
+ceiling was written to avoid, which is why it is a generous BACKSTOP
+alongside the CPU ceiling and the blocking-call count, not a replacement
+for either.
 """
 
 import asyncio
@@ -171,7 +220,22 @@ import dashboard_tui as tui  # noqa: E402
 # measured under contention, 6x the uncontended mean - see WHY CPU TIME in
 # the module docstring. CPU time, not wall time: load stretches the second
 # and barely moves the first.
-MAX_PRESS_CPU_SECONDS = 0.4
+MAXIMUM_PRESS_CPU_SECONDS = 0.4
+
+# Wall-clock ceiling on the per-press-position MINIMUM across
+# WALL_TIME_REPEAT_COUNT fresh-app repeats - see "A PRESS THAT WAITS ON
+# SOMETHING WITHOUT AN AUDIT EVENT" in the module docstring for why this is
+# a minimum (survives load inflating some runs) rather than a mean or a
+# single run (either of which a load spike can push over any fixed ceiling
+# on its own), and for the 2026-09-28 measurement (~0.2s idle) and canary
+# (a 2s injected wait measured at 2.167s minimum-across-repeats) that
+# calibrate this number.
+MAXIMUM_PRESS_WALL_SECONDS = 2.0
+
+# k in "minimum over k repeats" above - three fresh app drives, each on its
+# own seeded HOME, so a press's extra work in one run can never leak into
+# another run's timing for a different press.
+WALL_TIME_REPEAT_COUNT = 3
 
 # Audit events that mean the event loop's thread waited on something
 # outside the process during a press. Measured 2026-09-23: the five presses
@@ -214,9 +278,9 @@ async def _drive_period_cycle() -> dict[str, Any]:
                    files during the presses. Zero is the only correct
                    answer.
     """
-    args = tui.build_arg_parser().parse_args(["--label-budget", "0"])
-    data = tui.load_data(args, mr=mr)
-    app = tui.MetricsTUIApp(mr, data, args=args)
+    arguments = tui.build_arg_parser().parse_args(["--label-budget", "0"])
+    data = tui.load_data(arguments, metrics_core_module=mr)
+    app = tui.MetricsTUIApp(mr, data, arguments=arguments)
 
     presses: list[float] = []
     press_cpu: list[float] = []
@@ -270,12 +334,37 @@ def cycle_timings(tmp_path_factory: pytest.TempPathFactory) -> Any:
     fixture, so this measures the fixture and never the real
     ~/.claude/metrics. See seeded_tui_home for why setenv("HOME") alone
     would not be enough now that this runs in-process."""
-    mp = pytest.MonkeyPatch()
+    monkeypatch = pytest.MonkeyPatch()
     try:
-        seeded_tui_home(mp, tmp_path_factory.mktemp("tui-latency-home"))
+        seeded_tui_home(monkeypatch, tmp_path_factory.mktemp("tui-latency-home"))
         return asyncio.run(_drive_period_cycle())
     finally:
-        mp.undo()
+        monkeypatch.undo()
+
+
+@pytest.fixture(scope="session")
+def wall_time_repeats(tmp_path_factory: pytest.TempPathFactory) -> list[list[float]]:
+    """WALL_TIME_REPEAT_COUNT independent drives of the same five-press
+    sequence, each against its OWN fresh app instance and its OWN freshly
+    seeded HOME - never `cycle_timings`, whose single app instance and
+    single run cannot tell a load-inflated press from a genuinely slow one.
+    Returns one "presses" wall-time list per repeat, index-aligned to press
+    order, for test_no_press_ever_waits below to take the per-position
+    minimum of. Session-scoped like `cycle_timings`: the three repeats
+    already pay their own cost once per test session, not once per test
+    function that reads this fixture.
+    """
+    monkeypatch = pytest.MonkeyPatch()
+    try:
+        repeats: list[list[float]] = []
+        for repeat_index in range(WALL_TIME_REPEAT_COUNT):
+            seeded_tui_home(
+                monkeypatch, tmp_path_factory.mktemp(f"tui-latency-home-repeat-{repeat_index}")
+            )
+            repeats.append(asyncio.run(_drive_period_cycle())["presses"])
+        return repeats
+    finally:
+        monkeypatch.undo()
 
 
 def test_the_period_actually_cycles(cycle_timings):
@@ -308,11 +397,34 @@ def test_cycling_the_period_never_re_reads_the_data(cycle_timings):
 
 def test_every_press_stays_responsive(cycle_timings):
     heaviest = max(cycle_timings["press_cpu"])
-    assert heaviest < MAX_PRESS_CPU_SECONDS, (
+    assert heaviest < MAXIMUM_PRESS_CPU_SECONDS, (
         f"the heaviest 'p' press burned {heaviest:.2f}s of CPU on the event loop "
-        f"(ceiling {MAX_PRESS_CPU_SECONDS}s). CPU per press: "
-        f"{[round(p, 3) for p in cycle_timings['press_cpu']]}; wall per press, "
-        f"for context only: {[round(p, 3) for p in cycle_timings['presses']]}"
+        f"(ceiling {MAXIMUM_PRESS_CPU_SECONDS}s). CPU per press: "
+        f"{[round(cpu, 3) for cpu in cycle_timings['press_cpu']]}; wall per press, "
+        f"for context only: {[round(seconds, 3) for seconds in cycle_timings['presses']]}"
+    )
+
+
+def test_no_press_ever_waits(wall_time_repeats):
+    """The third guard: catches a press that WAITS (a lock, a future, a
+    select()) rather than works or sleeps - invisible to both the CPU
+    ceiling (burns no CPU) and the blocking-call count (raises none of
+    BLOCKING_EVENTS) above. See "A PRESS THAT WAITS ON SOMETHING WITHOUT AN
+    AUDIT EVENT" in the module docstring for why the statistic is the
+    per-press-position MINIMUM across WALL_TIME_REPEAT_COUNT fresh-app
+    repeats, not a mean or a single run.
+    """
+    minimum_wall_time_per_press = [
+        min(same_position_presses) for same_position_presses in zip(*wall_time_repeats, strict=True)
+    ]
+    heaviest = max(minimum_wall_time_per_press)
+    assert heaviest < MAXIMUM_PRESS_WALL_SECONDS, (
+        f"the heaviest 'p' press still took {heaviest:.2f}s of wall time at its BEST "
+        f"of {WALL_TIME_REPEAT_COUNT} repeats (ceiling {MAXIMUM_PRESS_WALL_SECONDS}s) - "
+        "load inflating a few runs cannot explain this, since every repeat would have "
+        "to be equally slow at the same press for the minimum to stay this high. "
+        f"Minimum wall time per press, across repeats: "
+        f"{[round(seconds, 3) for seconds in minimum_wall_time_per_press]}"
     )
 
 

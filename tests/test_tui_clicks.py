@@ -58,7 +58,7 @@ def _run(coro: Any) -> Any:
     return asyncio.run(coro)
 
 
-def seeded_tui_home_with_subagents(mp: pytest.MonkeyPatch, home: Path) -> Path:
+def seeded_tui_home_with_subagents(monkeypatch: pytest.MonkeyPatch, home: Path) -> Path:
     """The same committed fixture as seeded_tui_home, plus:
 
     - three subagent records under session "week-1" (the busier of the two
@@ -87,7 +87,7 @@ def seeded_tui_home_with_subagents(mp: pytest.MonkeyPatch, home: Path) -> Path:
     "zero-dur" above, but on show_session's own per-row formatting rather
     than build_session_tree's).
     """
-    seeded_tui_home(mp, home)
+    seeded_tui_home(monkeypatch, home)
     subagents = [
         {
             "session_id": "week-1",
@@ -124,9 +124,9 @@ def seeded_tui_home_with_subagents(mp: pytest.MonkeyPatch, home: Path) -> Path:
         },
     ]
     subagents_path = home / ".claude" / "metrics" / "subagents.jsonl"
-    with subagents_path.open("w") as f:
+    with subagents_path.open("w") as subagents_file:
         for subagent in subagents:
-            f.write(json.dumps(subagent) + "\n")
+            subagents_file.write(json.dumps(subagent) + "\n")
 
     zero_duration_session = {
         "session_id": "zero-dur",
@@ -142,8 +142,8 @@ def seeded_tui_home_with_subagents(mp: pytest.MonkeyPatch, home: Path) -> Path:
         "cache_creation_tokens": 1,
     }
     sessions_path = home / ".claude" / "metrics" / "sessions.jsonl"
-    with sessions_path.open("a") as f:
-        f.write(json.dumps(zero_duration_session) + "\n")
+    with sessions_path.open("a") as sessions_file:
+        sessions_file.write(json.dumps(zero_duration_session) + "\n")
 
     return home
 
@@ -157,10 +157,10 @@ async def _open_panorama(pilot: Any) -> Any:
 
 
 async def _drive_composition_legend_clicks() -> dict[str, Any]:
-    args = tui.build_arg_parser().parse_args(["--label-budget", "0"])
-    async with tui.MetricsTUIApp(mr, tui.load_data(args, mr=mr), args=args).run_test(
-        size=(140, 45)
-    ) as pilot:
+    arguments = tui.build_arg_parser().parse_args(["--label-budget", "0"])
+    async with tui.MetricsTUIApp(
+        mr, tui.load_data(arguments, metrics_core_module=mr), arguments=arguments
+    ).run_test(size=(140, 45)) as pilot:
         chart = await _open_panorama(pilot)
         await pilot.press("t")  # tokens mode: CompositionLegend is the visible legend
         await pilot.pause()
@@ -232,10 +232,10 @@ async def _drive_composition_legend_clicks() -> dict[str, Any]:
 
 
 async def _drive_project_legend_clicks() -> dict[str, Any]:
-    args = tui.build_arg_parser().parse_args(["--label-budget", "0"])
-    async with tui.MetricsTUIApp(mr, tui.load_data(args, mr=mr), args=args).run_test(
-        size=(140, 45)
-    ) as pilot:
+    arguments = tui.build_arg_parser().parse_args(["--label-budget", "0"])
+    async with tui.MetricsTUIApp(
+        mr, tui.load_data(arguments, metrics_core_module=mr), arguments=arguments
+    ).run_test(size=(140, 45)) as pilot:
         chart = await _open_panorama(pilot)  # pane mode is the default: ProjectLegend is visible
         app = pilot.app
         legend = app.query_one(tui.ProjectLegend)
@@ -300,10 +300,10 @@ async def _drive_project_legend_clicks() -> dict[str, Any]:
 
 
 async def _drive_tree_selection() -> dict[str, Any]:
-    args = tui.build_arg_parser().parse_args(["--label-budget", "0"])
-    async with tui.MetricsTUIApp(mr, tui.load_data(args, mr=mr), args=args).run_test(
-        size=(140, 45)
-    ) as pilot:
+    arguments = tui.build_arg_parser().parse_args(["--label-budget", "0"])
+    async with tui.MetricsTUIApp(
+        mr, tui.load_data(arguments, metrics_core_module=mr), arguments=arguments
+    ).run_test(size=(140, 45)) as pilot:
         app = pilot.app
         await pilot.pause()
         tree = app.query_one(Tree)
@@ -311,8 +311,12 @@ async def _drive_tree_selection() -> dict[str, Any]:
 
         results: dict[str, Any] = {"panel_before_any_click": str(panel._body.render())}
 
-        beta_node = next(c for c in tree.root.children if "beta" in str(c.label))
-        beta_row = next(i for i, line in enumerate(tree._tree_lines) if line.path[-1] is beta_node)
+        beta_node = next(node for node in tree.root.children if "beta" in str(node.label))
+        beta_row = next(
+            row_index
+            for row_index, line in enumerate(tree._tree_lines)
+            if line.path[-1] is beta_node
+        )
 
         # Clicking a GROUP row (event.node.data is None) must be a no-op:
         # the guard clause `if not session_data: return` in
@@ -324,13 +328,13 @@ async def _drive_tree_selection() -> dict[str, Any]:
         beta_node.expand()
         await pilot.pause()
         week_row = next(
-            i
-            for i, line in enumerate(tree._tree_lines)
+            row_index
+            for row_index, line in enumerate(tree._tree_lines)
             if line.path[-1].data == {"session_id": "week-1"}
         )
         yest_row = next(
-            i
-            for i, line in enumerate(tree._tree_lines)
+            row_index
+            for row_index, line in enumerate(tree._tree_lines)
             if line.path[-1].data == {"session_id": "yest-1"}
         )
 
@@ -346,13 +350,13 @@ async def _drive_tree_selection() -> dict[str, Any]:
         await pilot.pause()
         results["panel_after_yest_1_click"] = str(panel._body.render())
 
-        # "zero-dur" pins build_session_tree's own duration_str, a
+        # "zero-dur" pins build_session_tree's own duration_text, a
         # SEPARATE `duration is not None` expression (line 300) from
         # show_session's per-subagent one exercised above via "sub-c" -
         # its recorded duration_seconds is 0, a real shape (see
         # seeded_tui_home_with_subagents's docstring), and must render
         # "0s", not "-".
-        zero_dur_node = next(c for c in tree.root.children if "iota" in str(c.label))
+        zero_dur_node = next(node for node in tree.root.children if "iota" in str(node.label))
         results["zero_dur_group_label"] = str(zero_dur_node.label)
         zero_dur_node.expand()
         await pilot.pause()
@@ -368,41 +372,43 @@ async def _drive_tree_selection() -> dict[str, Any]:
 
 @pytest.fixture(scope="session")
 def composition_legend_clicks(tmp_path_factory: pytest.TempPathFactory) -> Any:
-    mp = pytest.MonkeyPatch()
+    monkeypatch = pytest.MonkeyPatch()
     try:
-        seeded_tui_home(mp, tmp_path_factory.mktemp("tui-composition-clicks-home"))
+        seeded_tui_home(monkeypatch, tmp_path_factory.mktemp("tui-composition-clicks-home"))
         return _run(_drive_composition_legend_clicks())
     finally:
-        mp.undo()
+        monkeypatch.undo()
 
 
 @pytest.fixture(scope="session")
 def project_legend_clicks(tmp_path_factory: pytest.TempPathFactory) -> Any:
-    mp = pytest.MonkeyPatch()
+    monkeypatch = pytest.MonkeyPatch()
     try:
-        seeded_tui_home(mp, tmp_path_factory.mktemp("tui-project-clicks-home"))
+        seeded_tui_home(monkeypatch, tmp_path_factory.mktemp("tui-project-clicks-home"))
         return _run(_drive_project_legend_clicks())
     finally:
-        mp.undo()
+        monkeypatch.undo()
 
 
 @pytest.fixture(scope="session")
 def tree_selection(tmp_path_factory: pytest.TempPathFactory) -> Any:
-    mp = pytest.MonkeyPatch()
+    monkeypatch = pytest.MonkeyPatch()
     try:
-        seeded_tui_home_with_subagents(mp, tmp_path_factory.mktemp("tui-tree-selection-home"))
+        seeded_tui_home_with_subagents(
+            monkeypatch, tmp_path_factory.mktemp("tui-tree-selection-home")
+        )
         return _run(_drive_tree_selection())
     finally:
-        mp.undo()
+        monkeypatch.undo()
 
 
 # --- CompositionLegend.on_click ------------------------------------------
 
 
 def test_composition_legend_click_highlights_only_the_clicked_series(composition_legend_clicks):
-    r = composition_legend_clicks
-    assert r["after_click_1"] == {"series-2"}
-    assert r["chart_after_click_1"] == {"series-2"}, (
+    result = composition_legend_clicks
+    assert result["after_click_1"] == {"series-2"}
+    assert result["chart_after_click_1"] == {"series-2"}, (
         "the click must reach TrendChart via on_composition_legend_highlight, not "
         "just update the legend's own reactive"
     )
@@ -413,8 +419,8 @@ def test_composition_legend_rightmost_pixel_clamps_to_the_last_series(compositio
     series). The production clamp already does this correctly; this test
     pins it so a future relaxation cannot ship silently (see the driving
     coroutine's comment above)."""
-    r = composition_legend_clicks
-    assert r["after_rightmost_click"] == {r["series"][-1]}
+    result = composition_legend_clicks
+    assert result["after_rightmost_click"] == {result["series"][-1]}
 
 
 def test_composition_legend_second_click_replaces_the_first_not_unions_it(
@@ -423,60 +429,60 @@ def test_composition_legend_second_click_replaces_the_first_not_unions_it(
     """A plain click on a DIFFERENT chip while one is already highlighted
     must select only the new one - proves the index is computed fresh from
     THIS click's x, not accumulated from the previous one."""
-    r = composition_legend_clicks
-    assert r["after_click_2"] == {"series-3"}
-    assert r["chart_after_click_2"] == {"series-3"}
+    result = composition_legend_clicks
+    assert result["after_click_2"] == {"series-3"}
+    assert result["chart_after_click_2"] == {"series-3"}
 
 
 def test_composition_legend_click_on_the_already_highlighted_chip_toggles_it_off(
     composition_legend_clicks,
 ):
-    r = composition_legend_clicks
-    assert r["after_repeat_click_2"] is None
-    assert r["chart_after_repeat_click_2"] is None
+    result = composition_legend_clicks
+    assert result["after_repeat_click_2"] is None
+    assert result["chart_after_repeat_click_2"] is None
 
 
 def test_composition_legend_shift_click_unions_instead_of_replacing(composition_legend_clicks):
-    r = composition_legend_clicks
-    assert r["after_shift_union"] == {"series-1", "series-4"}
-    assert r["chart_after_shift_union"] == {"series-1", "series-4"}
+    result = composition_legend_clicks
+    assert result["after_shift_union"] == {"series-1", "series-4"}
+    assert result["chart_after_shift_union"] == {"series-1", "series-4"}
 
 
 def test_composition_legend_ctrl_click_removes_only_the_clicked_member(composition_legend_clicks):
-    r = composition_legend_clicks
-    assert r["after_ctrl_remove_one"] == {"series-4"}
-    assert r["chart_after_ctrl_remove_one"] == {"series-4"}
+    result = composition_legend_clicks
+    assert result["after_ctrl_remove_one"] == {"series-4"}
+    assert result["chart_after_ctrl_remove_one"] == {"series-4"}
 
 
 def test_composition_legend_ctrl_click_emptying_the_set_yields_none_not_empty_set(
     composition_legend_clicks,
 ):
-    r = composition_legend_clicks
-    assert r["after_ctrl_remove_last"] is None
-    assert r["chart_after_ctrl_remove_last"] is None
+    result = composition_legend_clicks
+    assert result["after_ctrl_remove_last"] is None
+    assert result["chart_after_ctrl_remove_last"] is None
 
 
 # --- ProjectLegend.on_click ------------------------------------------------
 
 
 def test_project_legend_click_highlights_only_the_clicked_project(project_legend_clicks):
-    r = project_legend_clicks
-    expected = r["keys"][1]
-    assert r["after_click_1"] == {expected}
-    assert r["chart_after_click_1"] == {expected}
+    result = project_legend_clicks
+    expected = result["keys"][1]
+    assert result["after_click_1"] == {expected}
+    assert result["chart_after_click_1"] == {expected}
 
 
 def test_project_legend_rightmost_pixel_clamps_to_the_last_project(project_legend_clicks):
-    r = project_legend_clicks
-    assert r["after_rightmost_click"] == {r["keys"][-1]}
+    result = project_legend_clicks
+    assert result["after_rightmost_click"] == {result["keys"][-1]}
 
 
 def test_project_legend_second_click_replaces_the_first_not_unions_it(project_legend_clicks):
-    r = project_legend_clicks
-    expected = r["keys"][2]
-    assert r["after_click_2"] == {expected}
-    assert r["chart_after_click_2"] == {expected}
-    assert r["keys"][1] not in r["after_click_2"], (
+    result = project_legend_clicks
+    expected = result["keys"][2]
+    assert result["after_click_2"] == {expected}
+    assert result["chart_after_click_2"] == {expected}
+    assert result["keys"][1] not in result["after_click_2"], (
         "the previously-highlighted project must not linger in the new set"
     )
 
@@ -484,39 +490,39 @@ def test_project_legend_second_click_replaces_the_first_not_unions_it(project_le
 def test_project_legend_click_on_the_already_highlighted_chip_toggles_it_off(
     project_legend_clicks,
 ):
-    r = project_legend_clicks
-    assert r["after_repeat_click_2"] is None
-    assert r["chart_after_repeat_click_2"] is None
+    result = project_legend_clicks
+    assert result["after_repeat_click_2"] is None
+    assert result["chart_after_repeat_click_2"] is None
 
 
 def test_project_legend_shift_click_unions_instead_of_replacing(project_legend_clicks):
-    r = project_legend_clicks
-    expected = {r["keys"][0], r["keys"][3]}
-    assert r["after_shift_union"] == expected
-    assert r["chart_after_shift_union"] == expected
+    result = project_legend_clicks
+    expected = {result["keys"][0], result["keys"][3]}
+    assert result["after_shift_union"] == expected
+    assert result["chart_after_shift_union"] == expected
 
 
 def test_project_legend_ctrl_click_removes_only_the_clicked_member(project_legend_clicks):
-    r = project_legend_clicks
-    expected = {r["keys"][3]}
-    assert r["after_ctrl_remove_one"] == expected
-    assert r["chart_after_ctrl_remove_one"] == expected
+    result = project_legend_clicks
+    expected = {result["keys"][3]}
+    assert result["after_ctrl_remove_one"] == expected
+    assert result["chart_after_ctrl_remove_one"] == expected
 
 
 def test_project_legend_ctrl_click_emptying_the_set_yields_none_not_empty_set(
     project_legend_clicks,
 ):
-    r = project_legend_clicks
-    assert r["after_ctrl_remove_last"] is None
-    assert r["chart_after_ctrl_remove_last"] is None
+    result = project_legend_clicks
+    assert result["after_ctrl_remove_last"] is None
+    assert result["chart_after_ctrl_remove_last"] is None
 
 
 # --- tree-node selection / SessionDetailPanel.show_session -----------------
 
 
 def test_clicking_a_group_node_does_not_populate_the_detail_panel(tree_selection):
-    r = tree_selection
-    assert r["panel_after_group_click"] == r["panel_before_any_click"] == "", (
+    result = tree_selection
+    assert result["panel_after_group_click"] == result["panel_before_any_click"] == "", (
         "a group node's event.node.data is None - on_tree_node_selected's guard "
         "clause must make this a no-op, not clear or fabricate panel content"
     )
@@ -579,7 +585,7 @@ def test_selecting_a_different_session_replaces_the_panel_not_appends(tree_selec
 
 
 def test_session_tree_row_renders_a_real_zero_duration_as_0s_not_a_dash(tree_selection):
-    """build_session_tree's own duration_str expression (dashboard_tui.py
+    """build_session_tree's own duration_text expression (dashboard_tui.py
     around line 300) is a SEPARATE piece of code from show_session's, with
     its own copy of the same `duration is not None else "-"` guard - pinned
     independently rather than assumed identical."""

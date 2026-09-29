@@ -200,7 +200,7 @@ def test_render_composition_bar_widths_are_proportional_and_sum_to_100():
         "cache_creation_tokens": 10,
     }
     out = dashboard_html.render_composition_bar(record)
-    widths = [float(w) for w in re.findall(r"width:([\d.]+)%", out)]
+    widths = [float(width_text) for width_text in re.findall(r"width:([\d.]+)%", out)]
     assert len(widths) == 4
     assert sum(widths) == 100.0
     assert widths == [30.0, 30.0, 30.0, 10.0]

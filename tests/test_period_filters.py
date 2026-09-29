@@ -67,7 +67,7 @@ def test_unparseable_dates_are_dropped_not_crashed_on():
 
 def test_filtering_does_not_mutate_the_input():
     records = [session("2026-08-12T10:00:00Z", "2026-08-12T11:00:00Z")]
-    snapshot = [dict(r) for r in records]
+    snapshot = [dict(record) for record in records]
     mr.filter_sessions_by_window(records, YESTERDAY)
     assert records == snapshot
 

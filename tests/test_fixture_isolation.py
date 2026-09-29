@@ -51,7 +51,7 @@ def test_dashboard_is_generated_from_the_fixture(dashboard_page):
         assert project in html, f"fixture project {project!r} missing from the page"
 
 
-REAL_METRICS_DIR = Path("~/.claude/metrics").expanduser()
+REAL_METRICS_DIRECTORY = Path("~/.claude/metrics").expanduser()
 RENDERER_SOURCES = ("dashboard_html.py", "dashboard_html_assets.py")
 
 
@@ -66,7 +66,7 @@ def _word_pattern(name: str) -> re.Pattern[str]:
     return re.compile(rf"(?<!\w){re.escape(name)}(?!\w)")
 
 
-def real_project_names(metrics_dir: Path, renderer_source: str) -> set[str]:
+def real_project_names(metrics_directory: Path, renderer_source: str) -> set[str]:
     """The reader's own project names, read from their own metrics files.
 
     This used to be three names typed into this file. That worked, and it
@@ -88,7 +88,7 @@ def real_project_names(metrics_dir: Path, renderer_source: str) -> set[str]:
     """
     names: set[str] = set()
     for name in ("sessions.jsonl", "subagents.jsonl"):
-        path = metrics_dir / name
+        path = metrics_directory / name
         if not path.exists():
             continue
         for line in path.read_text(encoding="utf-8").splitlines():
@@ -104,18 +104,20 @@ def real_project_names(metrics_dir: Path, renderer_source: str) -> set[str]:
 
 
 def leaked_names(html: str, names: set[str]) -> list[str]:
-    return sorted(n for n in names if n and _word_pattern(n).search(html))
+    return sorted(name for name in names if name and _word_pattern(name).search(html))
 
 
 def test_no_real_metrics_leak_into_the_page(dashboard_page):
     repo = Path(__file__).resolve().parent.parent
-    source = "".join((repo / f).read_text(encoding="utf-8") for f in RENDERER_SOURCES)
-    names = real_project_names(REAL_METRICS_DIR, source)
+    source = "".join(
+        (repo / source_name).read_text(encoding="utf-8") for source_name in RENDERER_SOURCES
+    )
+    names = real_project_names(REAL_METRICS_DIRECTORY, source)
     if not names:
         # CI, or any machine that has never logged a session: there is no
         # real data to leak, and passing here would claim a check that did
         # not happen. Skipped, visibly.
-        pytest.skip(f"no real project names under {REAL_METRICS_DIR} - nothing to leak")
+        pytest.skip(f"no real project names under {REAL_METRICS_DIRECTORY} - nothing to leak")
     html = Path(dashboard_page.html_path).read_text(encoding="utf-8")
     assert leaked_names(html, names) == [], "real projects leaked - HOME was not isolated"
 
@@ -170,8 +172,8 @@ def test_output_landed_inside_the_temporary_home(dashboard_page):
 
 def test_fixture_records_are_where_the_builder_says(dashboard_page):
     path = Path(dashboard_page.home) / ".claude/metrics/sessions.jsonl"
-    with path.open() as f:
-        ids = {json.loads(line)["session_id"] for line in f if line.strip()}
+    with path.open() as sessions_file:
+        ids = {json.loads(line)["session_id"] for line in sessions_file if line.strip()}
     assert ids == FIXTURE_SESSION_IDS
 
 
@@ -237,8 +239,8 @@ def test_every_period_holds_a_different_set_of_sessions(dashboard_page):
     forcing periods.resolve_period's now.weekday() term)."""
     exp = dashboard_page.expected
     by_period = {
-        p: frozenset(exp[p]["session_ids"])
-        for p in ("ontem", "desde-segunda", "15-dias", "mes", "tudo")
+        period: frozenset(exp[period]["session_ids"])
+        for period in ("ontem", "desde-segunda", "15-dias", "mes", "tudo")
     }
     for period, ids in by_period.items():
         assert ids, (

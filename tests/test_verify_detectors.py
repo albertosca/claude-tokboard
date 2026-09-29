@@ -83,10 +83,10 @@ def script() -> types.ModuleType:
 
 
 def _make_pycache(directory: Path) -> Path:
-    cache_dir = directory / "__pycache__"
-    cache_dir.mkdir(parents=True)
-    (cache_dir / "mod.cpython-314.pyc").write_bytes(b"")
-    return cache_dir
+    cache_directory = directory / "__pycache__"
+    cache_directory.mkdir(parents=True)
+    (cache_directory / "mod.cpython-314.pyc").write_bytes(b"")
+    return cache_directory
 
 
 def test_clears_a_cache_directly_under_a_worktree_root(tmp_path, script, monkeypatch):
@@ -95,12 +95,12 @@ def test_clears_a_cache_directly_under_a_worktree_root(tmp_path, script, monkeyp
     # directly under it must still be removed.
     root = tmp_path / ".claude" / "worktrees" / "coverage-phase3d"
     root.mkdir(parents=True)
-    cache_dir = _make_pycache(root / "lib")
+    cache_directory = _make_pycache(root / "lib")
     monkeypatch.setattr(script, "REPO_ROOT", root)
 
     script.clear_pycache()
 
-    assert not cache_dir.exists()
+    assert not cache_directory.exists()
 
 
 def test_preserves_a_nested_worktree_cache_below_the_root(tmp_path, script, monkeypatch):
@@ -126,12 +126,12 @@ def test_clears_caches_when_the_root_has_no_claude_anywhere(tmp_path, script, mo
     # path involved at all.
     root = tmp_path / "main-checkout"
     root.mkdir()
-    cache_dir = _make_pycache(root / "lib")
+    cache_directory = _make_pycache(root / "lib")
     monkeypatch.setattr(script, "REPO_ROOT", root)
 
     script.clear_pycache()
 
-    assert not cache_dir.exists()
+    assert not cache_directory.exists()
 
 
 def test_tolerates_a_cache_directory_vanishing_before_rmtree_runs(tmp_path, script, monkeypatch):
@@ -142,7 +142,7 @@ def test_tolerates_a_cache_directory_vanishing_before_rmtree_runs(tmp_path, scri
     # to handle it.
     root = tmp_path / "main-checkout"
     root.mkdir()
-    cache_dir = _make_pycache(root / "lib")
+    cache_directory = _make_pycache(root / "lib")
     monkeypatch.setattr(script, "REPO_ROOT", root)
     real_rmtree = shutil.rmtree
 
@@ -154,7 +154,7 @@ def test_tolerates_a_cache_directory_vanishing_before_rmtree_runs(tmp_path, scri
 
     script.clear_pycache()  # must not raise
 
-    assert not cache_dir.exists()
+    assert not cache_directory.exists()
 
 
 # --------------------------------------------------------------------------
@@ -328,6 +328,24 @@ def test_missing_evidence_reports_both_when_neither_appeared(tmp_path, script):
 
 
 # --------------------------------------------------------------------------
+# The real DEFECTS list
+# --------------------------------------------------------------------------
+
+
+def test_every_real_defect_anchor_still_matches_its_target(script):
+    # The class guard that would have caught the unscoped-totals anchor
+    # going stale after the mr -> metrics_core_module rename: the anchor
+    # matched 0 times and nothing here noticed until this test was written.
+    # Pure: reads each defect's real target off disk and calls patch() on
+    # the text in memory only - never writes anything back, never touches
+    # main() or run_suite(), never runs the suite.
+    for defect in script.DEFECTS:
+        original_text = defect.target.read_text()
+        patched_text = defect.patch(original_text)
+        assert patched_text != original_text
+
+
+# --------------------------------------------------------------------------
 # run_suite()
 # --------------------------------------------------------------------------
 
@@ -345,27 +363,29 @@ def test_run_suite_invokes_this_interpreter_on_tests_with_the_pythonpath_and_tim
     monkeypatch.setenv("METRICS_SKIP_JS_TESTS", "1")
     calls: list[tuple[list[str], dict[str, object]]] = []
 
-    def fake_run(cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
-        calls.append((cmd, kwargs))
-        return subprocess.CompletedProcess(args=cmd, returncode=7, stdout="out", stderr="err")
+    def fake_run(
+        command: list[str], **keyword_arguments: object
+    ) -> subprocess.CompletedProcess[str]:
+        calls.append((command, keyword_arguments))
+        return subprocess.CompletedProcess(args=command, returncode=7, stdout="out", stderr="err")
 
     monkeypatch.setattr(script.subprocess, "run", fake_run)
 
     result = script.run_suite()
 
     assert result.returncode == 7
-    (cmd, kwargs) = calls[0]
-    assert cmd == [sys.executable, "-m", "pytest", "tests/", "-vv"]
-    assert kwargs["cwd"] == tmp_path
-    assert kwargs["timeout"] == 300
-    assert kwargs["capture_output"] is True
-    assert kwargs["text"] is True
-    env = kwargs["env"]
-    assert isinstance(env, dict)
-    assert env["PYTHONPATH"] == "lib:tests"
+    (command, keyword_arguments) = calls[0]
+    assert command == [sys.executable, "-m", "pytest", "tests/", "-vv"]
+    assert keyword_arguments["cwd"] == tmp_path
+    assert keyword_arguments["timeout"] == 300
+    assert keyword_arguments["capture_output"] is True
+    assert keyword_arguments["text"] is True
+    environment = keyword_arguments["env"]
+    assert isinstance(environment, dict)
+    assert environment["PYTHONPATH"] == "lib:tests"
     # A skipped rendering test leaves the suite green on an injected defect
     # - the same false green as a patch that matched nothing.
-    assert "METRICS_SKIP_JS_TESTS" not in env
+    assert "METRICS_SKIP_JS_TESTS" not in environment
 
 
 # --------------------------------------------------------------------------
@@ -432,10 +452,12 @@ class _GitStub:
         self.stdout = stdout
         self.calls: list[tuple[list[str], dict[str, object]]] = []
 
-    def __call__(self, cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
-        self.calls.append((cmd, kwargs))
+    def __call__(
+        self, command: list[str], **keyword_arguments: object
+    ) -> subprocess.CompletedProcess[str]:
+        self.calls.append((command, keyword_arguments))
         return subprocess.CompletedProcess(
-            args=cmd, returncode=self.returncode, stdout=self.stdout, stderr=""
+            args=command, returncode=self.returncode, stdout=self.stdout, stderr=""
         )
 
 
@@ -699,10 +721,10 @@ def test_module_guard_calls_main_and_exits_with_its_return_code(script, monkeypa
     for path in REAL_TARGETS:
         assert not _backup_of(path).exists(), "a real backup already exists - resolve by hand"
 
-    def refuse_copy(*args: object, **kwargs: object) -> None:
+    def refuse_copy(*arguments: object, **keyword_arguments: object) -> None:
         raise AssertionError("real repo source copied - the stale-backup gate did not fire")
 
-    def refuse_run(*args: object, **kwargs: object) -> None:
+    def refuse_run(*arguments: object, **keyword_arguments: object) -> None:
         raise AssertionError("real subprocess invoked - the stale-backup gate did not fire")
 
     monkeypatch.setattr(shutil, "copy2", refuse_copy)

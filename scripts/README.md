@@ -122,6 +122,14 @@ To refuse that trap, the probe:
    probe never conflates them -- an element that isn't on screen fails
    loudly instead of silently reporting zero.
 
+## backfill-token-dedup.py
+
+Recomputes the token fields of historical `sessions.jsonl`/`subagents.jsonl` rows that a pre-dedup hook wrote inflated, by replaying each row's own transcript as of its own `timestamp_end`. `--fields tokens` (the default) is the only mode that touches the four token fields the dashboards read, and it is idempotent: a row whose stored value already matches the reconstructed peak is left alone, so a second run against already-corrected data changes nothing.
+
+Two other fields have their own `--fields` mode, run only when named and never implied by a token run: `--fields tool_calls` rebuilds `tool_call_count` from the transcript's distinct tool-use block ids as of each row's `timestamp_end` (every hook before 2026-09-23 undercounted it), and `--fields incomplete_usage` adds `incomplete_usage_messages` to rows written before the hooks recorded it. Both modes are just as idempotent as the token run: each only rewrites a row whose stored value still matches one of the old, wrong formulas, so re-running either against already-corrected data is a no-op.
+
+All three modes share the same safety mechanics: they back up the target file first and verify the copy by sha256 before proceeding, write the corrected result to a new file and rename it into place only after validation (never editing in place), and carry over verbatim anything appended to the live, append-only metrics file while the run was in progress. Every mode is a dry run by default and writes nothing until `--apply` is passed.
+
 ## verify-detectors.py
 
 Re-proves that `tests/` actually catches the two Criticals it was built for, instead of leaving that proof sitting in a session transcript that eventually rots. Both defects shipped past five reviews because every check that existed asserted the markup *contained* an attribute, which is true whether the thing the attribute controls works or not:

@@ -12,8 +12,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 from metrics_core import append_record as _append_record
 from metrics_core import parse_transcript
 
-METRICS_DIR = Path("~/.claude/metrics").expanduser()
-METRICS_FILE = METRICS_DIR / "subagents.jsonl"
+METRICS_DIRECTORY = Path("~/.claude/metrics").expanduser()
+METRICS_FILE = METRICS_DIRECTORY / "subagents.jsonl"
 
 
 def get_project_root() -> str | None:
@@ -48,6 +48,9 @@ def build_record(hook_input: dict[str, Any], parsed: dict[str, Any]) -> dict[str
         "tokens_by_model": parsed["tokens_by_model"],
         "agent_transcript_path": hook_input.get("agent_transcript_path"),
     }
+    # Only when there are some, as in the sibling hook.
+    if parsed["incomplete_usage_messages"]:
+        record["incomplete_usage_messages"] = parsed["incomplete_usage_messages"]
     # See the sibling hook: added, never set to None.
     if project_root is not None:
         record["project_root"] = project_root

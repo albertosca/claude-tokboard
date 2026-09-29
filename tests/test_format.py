@@ -1,6 +1,12 @@
+import os
+import subprocess
+import sys
 from datetime import datetime, timezone
+from pathlib import Path
 
 import metrics_core as mr
+
+REPO = Path(__file__).resolve().parent.parent
 
 # --- format_tokens ---------------------------------------------------
 
@@ -129,3 +135,64 @@ def test_model_display_label_does_not_mistake_a_version_for_a_date():
     # dropped, so a model whose version happens to end in digits keeps them.
     assert mr.model_display_label("claude-opus-4-8") == "opus-4-8"
     assert mr.model_display_label("claude-fable-5-1") == "fable-5-1"
+
+
+# --- assign_model_slots ----------------------------------------------
+#
+# A model's colour in the "by model" chart used to be its RANK in the
+# period on screen, so the same model changed colour between periods
+# whenever the ranking changed (backlog 2026-09-24 #6).
+
+
+def test_assign_model_slots_gives_the_known_families_fixed_slots():
+    slots = mr.assign_model_slots(
+        ["claude-haiku-4-5-20251001", "claude-fable-1", "claude-sonnet-4-5", "claude-opus-4-8"], 7
+    )
+    assert slots == {
+        "claude-opus-4-8": 0,
+        "claude-sonnet-4-5": 1,
+        "claude-haiku-4-5-20251001": 2,
+        "claude-fable-1": 3,
+    }
+
+
+def test_assign_model_slots_does_not_depend_on_the_order_models_arrive_in():
+    models = ["claude-opus-4-8", "claude-sonnet-4-5", "gpt-x", "local-llama", "claude-opus-4-1"]
+    assert mr.assign_model_slots(models, 7) == mr.assign_model_slots(list(reversed(models)), 7)
+
+
+def test_assign_model_slots_never_gives_two_models_one_slot_while_slots_remain():
+    # Two versions of one family want the same slot; so, by construction,
+    # do nine models hashed into nine slots more often than not.
+    models = [f"model-{index}" for index in range(7)] + ["claude-opus-4-1", "claude-opus-4-8"]
+    slots = mr.assign_model_slots(models, 9)
+    assert len(slots) == 9
+    assert sorted(slot for slot in slots.values() if slot is not None) == list(range(9))
+
+
+def test_assign_model_slots_leaves_the_overflow_without_a_slot():
+    slots = mr.assign_model_slots([f"model-{index}" for index in range(10)], 7)
+    assert sorted(slot for slot in slots.values() if slot is not None) == list(range(7))
+    assert sum(slot is None for slot in slots.values()) == 3
+
+
+def test_assign_model_slots_is_the_same_in_every_process(tmp_path: Path) -> None:
+    # Python's own hash() of a str changes with every interpreter start
+    # (PYTHONHASHSEED); a colour that followed it would change per run.
+    # HOME is a throwaway: importing metrics_core aims its paths at HOME.
+    script = (
+        "import json, sys; sys.path.insert(0, 'lib'); import metrics_core as mr; "
+        "print(json.dumps(mr.assign_model_slots(['gpt-x', 'local-llama', 'mistral-7b'], 30)))"
+    )
+    outputs = {
+        subprocess.run(
+            [sys.executable, "-c", script],
+            env={**os.environ, "HOME": str(tmp_path), "PYTHONHASHSEED": seed},
+            cwd=REPO,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
+        for seed in ("1", "2")
+    }
+    assert len(outputs) == 1, outputs

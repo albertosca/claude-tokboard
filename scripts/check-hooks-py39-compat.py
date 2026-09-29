@@ -56,6 +56,12 @@ HOOKS: list[HookSpec] = [
 # One assistant message with real usage - enough for parse_transcript to
 # produce a non-empty record, which is what proves the hook ran its real
 # logic rather than merely failing to import cleanly and returning early.
+# Neither message carries a stop_reason, so neither is ever "finalised"
+# (transcript_ingest.count_incomplete); the second one coming after the
+# first is what makes the first "over" and so counted - a lone unfinalised
+# message is always excluded as possibly still in progress. This is what
+# exercises the incomplete_usage_messages key end to end under 3.9, not
+# just the four token fields.
 SYNTHETIC_TRANSCRIPT_ENTRY = {
     "type": "assistant",
     "timestamp": "2026-01-01T00:00:00.000Z",
@@ -65,6 +71,20 @@ SYNTHETIC_TRANSCRIPT_ENTRY = {
         "usage": {
             "input_tokens": 10,
             "output_tokens": 5,
+            "cache_read_input_tokens": 0,
+            "cache_creation_input_tokens": 0,
+        },
+    },
+}
+SYNTHETIC_TRANSCRIPT_ENTRY_2 = {
+    "type": "assistant",
+    "timestamp": "2026-01-01T00:00:01.000Z",
+    "message": {
+        "id": "msg_check_2",
+        "model": "claude-check",
+        "usage": {
+            "input_tokens": 0,
+            "output_tokens": 0,
             "cache_read_input_tokens": 0,
             "cache_creation_input_tokens": 0,
         },
@@ -80,20 +100,25 @@ def check_hook(
     with tempfile.TemporaryDirectory() as home:
         home_path = Path(home)
         transcript_path = home_path / "transcript.jsonl"
-        transcript_path.write_text(json.dumps(SYNTHETIC_TRANSCRIPT_ENTRY) + "\n")
+        transcript_path.write_text(
+            json.dumps(SYNTHETIC_TRANSCRIPT_ENTRY)
+            + "\n"
+            + json.dumps(SYNTHETIC_TRANSCRIPT_ENTRY_2)
+            + "\n"
+        )
         hook_input = {
             "session_id": "hooks-py39-check",
             "cwd": str(home_path),
             transcript_key: str(transcript_path),
         }
-        env = dict(os.environ)
-        env["HOME"] = home
+        environment = dict(os.environ)
+        environment["HOME"] = home
         result = subprocess.run(
             [python_executable, str(hook_path)],
             input=json.dumps(hook_input),
             capture_output=True,
             text=True,
-            env=env,
+            env=environment,
         )
         if result.returncode != 0:
             return (
@@ -115,6 +140,11 @@ def check_hook(
         record = json.loads(lines[0])
         if record.get("input_tokens") != 10 or record.get("output_tokens") != 5:
             return f"{hook_path.name} wrote an unexpected record: {record!r}"
+        if record.get("incomplete_usage_messages") != 1:
+            return (
+                f"{hook_path.name} did not write incomplete_usage_messages=1 for a "
+                f"transcript with one over, unfinalised message: {record!r}"
+            )
         return None
 
 

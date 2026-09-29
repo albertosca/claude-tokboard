@@ -155,12 +155,12 @@ def test_write_badge_overwrites_an_existing_file(script, tmp_path):
 def test_get_coverage_percent_parses_the_totals_field_from_coverage_json(script, monkeypatch):
     fake_stdout = json.dumps({"totals": {"percent_covered": 93.75, "num_statements": 400}})
 
-    def fake_run(cmd, capture_output, check, text):  # mirrors subprocess.run's own signature
-        assert cmd == ["coverage", "json", "-o", "-"]
+    def fake_run(command, capture_output, check, text):  # mirrors subprocess.run's own signature
+        assert command == ["coverage", "json", "-o", "-"]
         assert capture_output is True
         assert check is True
         assert text is True
-        return subprocess.CompletedProcess(cmd, 0, stdout=fake_stdout, stderr="")
+        return subprocess.CompletedProcess(command, 0, stdout=fake_stdout, stderr="")
 
     monkeypatch.setattr(script.subprocess, "run", fake_run)
 
@@ -207,7 +207,9 @@ def test_module_guard_calls_main_and_exits_with_its_return_code(monkeypatch, tmp
     monkeypatch.setattr(
         subprocess,
         "run",
-        lambda *a, **k: subprocess.CompletedProcess(a[0], 0, stdout=fake_stdout, stderr=""),
+        lambda *positional_arguments, **keyword_arguments: subprocess.CompletedProcess(
+            positional_arguments[0], 0, stdout=fake_stdout, stderr=""
+        ),
     )
 
     spec = importlib.util.spec_from_file_location("__main__", SCRIPT_PATH)

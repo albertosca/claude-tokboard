@@ -89,7 +89,7 @@ TOKEN_TYPE_LABELS = ("input", "output", "cache read", "cache creation")
 # that pane mode's own legend must show and tokens mode must not - proof
 # that tokens mode is not merely "non-empty" but a genuinely different
 # rendering, not just the pane view under another title.
-A_PROJECT_LABEL = "delta"
+SAMPLE_PROJECT_LABEL = "delta"
 
 
 async def _open_panorama(pilot: Any) -> Any:
@@ -105,10 +105,10 @@ async def _drive_mode_toggle() -> dict[str, Any]:
     advances, each rendering is genuinely different (not just re-titled),
     the round trip restores the original render byte-for-byte, and the
     toggle is a three-state cycle rather than a longer one."""
-    args = tui.build_arg_parser().parse_args(["--label-budget", "0"])
-    async with tui.MetricsTUIApp(mr, tui.load_data(args, mr=mr), args=args).run_test(
-        size=(140, 45)
-    ) as pilot:
+    arguments = tui.build_arg_parser().parse_args(["--label-budget", "0"])
+    async with tui.MetricsTUIApp(
+        mr, tui.load_data(arguments, metrics_core_module=mr), arguments=arguments
+    ).run_test(size=(140, 45)) as pilot:
         chart = await _open_panorama(pilot)
         app = pilot.app
 
@@ -168,10 +168,10 @@ async def _drive_highlighting() -> dict[str, Any]:
     is active, and they are a no-op on the currently visible render when
     the OTHER mode is active - the two `if self.mode == ...` guards on
     TrendChart itself (473-475, 478-480 in the pre-task line numbering)."""
-    args = tui.build_arg_parser().parse_args(["--label-budget", "0"])
-    async with tui.MetricsTUIApp(mr, tui.load_data(args, mr=mr), args=args).run_test(
-        size=(140, 45)
-    ) as pilot:
+    arguments = tui.build_arg_parser().parse_args(["--label-budget", "0"])
+    async with tui.MetricsTUIApp(
+        mr, tui.load_data(arguments, metrics_core_module=mr), arguments=arguments
+    ).run_test(size=(140, 45)) as pilot:
         chart = await _open_panorama(pilot)
         assert chart.mode == "pane"
 
@@ -229,22 +229,22 @@ def mode_toggle(tmp_path_factory: pytest.TempPathFactory) -> Any:
     fixture, so this measures the fixture and never the user's real data.
     See seeded_tui_home (tests/test_tui_state.py) for why setenv("HOME")
     alone is not enough now that this runs in-process."""
-    mp = pytest.MonkeyPatch()
+    monkeypatch = pytest.MonkeyPatch()
     try:
-        seeded_tui_home(mp, tmp_path_factory.mktemp("tui-chart-mode-home"))
+        seeded_tui_home(monkeypatch, tmp_path_factory.mktemp("tui-chart-mode-home"))
         return _run(_drive_mode_toggle())
     finally:
-        mp.undo()
+        monkeypatch.undo()
 
 
 @pytest.fixture(scope="session")
 def highlighting(tmp_path_factory: pytest.TempPathFactory) -> Any:
-    mp = pytest.MonkeyPatch()
+    monkeypatch = pytest.MonkeyPatch()
     try:
-        seeded_tui_home(mp, tmp_path_factory.mktemp("tui-chart-highlight-home"))
+        seeded_tui_home(monkeypatch, tmp_path_factory.mktemp("tui-chart-highlight-home"))
         return _run(_drive_highlighting())
     finally:
-        mp.undo()
+        monkeypatch.undo()
 
 
 def _run(coro: Any) -> Any:
@@ -302,8 +302,8 @@ def test_tokens_mode_shows_its_own_title_and_series_labels(mode_toggle):
 def test_tokens_mode_does_not_show_the_pane_titles_or_project_names(mode_toggle):
     text = mode_toggle["tokens_text"]
     assert PANE_TITLE not in text
-    assert A_PROJECT_LABEL not in text, (
-        f"tokens mode rendered {A_PROJECT_LABEL!r}, a project name - it should "
+    assert SAMPLE_PROJECT_LABEL not in text, (
+        f"tokens mode rendered {SAMPLE_PROJECT_LABEL!r}, a project name - it should "
         "group by token type, not by project"
     )
 
@@ -311,7 +311,7 @@ def test_tokens_mode_does_not_show_the_pane_titles_or_project_names(mode_toggle)
 def test_pane_mode_shows_project_labels_not_token_type_labels(mode_toggle):
     text = mode_toggle["pane_text"]
     assert PANE_TITLE in text
-    assert A_PROJECT_LABEL in text
+    assert SAMPLE_PROJECT_LABEL in text
     assert TOKENS_TITLE not in text
     for label in TOKEN_TYPE_LABELS:
         assert label not in text, (

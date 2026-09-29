@@ -64,10 +64,10 @@ def _markers(lang: str) -> list[str]:
                 found.append(value)
             continue
         mine_fragments = _template_fragments(mine_value)
-        for i, fragment in enumerate(_template_fragments(value)):
+        for fragment_index, fragment in enumerate(_template_fragments(value)):
             if not fragment:
                 continue
-            if i < len(mine_fragments) and fragment == mine_fragments[i]:
+            if fragment_index < len(mine_fragments) and fragment == mine_fragments[fragment_index]:
                 continue
             if not _words_in(fragment, mine):
                 found.append(fragment)
@@ -75,7 +75,9 @@ def _markers(lang: str) -> list[str]:
 
 
 def language_leaks(text: str, lang: str) -> list[str]:
-    hits = [m for m in _markers(lang) if re.search(rf"(?<!\w){re.escape(m)}(?!\w)", text)]
+    hits = [
+        marker for marker in _markers(lang) if re.search(rf"(?<!\w){re.escape(marker)}(?!\w)", text)
+    ]
     if lang == "en":
         hits += sorted(set(PT_DIACRITICS.findall(text)))
     return hits
@@ -104,11 +106,11 @@ def fixture_page_html(home: Path, lang: str) -> str:
     build_fixture(str(home), datetime.now().astimezone())
     metrics = home / ".claude" / "metrics"
     (metrics / "config.json").write_text(json.dumps({"language": lang}))
-    env = dict(os.environ, HOME=str(home), PYTHONPATH=str(REPO / "lib"),
+    environment = dict(os.environ, HOME=str(home), PYTHONPATH=str(REPO / "lib"),
                LC_ALL="pt_BR.UTF-8", LC_MESSAGES="", LANG="")  # fmt: skip
     subprocess.run(
         [sys.executable, str(REPO / "dashboard_html.py"), "--html", "--label-budget", "0", "--all"],
-        env=env, cwd=str(REPO), check=True, capture_output=True, timeout=120,
+        env=environment, cwd=str(REPO), check=True, capture_output=True, timeout=120,
     )  # fmt: skip
     return (metrics / "dashboard.html").read_text()
 
@@ -163,9 +165,13 @@ def _string_leaves(value: object) -> list[str]:
     if isinstance(value, str):
         return [value]
     if isinstance(value, dict):
-        return [s for k, v in value.items() for s in (*_string_leaves(k), *_string_leaves(v))]
+        return [
+            leaf
+            for entry_key, entry_value in value.items()
+            for leaf in (*_string_leaves(entry_key), *_string_leaves(entry_value))
+        ]
     if isinstance(value, list):
-        return [s for v in value for s in _string_leaves(v)]
+        return [leaf for item in value for leaf in _string_leaves(item)]
     return []
 
 
@@ -190,6 +196,9 @@ _SEEDED_SUBAGENT: dict[str, Any] = {
     "cache_creation_tokens": 1,
     "tool_call_count": 3,
     "duration_seconds": 12.5,
+    # Flagged, so the drive's click into week-1 also reaches the output
+    # floor note (the session is flagged through the fold).
+    "incomplete_usage_messages": 2,
 }
 
 
@@ -215,15 +224,18 @@ def test_fixture_user_data_is_language_neutral(tmp_path: Path) -> None:
 
     built = build_fixture(str(tmp_path), datetime.now().astimezone())
     strings = sorted(
-        {s for record in built["records"] for s in _string_leaves(record)}
+        {leaf for record in built["records"] for leaf in _string_leaves(record)}
         | set(_string_leaves(_SEEDED_SUBAGENT))
     )
     assert strings, "collected no strings at all - the fixture's own shape changed"
 
     offenders = {
-        s: {"en": language_leaks(s, "en"), "pt": language_leaks(s, "pt")}
-        for s in strings
-        if language_leaks(s, "en") or language_leaks(s, "pt")
+        string_value: {
+            "en": language_leaks(string_value, "en"),
+            "pt": language_leaks(string_value, "pt"),
+        }
+        for string_value in strings
+        if language_leaks(string_value, "en") or language_leaks(string_value, "pt")
     }
     assert not offenders, (
         f"fixture user data collides with metrics_core's own catalog: {offenders} - "
@@ -285,6 +297,23 @@ def test_detail_panel_subagents_title_and_no_transcript_speak_only_their_own_lan
         assert language_leaks(panel, lang) == []
 
 
+def test_output_floor_note_speaks_only_its_own_language() -> None:
+    # The note lives in title attributes, which _visible_html_text strips -
+    # so the page-wide HTML test above can never see it. Checked directly,
+    # both plural forms, in both renderers that carry it.
+    import dashboard_html as dh
+
+    session = {"session_id": "s-1", "output_tokens": 5, "incomplete_usage_messages": 1}
+    subagent = dict(session, agent_type="general-purpose", incomplete_usage_messages=2)
+    for lang in ("en", "pt"):
+        row = dh.render_session_row(session, False, {}, 0, lang=lang)
+        panel = dh.render_detail_panel("s-1", [subagent], True, lang=lang)
+        titles = html_lib.unescape(" ".join(re.findall(r'title="([^"]*)"', row + panel)))
+        assert mr.tn("floor_note", 1, lang) in titles
+        assert mr.tn("floor_note", 2, lang) in titles
+        assert language_leaks(titles, lang) == []
+
+
 def _no_project_records() -> list[dict[str, Any]]:
     """Two records, on different days (render_trend_chart returns "" below
     two distinct buckets), neither with a project_path at all - the branch
@@ -329,13 +358,13 @@ def _records_for_hidden_projects(count: int) -> list[dict[str, Any]]:
     """
     return [
         {
-            "project_path": f"/synthetic/project-{i:02d}",
-            "input_tokens": i + 1,
+            "project_path": f"/synthetic/project-{index:02d}",
+            "input_tokens": index + 1,
             "output_tokens": 0,
             "cache_read_tokens": 0,
             "cache_creation_tokens": 0,
         }
-        for i in range(count)
+        for index in range(count)
     ]
 
 
@@ -380,7 +409,7 @@ def _visible_svg_text(svg: str) -> str:
     return html_lib.unescape(re.sub(r"<[^>]+>", " ", svg)).replace("\xa0", " ")
 
 
-def _seed_one_subagent_under_week_1(mp: pytest.MonkeyPatch, home: Path) -> Path:
+def _seed_one_subagent_under_week_1(monkeypatch: pytest.MonkeyPatch, home: Path) -> Path:
     """The committed fixture, plus ONE subagent under session "week-1" -
     just enough to reach SessionDetailPanel's populated branch
     (detail.subagents_title, and its own column header).
@@ -397,7 +426,7 @@ def _seed_one_subagent_under_week_1(mp: pytest.MonkeyPatch, home: Path) -> Path:
     """
     from test_tui_state import seeded_tui_home
 
-    seeded_tui_home(mp, home)
+    seeded_tui_home(monkeypatch, home)
     subagents_path = home / ".claude" / "metrics" / "subagents.jsonl"
     subagents_path.write_text(json.dumps(_SEEDED_SUBAGENT) + "\n")
     return home
@@ -416,8 +445,10 @@ def _tui_screens(home: Path, lang: str) -> list[str]:
     import dashboard_tui as tui
 
     async def _drive() -> list[str]:
-        args = tui.build_arg_parser().parse_args(["--label-budget", "0"])
-        app = tui.MetricsTUIApp(mr, tui.load_data(args, mr=mr), args=args)
+        parsed_arguments = tui.build_arg_parser().parse_args(["--label-budget", "0"])
+        app = tui.MetricsTUIApp(
+            mr, tui.load_data(parsed_arguments, metrics_core_module=mr), arguments=parsed_arguments
+        )
         screens = []
         # notifications=True: run_test() disables the Toast rack by default
         # (Textual 8.2.8), which would otherwise hide the "p" notification
@@ -427,12 +458,12 @@ def _tui_screens(home: Path, lang: str) -> list[str]:
             screens.append(app.export_screenshot())
 
             tree = app.query_one(Tree)
-            beta_node = next(c for c in tree.root.children if "beta" in str(c.label))
+            beta_node = next(child for child in tree.root.children if "beta" in str(child.label))
             beta_node.expand()
             await pilot.pause()
             week_row = next(
-                i
-                for i, line in enumerate(tree._tree_lines)
+                index
+                for index, line in enumerate(tree._tree_lines)
                 if line.path[-1].data == {"session_id": "week-1"}
             )
             await pilot.click(tree, offset=(4, week_row))
@@ -453,13 +484,13 @@ def _tui_screens(home: Path, lang: str) -> list[str]:
             screens.append(app.export_screenshot())
         return screens
 
-    mp = pytest.MonkeyPatch()
+    monkeypatch = pytest.MonkeyPatch()
     try:
-        _seed_one_subagent_under_week_1(mp, home)
+        _seed_one_subagent_under_week_1(monkeypatch, home)
         (home / ".claude" / "metrics" / "config.json").write_text(json.dumps({"language": lang}))
         return [_visible_svg_text(svg) for svg in asyncio.run(_drive())]
     finally:
-        mp.undo()
+        monkeypatch.undo()
 
 
 @pytest.mark.parametrize("lang", ["en", "pt"])
@@ -479,6 +510,9 @@ def test_the_tui_speaks_only_its_own_language(tmp_path: Path, lang: str) -> None
     # here, and the leak check above would report a clean pass for a
     # screen that never rendered the thing this test exists to cover.
     assert mr.t("detail.subagents_title", lang, n=1) in combined
+    # The panel wraps the note over two lines, so only its head is matched
+    # whole; the leak check below still reads every word of both lines.
+    assert mr.tn("floor_note", 2, lang)[:40] in combined
     assert language_leaks(combined, lang) == []
 
 
@@ -498,23 +532,25 @@ def _panorama_with_no_data(home: Path, lang: str) -> str:
     import dashboard_tui as tui
 
     async def _drive() -> str:
-        args = tui.build_arg_parser().parse_args(["--label-budget", "0"])
-        app = tui.MetricsTUIApp(mr, tui.load_data(args, mr=mr), args=args)
+        parsed_arguments = tui.build_arg_parser().parse_args(["--label-budget", "0"])
+        app = tui.MetricsTUIApp(
+            mr, tui.load_data(parsed_arguments, metrics_core_module=mr), arguments=parsed_arguments
+        )
         async with app.run_test(size=(140, 45)) as pilot:
             await pilot.pause()
             await pilot.press("g")
             await pilot.pause()
             return app.export_screenshot()
 
-    mp = pytest.MonkeyPatch()
+    monkeypatch = pytest.MonkeyPatch()
     try:
-        isolate_tui_from_the_real_filesystem(mp, home)
+        isolate_tui_from_the_real_filesystem(monkeypatch, home)
         (home / ".claude" / "metrics" / "config.json").write_text(json.dumps({"language": lang}))
         # No sessions.jsonl at all - load_records tolerates a missing file
         # and returns [], so every period's chart_records is empty.
         return _visible_svg_text(asyncio.run(_drive()))
     finally:
-        mp.undo()
+        monkeypatch.undo()
 
 
 @pytest.mark.parametrize("lang", ["en", "pt"])

@@ -64,7 +64,7 @@ def test_plan_reconstructs_each_snapshot_as_of_its_own_moment(script, tmp_path):
     # Two snapshots of one session: the first must carry only what existed at
     # its own timestamp_end, not the session's final total. Getting this wrong
     # is what piles a whole session onto its first day.
-    t = _transcript(
+    transcript_path = _transcript(
         tmp_path / "t.jsonl",
         [
             ("2026-08-01T10:00:00Z", "a1", "model-alpha", {"input_tokens": 10}),
@@ -72,11 +72,19 @@ def test_plan_reconstructs_each_snapshot_as_of_its_own_moment(script, tmp_path):
         ],
     )
     records = [
-        {"session_id": "s1", "transcript_path": t, "timestamp_end": "2026-08-01T10:30:00Z"},
-        {"session_id": "s1", "transcript_path": t, "timestamp_end": "2026-08-01T12:00:00Z"},
+        {
+            "session_id": "s1",
+            "transcript_path": transcript_path,
+            "timestamp_end": "2026-08-01T10:30:00Z",
+        },
+        {
+            "session_id": "s1",
+            "transcript_path": transcript_path,
+            "timestamp_end": "2026-08-01T12:00:00Z",
+        },
     ]
 
-    plan, _stats = script.plan_backfill(records, {"s1": t}, "transcript_path")
+    plan, _stats = script.plan_backfill(records, {"s1": transcript_path}, "transcript_path")
 
     assert plan[0] == {"model-alpha": _bucket(input_tokens=10)}
     assert plan[1] == {
@@ -89,46 +97,50 @@ def test_plan_skips_a_session_when_any_snapshot_has_no_transcript(script, tmp_pa
     # All-or-nothing per session: correcting some snapshots and leaving others
     # inflates the delta at the seam. The dedup backfill measured that as an
     # invented 1.9-billion-token spike on a single day.
-    t = _transcript(
+    transcript_path = _transcript(
         tmp_path / "t.jsonl", [("2026-08-01T10:00:00Z", "a1", "model-alpha", {"input_tokens": 10})]
     )
     records = [
-        {"session_id": "s1", "transcript_path": t, "timestamp_end": "2026-08-01T10:30:00Z"},
+        {
+            "session_id": "s1",
+            "transcript_path": transcript_path,
+            "timestamp_end": "2026-08-01T10:30:00Z",
+        },
         {"session_id": "s1", "transcript_path": None, "timestamp_end": "2026-08-01T12:00:00Z"},
     ]
 
-    plan, stats = script.plan_backfill(records, {"s1": t}, "transcript_path")
+    plan, stats = script.plan_backfill(records, {"s1": transcript_path}, "transcript_path")
 
     assert plan == {}
     assert sum(stats.values()) > 0
 
 
 def test_plan_leaves_snapshots_that_already_have_the_field(script, tmp_path):
-    t = _transcript(
+    transcript_path = _transcript(
         tmp_path / "t.jsonl", [("2026-08-01T10:00:00Z", "a1", "model-alpha", {"input_tokens": 10})]
     )
     records = [
         {
             "session_id": "s1",
-            "transcript_path": t,
+            "transcript_path": transcript_path,
             "timestamp_end": "2026-08-01T10:30:00Z",
             "tokens_by_model": {"model-alpha": _bucket(input_tokens=10)},
         }
     ]
 
-    plan, _stats = script.plan_backfill(records, {"s1": t}, "transcript_path")
+    plan, _stats = script.plan_backfill(records, {"s1": transcript_path}, "transcript_path")
 
     assert plan == {}, "a snapshot that already has the field is not rewritten"
 
 
 def test_check_against_native_is_silent_when_the_reconstruction_agrees(script, tmp_path):
-    t = _transcript(
+    transcript_path = _transcript(
         tmp_path / "t.jsonl", [("2026-08-01T10:00:00Z", "a1", "model-alpha", {"input_tokens": 10})]
     )
     records = [
         {
             "session_id": "s1",
-            "transcript_path": t,
+            "transcript_path": transcript_path,
             "timestamp_end": "2026-08-01T10:30:00Z",
             "tokens_by_model": {"model-alpha": _bucket(input_tokens=10)},
         }
@@ -144,13 +156,13 @@ def test_check_against_native_reports_a_disagreement(script, tmp_path):
     # The oracle: the field written natively by the hook is what the
     # reconstruction must reproduce. A mismatch means the reconstructor is
     # wrong, and nothing may be written anywhere.
-    t = _transcript(
+    transcript_path = _transcript(
         tmp_path / "t.jsonl", [("2026-08-01T10:00:00Z", "a1", "model-alpha", {"input_tokens": 10})]
     )
     records = [
         {
             "session_id": "s1",
-            "transcript_path": t,
+            "transcript_path": transcript_path,
             "timestamp_end": "2026-08-01T10:30:00Z",
             "tokens_by_model": {"model-alpha": _bucket(input_tokens=999)},
         }
@@ -187,8 +199,8 @@ def test_the_oracle_accepts_a_shortfall_inside_the_tolerance_and_counts_it_apart
     # cut exactly - and the residue is always a shortfall. 0.5% is accepted,
     # but it is NOT counted as exact: a run where the tolerated count jumps
     # is the only warning that the residue has stopped being residue.
-    t = _one_entry_transcript(tmp_path)
-    records = [_native_row(t, {"model-alpha": _bucket(input_tokens=100_500)})]
+    transcript_path = _one_entry_transcript(tmp_path)
+    records = [_native_row(transcript_path, {"model-alpha": _bucket(input_tokens=100_500)})]
 
     report = script.check_against_native(records, "transcript_path")
 
@@ -199,8 +211,8 @@ def test_the_oracle_accepts_a_shortfall_inside_the_tolerance_and_counts_it_apart
 def test_the_oracle_reports_a_shortfall_past_the_tolerance(script, tmp_path):
     # 2% low. Same direction as the accepted case, an order of magnitude
     # bigger, and the floor is what separates them.
-    t = _one_entry_transcript(tmp_path)
-    records = [_native_row(t, {"model-alpha": _bucket(input_tokens=102_000)})]
+    transcript_path = _one_entry_transcript(tmp_path)
+    records = [_native_row(transcript_path, {"model-alpha": _bucket(input_tokens=102_000)})]
 
     report = script.check_against_native(records, "transcript_path")
 
@@ -216,8 +228,8 @@ def test_the_oracle_reports_an_over_count_however_small(script, tmp_path):
     # a fabricated bar is loud where a sub-1% shortfall is invisible. If this
     # test ever passes with a symmetric comparison, the tolerance has quietly
     # become "close enough" in both directions.
-    t = _one_entry_transcript(tmp_path)
-    records = [_native_row(t, {"model-alpha": _bucket(input_tokens=99_990)})]
+    transcript_path = _one_entry_transcript(tmp_path)
+    records = [_native_row(transcript_path, {"model-alpha": _bucket(input_tokens=99_990)})]
 
     report = script.check_against_native(records, "transcript_path")
 
@@ -231,10 +243,10 @@ def test_the_oracle_reports_a_model_bucket_that_exists_on_only_one_side(script, 
     # A missing or invented series is not a rounding difference, so it is
     # reported in both directions and never tolerated - even when the numbers
     # attached to it are tiny enough to sit inside the 1% floor.
-    t = _one_entry_transcript(tmp_path)
+    transcript_path = _one_entry_transcript(tmp_path)
     missing_from_reconstruction = [
         _native_row(
-            t,
+            transcript_path,
             {
                 "model-alpha": _bucket(input_tokens=100_000),
                 "model-ghost": _bucket(input_tokens=1),
@@ -242,7 +254,7 @@ def test_the_oracle_reports_a_model_bucket_that_exists_on_only_one_side(script, 
         )
     ]
     invented_by_reconstruction = [
-        _native_row(t, {}),
+        _native_row(transcript_path, {}),
     ]
 
     absent = script.check_against_native(missing_from_reconstruction, "transcript_path")
@@ -339,9 +351,12 @@ def test_an_agent_id_under_two_project_slugs_is_ambiguity_not_a_match(script, tm
     # Picking the first, or the larger, would be a guess presented as a
     # resolution - and the row would then be "checked" against a file that
     # may not be its own. It is left unindexed and named instead.
+    # Copies that DIFFER: identical ones are one transcript stored twice and
+    # are indexed (see metrics_core.index_subagent_transcripts).
     projects = tmp_path / "projects"
     _subagent_tree(projects, "slug-a", "sess-1", "dup")
-    _subagent_tree(projects, "slug-b", "sess-1", "dup")
+    with Path(_subagent_tree(projects, "slug-b", "sess-1", "dup")).open("a") as transcript_file:
+        transcript_file.write("\n")
     only_once = _subagent_tree(projects, "slug-a", "sess-1", "unique")
 
     index, ambiguous = script.index_subagent_transcripts(str(projects))
@@ -375,9 +390,9 @@ def test_the_oracle_reports_a_bucket_with_a_field_the_reconstruction_lacks(scrip
     # The comparison loop reads TOKEN_FIELDS and nothing else, so a native
     # bucket with a fifth key would agree on all four and differ in fact. The
     # whole-dict comparison this replaced caught that for free.
-    t = _one_entry_transcript(tmp_path)
+    transcript_path = _one_entry_transcript(tmp_path)
     native = {"model-alpha": {**_bucket(input_tokens=100_000), "thinking_tokens": 5}}
-    records = [_native_row(t, native)]
+    records = [_native_row(transcript_path, native)]
 
     report = script.check_against_native(records, "transcript_path")
 
@@ -404,12 +419,12 @@ def test_a_native_row_the_gate_cannot_reach_is_counted_as_unverified(script, tmp
     # Never absorbed into the green count, and the two reasons stay apart:
     # one row has no moment to reconstruct at, the other has no transcript
     # anywhere.
-    t = _one_entry_transcript(tmp_path)
+    transcript_path = _one_entry_transcript(tmp_path)
     records = [
-        _native_row(t, {"model-alpha": _bucket(input_tokens=100_000)}),
+        _native_row(transcript_path, {"model-alpha": _bucket(input_tokens=100_000)}),
         {
             "session_id": "s2",
-            "transcript_path": t,
+            "transcript_path": transcript_path,
             "tokens_by_model": {"model-alpha": _bucket(input_tokens=1)},
         },
         _native_row(str(tmp_path / "gone.jsonl"), {"model-alpha": _bucket(input_tokens=1)}),
@@ -448,12 +463,16 @@ def test_plan_skips_a_unit_whose_snapshot_has_no_timestamp_end(script, tmp_path)
     # Without the moment a snapshot was taken there is no as-of to
     # reconstruct at, and the only other candidate - the transcript's final
     # total - is the exact mistake this backfill is shaped to avoid.
-    t = _transcript(
+    transcript_path = _transcript(
         tmp_path / "t.jsonl", [("2026-08-01T10:00:00Z", "a1", "model-alpha", {"input_tokens": 10})]
     )
     records = [
-        {"session_id": "s1", "transcript_path": t, "timestamp_end": "2026-08-01T10:30:00Z"},
-        {"session_id": "s1", "transcript_path": t, "timestamp_end": None},
+        {
+            "session_id": "s1",
+            "transcript_path": transcript_path,
+            "timestamp_end": "2026-08-01T10:30:00Z",
+        },
+        {"session_id": "s1", "transcript_path": transcript_path, "timestamp_end": None},
     ]
 
     plan, stats = script.plan_backfill(records, {}, "transcript_path")
@@ -469,7 +488,7 @@ def test_plan_writes_the_pre_capture_half_of_a_unit_that_straddles_the_deploy(sc
     # the field and its earlier one does not. The earlier one is written, the
     # later one is left exactly as the hook wrote it, and the unit is NOT
     # disqualified by owning a native row.
-    t = _transcript(
+    transcript_path = _transcript(
         tmp_path / "t.jsonl",
         [
             ("2026-08-01T10:00:00Z", "a1", "model-alpha", {"input_tokens": 10}),
@@ -477,10 +496,14 @@ def test_plan_writes_the_pre_capture_half_of_a_unit_that_straddles_the_deploy(sc
         ],
     )
     records = [
-        {"session_id": "s1", "transcript_path": t, "timestamp_end": "2026-08-01T10:30:00Z"},
         {
             "session_id": "s1",
-            "transcript_path": t,
+            "transcript_path": transcript_path,
+            "timestamp_end": "2026-08-01T10:30:00Z",
+        },
+        {
+            "session_id": "s1",
+            "transcript_path": transcript_path,
             "timestamp_end": "2026-08-01T12:00:00Z",
             "tokens_by_model": {
                 "model-alpha": _bucket(input_tokens=10),
@@ -520,7 +543,7 @@ def test_check_against_native_stays_silent_about_rows_it_cannot_check(script, tm
     # A native row that lost its transcript, and one that never recorded when
     # it was taken, are not disagreements - there is nothing to compare them
     # against. Reporting them would make the gate cry wolf on every run.
-    t = _transcript(
+    transcript_path = _transcript(
         tmp_path / "t.jsonl", [("2026-08-01T10:00:00Z", "a1", "model-alpha", {"input_tokens": 10})]
     )
     records = [
@@ -532,7 +555,7 @@ def test_check_against_native_stays_silent_about_rows_it_cannot_check(script, tm
         },
         {
             "session_id": "s2",
-            "transcript_path": t,
+            "transcript_path": transcript_path,
             "tokens_by_model": {"model-alpha": _bucket(input_tokens=999)},
         },
     ]
@@ -546,7 +569,7 @@ def test_a_transcript_shared_by_many_snapshots_is_scanned_once(script, tmp_path,
     # thousands of entries. Re-reading the file per snapshot is what turns a
     # read-only check into a slow one, so the cache is load-bearing - and a
     # cache nobody counts is one that can silently stop working.
-    t = _transcript(
+    transcript_path = _transcript(
         tmp_path / "t.jsonl", [("2026-08-01T10:00:00Z", "a1", "model-alpha", {"input_tokens": 10})]
     )
     native = {"model-alpha": _bucket(input_tokens=10)}
@@ -563,22 +586,23 @@ def test_a_transcript_shared_by_many_snapshots_is_scanned_once(script, tmp_path,
     native_rows = [
         {
             "session_id": "s1",
-            "transcript_path": t,
+            "transcript_path": transcript_path,
             "timestamp_end": stamp,
             "tokens_by_model": native,
         }
         for stamp in stamps
     ]
     assert script.check_against_native(native_rows, "transcript_path").problems == []
-    assert scans == [t]
+    assert scans == [transcript_path]
 
     pending_rows = [
-        {"session_id": "s1", "transcript_path": t, "timestamp_end": stamp} for stamp in stamps
+        {"session_id": "s1", "transcript_path": transcript_path, "timestamp_end": stamp}
+        for stamp in stamps
     ]
     plan, _stats = script.plan_backfill(pending_rows, {}, "transcript_path")
 
     assert len(plan) == 3
-    assert scans == [t, t]
+    assert scans == [transcript_path, transcript_path]
 
 
 def test_plan_summary_of_an_empty_plan_over_a_file_with_no_tokens(script, capsys):
@@ -617,7 +641,7 @@ def _planned_unit(
 ) -> tuple[list[dict[str, Any]], str]:
     """One session with one plannable snapshot: a transcript worth
     `transcript_tokens` and a row whose stored total says `totals`."""
-    t = _transcript(
+    transcript_path = _transcript(
         tmp_path / f"{unit}.jsonl",
         [
             (
@@ -631,11 +655,11 @@ def _planned_unit(
     return [
         {
             "session_id": unit,
-            "transcript_path": t,
+            "transcript_path": transcript_path,
             "timestamp_end": "2026-08-01T10:30:00Z",
             "input_tokens": totals,
         }
-    ], t
+    ], transcript_path
 
 
 def _refuse(
@@ -703,7 +727,7 @@ def test_a_unit_whose_per_model_series_would_go_down_is_skipped_and_counted(scri
     # at zero. Here the two orders disagree, so the map differenced in
     # duration order falls from 410 to 10 - usage silently dropped, and a
     # phantom day the next time the series climbs back.
-    t = _transcript(
+    transcript_path = _transcript(
         tmp_path / "t.jsonl",
         [
             ("2026-08-01T10:00:00Z", "a1", "model-alpha", {"input_tokens": 10}),
@@ -713,14 +737,14 @@ def test_a_unit_whose_per_model_series_would_go_down_is_skipped_and_counted(scri
     records = [
         {
             "session_id": "s1",
-            "transcript_path": t,
+            "transcript_path": transcript_path,
             "timestamp_end": "2026-08-01T12:00:00Z",
             "duration_seconds": 100,
             "input_tokens": 410,
         },
         {
             "session_id": "s1",
-            "transcript_path": t,
+            "transcript_path": transcript_path,
             "timestamp_end": "2026-08-01T10:30:00Z",
             "duration_seconds": 200,
             "input_tokens": 10,
@@ -771,7 +795,7 @@ def test_a_refused_units_native_rows_stay_counted_where_they_already_were(script
     # The disposition table must keep summing to the row count. A refused
     # unit's PLANNED rows move to their reason; its native rows were already
     # counted as untouched and are untouched either way.
-    t = _transcript(
+    transcript_path = _transcript(
         tmp_path / "t.jsonl",
         [
             ("2026-08-01T10:00:00Z", "a1", "model-alpha", {"input_tokens": 10}),
@@ -781,13 +805,13 @@ def test_a_refused_units_native_rows_stay_counted_where_they_already_were(script
     records = [
         {
             "session_id": "s1",
-            "transcript_path": t,
+            "transcript_path": transcript_path,
             "timestamp_end": "2026-08-01T10:30:00Z",
             "input_tokens": 99_999,
         },
         {
             "session_id": "s1",
-            "transcript_path": t,
+            "transcript_path": transcript_path,
             "timestamp_end": "2026-08-01T12:00:00Z",
             "input_tokens": 410,
             "tokens_by_model": {"model-alpha": _bucket(input_tokens=410)},
@@ -853,7 +877,7 @@ def _argv(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, *extra: str) -> None:
 def test_main_reports_the_plan_when_every_reconstruction_agrees(
     script, tmp_path, monkeypatch, capsys
 ):
-    t = _transcript(
+    transcript_path = _transcript(
         tmp_path / "t.jsonl",
         [
             ("2026-08-01T10:00:00Z", "a1", "model-alpha", {"input_tokens": 10}),
@@ -866,13 +890,13 @@ def test_main_reports_the_plan_when_every_reconstruction_agrees(
         [
             {
                 "session_id": "s1",
-                "transcript_path": t,
+                "transcript_path": transcript_path,
                 "timestamp_end": "2026-08-01T10:30:00Z",
                 "input_tokens": 10,
             },
             {
                 "session_id": "s1",
-                "transcript_path": t,
+                "transcript_path": transcript_path,
                 "timestamp_end": "2026-08-01T12:00:00Z",
                 "input_tokens": 410,
                 "tokens_by_model": {
@@ -963,7 +987,7 @@ def test_main_aborts_and_plans_nothing_when_a_reconstruction_disagrees(
     # The whole reason the read-only half runs first. The message carries
     # both values, because deciding WHICH of the two is wrong is the question
     # the oracle exists to raise, not one this script can answer.
-    t = _transcript(
+    transcript_path = _transcript(
         tmp_path / "t.jsonl", [("2026-08-01T10:00:00Z", "a1", "model-alpha", {"input_tokens": 10})]
     )
     _metrics_file(
@@ -972,7 +996,7 @@ def test_main_aborts_and_plans_nothing_when_a_reconstruction_disagrees(
         [
             {
                 "session_id": "s1",
-                "transcript_path": t,
+                "transcript_path": transcript_path,
                 "timestamp_end": "2026-08-01T10:30:00Z",
                 "tokens_by_model": {"model-alpha": _bucket(input_tokens=999)},
             }
@@ -996,7 +1020,7 @@ def test_main_plans_the_subagent_file_through_the_same_mechanism(
     # Subagent rows key on agent_id/agent_transcript_path, and their
     # transcripts live where no session index would find them, so the file is
     # only reachable at all through the row's own recorded path.
-    t = _transcript(
+    transcript_path = _transcript(
         tmp_path / "agent.jsonl",
         [("2026-08-01T10:00:00Z", "a1", "model-alpha", {"output_tokens": 7})],
     )
@@ -1006,7 +1030,7 @@ def test_main_plans_the_subagent_file_through_the_same_mechanism(
         [
             {
                 "agent_id": "ag1",
-                "agent_transcript_path": t,
+                "agent_transcript_path": transcript_path,
                 "timestamp_end": "2026-08-01T10:30:00Z",
                 "output_tokens": 7,
             }
@@ -1031,7 +1055,8 @@ def test_main_names_an_ambiguous_agent_id_instead_of_resolving_it(
     # identical to "the transcript is gone".
     projects = tmp_path / "projects"
     _subagent_tree(projects, "slug-a", "sess-1", "dup")
-    _subagent_tree(projects, "slug-b", "sess-1", "dup")
+    with Path(_subagent_tree(projects, "slug-b", "sess-1", "dup")).open("a") as transcript_file:
+        transcript_file.write("\n")  # differing copies: identical ones would be indexed
     _metrics_file(
         tmp_path,
         "subagents",
@@ -1123,8 +1148,8 @@ def test_apply_carries_over_lines_appended_while_it_ran(script, tmp_path):
     rows = [{"session_id": "s1", "input_tokens": 10}]
     _write_jsonl(metrics, rows)
     late = {"session_id": "s99", "input_tokens": 1}
-    with metrics.open("a") as f:
-        f.write(json.dumps(late) + "\n")
+    with metrics.open("a") as metrics_file:
+        metrics_file.write(json.dumps(late) + "\n")
 
     script.apply_backfill(str(metrics), {0: {"model-alpha": _bucket(input_tokens=10)}}, rows)
 
@@ -1207,9 +1232,9 @@ def test_apply_refuses_when_the_backup_does_not_verify(script, tmp_path, monkeyp
     with pytest.raises(SystemExit):
         script.apply_backfill(str(metrics), {0: {"m": _bucket()}}, rows)
 
-    err = capsys.readouterr().err
-    assert "BACKUP VERIFICATION FAILED" in err
-    assert "backup-digest" in err
+    error_output = capsys.readouterr().err
+    assert "BACKUP VERIFICATION FAILED" in error_output
+    assert "backup-digest" in error_output
     assert json.loads(metrics.read_text()) == rows[0], "the file must be left untouched"
 
 
@@ -1230,9 +1255,9 @@ def test_apply_refuses_when_verification_sees_a_change_it_did_not_declare(script
     with pytest.raises(SystemExit):
         script.apply_backfill(str(metrics), {0: {"model-beta": _bucket(input_tokens=99)}}, rows)
 
-    err = capsys.readouterr().err
-    assert "FIELD VERIFICATION FAILED (1 problems)" in err
-    assert "tokens_by_model changed" in err
+    error_output = capsys.readouterr().err
+    assert "FIELD VERIFICATION FAILED (1 problems)" in error_output
+    assert "tokens_by_model changed" in error_output
     assert json.loads(metrics.read_text()) == rows[0], "the file must be left untouched"
 
 
@@ -1280,7 +1305,7 @@ def _one_writable_session(tmp_path: Path) -> None:
     """A session whose first snapshot needs the field and whose second
     already carries it - so the oracle has exactly one row to verify and the
     plan has exactly one row to write."""
-    t = _transcript(
+    transcript_path = _transcript(
         tmp_path / "t.jsonl",
         [
             ("2026-08-01T10:00:00Z", "a1", "model-alpha", {"input_tokens": 10}),
@@ -1293,13 +1318,13 @@ def _one_writable_session(tmp_path: Path) -> None:
         [
             {
                 "session_id": "s1",
-                "transcript_path": t,
+                "transcript_path": transcript_path,
                 "timestamp_end": "2026-08-01T10:30:00Z",
                 "input_tokens": 10,
             },
             {
                 "session_id": "s1",
-                "transcript_path": t,
+                "transcript_path": transcript_path,
                 "timestamp_end": "2026-08-01T12:00:00Z",
                 "input_tokens": 410,
                 "tokens_by_model": {
@@ -1373,7 +1398,7 @@ def test_main_refuses_to_apply_when_the_oracle_verified_nothing(
     # would otherwise satisfy the comparison. A run with no native rows has
     # collected no evidence at all, and an empty index looks exactly like
     # this from the outside.
-    t = _transcript(
+    transcript_path = _transcript(
         tmp_path / "t.jsonl",
         [("2026-08-01T10:00:00Z", "a1", "model-alpha", {"input_tokens": 10})],
     )
@@ -1383,7 +1408,7 @@ def test_main_refuses_to_apply_when_the_oracle_verified_nothing(
         [
             {
                 "session_id": "s1",
-                "transcript_path": t,
+                "transcript_path": transcript_path,
                 "timestamp_end": "2026-08-01T10:30:00Z",
                 "input_tokens": 10,
             }
@@ -1441,9 +1466,11 @@ def test_main_with_apply_and_nothing_to_write_leaves_the_file_alone(
     # Every row already has the field: the oracle has something to verify,
     # the plan has nothing to do, and the right outcome is not to rewrite an
     # irreplaceable file to produce identical bytes.
-    t = _one_entry_transcript(tmp_path)
+    transcript_path = _one_entry_transcript(tmp_path)
     _metrics_file(
-        tmp_path, "sessions", [_native_row(t, {"model-alpha": _bucket(input_tokens=100_000)})]
+        tmp_path,
+        "sessions",
+        [_native_row(transcript_path, {"model-alpha": _bucket(input_tokens=100_000)})],
     )
     before = _metrics_text(tmp_path)
     _applying_argv(monkeypatch, tmp_path, "--apply", "--expect-checked", "1")
@@ -1477,9 +1504,11 @@ def test_apply_refuses_when_the_bytes_on_disk_are_not_the_bytes_it_wrote(
     with pytest.raises(SystemExit):
         script.apply_backfill(str(metrics), {0: {"m": _bucket()}}, rows)
 
-    err = capsys.readouterr().err
-    assert "POST-WRITE VERIFICATION FAILED" in err
-    assert ".bak" in err, "a run that has already renamed must name the backup it can fall back to"
+    error_output = capsys.readouterr().err
+    assert "POST-WRITE VERIFICATION FAILED" in error_output
+    assert ".bak" in error_output, (
+        "a run that has already renamed must name the backup it can fall back to"
+    )
 
 
 def test_apply_accepts_a_line_appended_in_the_instant_after_the_rename(
@@ -1495,8 +1524,8 @@ def test_apply_accepts_a_line_appended_in_the_instant_after_the_rename(
 
     def append_right_after(self: Path, destination: Any) -> None:
         real_replace(self, destination)
-        with Path(destination).open("ab") as f:
-            f.write(b'{"session_id": "s-late"}\n')
+        with Path(destination).open("ab") as destination_file:
+            destination_file.write(b'{"session_id": "s-late"}\n')
 
     monkeypatch.setattr(Path, "replace", append_right_after)
 
@@ -1519,8 +1548,8 @@ def test_apply_carries_a_line_appended_between_the_final_read_and_the_rename(
     real_replace = Path.replace
 
     def append_right_before(self: Path, destination: Any) -> None:
-        with Path(destination).open("ab") as f:
-            f.write(b'{"session_id": "s-between"}\n')
+        with Path(destination).open("ab") as destination_file:
+            destination_file.write(b'{"session_id": "s-between"}\n')
         real_replace(self, destination)
 
     monkeypatch.setattr(Path, "replace", append_right_before)
@@ -1536,7 +1565,7 @@ def _subagent_metrics(tmp_path: Path) -> None:
     """One subagent row that already carries a map the oracle confirms - so
     the subagents dry run has an evidence count, and a different one from
     the sessions run below."""
-    t = _transcript(
+    transcript_path = _transcript(
         tmp_path / "agent.jsonl",
         [("2026-08-01T10:00:00Z", "a1", "model-alpha", {"output_tokens": 7})],
     )
@@ -1546,7 +1575,7 @@ def _subagent_metrics(tmp_path: Path) -> None:
         [
             {
                 "agent_id": "ag1",
-                "agent_transcript_path": t,
+                "agent_transcript_path": transcript_path,
                 "timestamp_end": "2026-08-01T10:30:00Z",
                 "output_tokens": 7,
                 "tokens_by_model": {"model-alpha": _bucket(output_tokens=7)},
@@ -1559,7 +1588,7 @@ def _two_native_session_rows(tmp_path: Path) -> None:
     """A session with one row to write and TWO the oracle can verify, so the
     two files' evidence counts differ the way the real ones do (135 against
     96) and a command pasted from the wrong run is not caught by the floor."""
-    t = _transcript(
+    transcript_path = _transcript(
         tmp_path / "t.jsonl",
         [
             ("2026-08-01T10:00:00Z", "a1", "model-alpha", {"input_tokens": 10}),
@@ -1573,20 +1602,20 @@ def _two_native_session_rows(tmp_path: Path) -> None:
         [
             {
                 "session_id": "s1",
-                "transcript_path": t,
+                "transcript_path": transcript_path,
                 "timestamp_end": "2026-08-01T10:30:00Z",
                 "input_tokens": 10,
             },
             {
                 "session_id": "s1",
-                "transcript_path": t,
+                "transcript_path": transcript_path,
                 "timestamp_end": "2026-08-01T10:45:00Z",
                 "input_tokens": 10,
                 "tokens_by_model": {"model-alpha": _bucket(input_tokens=10)},
             },
             {
                 "session_id": "s1",
-                "transcript_path": t,
+                "transcript_path": transcript_path,
                 "timestamp_end": "2026-08-01T12:00:00Z",
                 "input_tokens": 410,
                 "tokens_by_model": both,

@@ -8,12 +8,12 @@ import metrics_core as mr
 
 def write_transcript(path: Path, entries: list[tuple[str, str | None, dict[str, int]]]) -> None:
     """entries: list of (timestamp, message_id_or_None, usage_dict)."""
-    with path.open("w") as f:
+    with path.open("w") as transcript_file:
         for timestamp, message_id, usage in entries:
             message: dict[str, Any] = {"usage": usage}
             if message_id is not None:
                 message["id"] = message_id
-            f.write(
+            transcript_file.write(
                 json.dumps(
                     {
                         "type": "assistant",
@@ -118,21 +118,21 @@ def test_sha256_of_hashes_the_whole_file_with_sha256(tmp_path):
 
 
 def test_index_transcripts_a_size_tie_does_not_replace_the_first_file_seen(tmp_path):
-    projects_dir = tmp_path / "projects"
-    slug_a = projects_dir / "proj-a"
-    slug_b = projects_dir / "proj-b"
-    slug_a.mkdir(parents=True)
-    slug_b.mkdir(parents=True)
-    (slug_a / "s1.jsonl").write_text("x" * 10)
-    (slug_b / "s1.jsonl").write_text("y" * 10)  # same size, same session id
+    projects_directory = tmp_path / "projects"
+    first_slug = projects_directory / "proj-a"
+    second_slug = projects_directory / "proj-b"
+    first_slug.mkdir(parents=True)
+    second_slug.mkdir(parents=True)
+    (first_slug / "s1.jsonl").write_text("x" * 10)
+    (second_slug / "s1.jsonl").write_text("y" * 10)  # same size, same session id
 
     # Path.glob's iteration order is a filesystem detail, not something this
     # test should assume - so it is discovered independently rather than
     # guessed. Whichever file glob visits FIRST is the one a correct `>`
     # comparison must keep: the same-size second file must lose the tie.
-    first_visited = str(next(Path(projects_dir).glob("*/*.jsonl")))
+    first_visited = str(next(Path(projects_directory).glob("*/*.jsonl")))
 
-    index = mr.index_transcripts(str(projects_dir))
+    index = mr.index_transcripts(str(projects_directory))
     assert index["s1"] == first_visited
 
 
@@ -141,11 +141,11 @@ def test_index_transcripts_a_size_tie_does_not_replace_the_first_file_seen(tmp_p
 
 def test_scan_transcript_skips_blank_malformed_and_non_assistant_lines(tmp_path):
     path = tmp_path / "t.jsonl"
-    with path.open("w") as f:
-        f.write("\n")  # blank line
-        f.write("not json at all\n")  # malformed JSON
-        f.write(json.dumps({"type": "user", "timestamp": "x", "message": {}}) + "\n")
-        f.write(
+    with path.open("w") as transcript_file:
+        transcript_file.write("\n")  # blank line
+        transcript_file.write("not json at all\n")  # malformed JSON
+        transcript_file.write(json.dumps({"type": "user", "timestamp": "x", "message": {}}) + "\n")
+        transcript_file.write(
             json.dumps(
                 {
                     "type": "assistant",
@@ -914,6 +914,74 @@ def test_subagent_transcripts_drops_a_unit_whose_rows_resolve_to_different_files
     assert mr.subagent_transcripts(records, {}) == {}
 
 
+def _copy(projects: Path, slug: str, parent: str, agent_id: str, body: str) -> str:
+    directory = projects / slug / parent / "subagents"
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / f"agent-{agent_id}.jsonl"
+    path.write_text(body)
+    return str(path)
+
+
+def test_identical_copies_under_two_slugs_are_one_transcript_not_an_ambiguity(tmp_path):
+    # Measured 2026-09-28: all 93 agent ids found under two project slugs
+    # are byte-identical copies (a project directory renamed, a worktree slug
+    # migrated). Which copy is read changes nothing, so refusing them left
+    # 85 correctable rows behind for no reason.
+    projects = tmp_path / "projects"
+    first = _copy(projects, "slug-a", "sess-1", "dup", "same\n")
+    _copy(projects, "slug-b", "sess-1", "dup", "same\n")
+
+    index, ambiguous = mr.index_subagent_transcripts(str(projects))
+
+    assert index == {"dup": first}
+    assert ambiguous == []
+
+
+def test_copies_that_differ_stay_ambiguous(tmp_path):
+    projects = tmp_path / "projects"
+    _copy(projects, "slug-a", "sess-1", "dup", "one\n")
+    _copy(projects, "slug-b", "sess-1", "dup", "one\ntwo\n")
+
+    index, ambiguous = mr.index_subagent_transcripts(str(projects))
+
+    assert index == {}
+    assert ambiguous == ["dup"]
+
+
+def test_differing_copies_are_told_apart_by_the_rows_own_parent_session(tmp_path):
+    # A subagent transcript lives under <slug>/<parent session>/subagents/,
+    # and the row records that parent as its session_id - the row's own data,
+    # not a guess, picks the copy when exactly one sits under its parent.
+    projects = tmp_path / "projects"
+    mine = _copy(projects, "slug-a", "parent", "a1", "one\n")
+    _copy(projects, "slug-b", "other-parent", "a1", "two\n")
+    # a2: both differing copies sit under a directory named for its parent.
+    _copy(projects, "slug-a", "parent", "a2", "one\n")
+    _copy(projects, "slug-b", "parent", "a2", "two\n")
+    found = mr.find_subagent_transcripts(str(projects))
+    index, ambiguous = mr.index_subagent_transcripts(str(projects), found)
+    gone = str(tmp_path / "gone" / "agent-x.jsonl")
+    records = [
+        dict(subagent_record("a1", "x", 1), agent_transcript_path=gone),
+        dict(subagent_record("a1", "y", 2), agent_transcript_path=gone),
+        dict(subagent_record("a2", "x", 1), agent_transcript_path=gone),
+    ]
+    candidates = {agent_id: found[agent_id] for agent_id in ambiguous}
+
+    assert mr.subagent_transcripts(records, index, candidates) == {"a1": mine}
+    # Without the candidates, both stay unresolved, as before.
+    assert mr.subagent_transcripts(records, index) == {}
+
+
+def test_a_row_with_no_recorded_path_is_not_resolved_through_its_parent_either(tmp_path):
+    projects = tmp_path / "projects"
+    mine = _copy(projects, "slug-a", "parent", "a1", "one\n")
+    _copy(projects, "slug-b", "other", "a1", "two\n")
+    records = [dict(subagent_record("a1", "x", 1), agent_transcript_path=None)]
+
+    assert mr.subagent_transcripts(records, {}, {"a1": [mine]}) == {}
+
+
 def test_subagent_transcripts_drops_a_unit_where_one_row_does_not_resolve(tmp_path):
     here = tmp_path / "agent-a1.jsonl"
     here.write_text("")
@@ -962,15 +1030,15 @@ def test_daily_totals_returns_exactly_the_last_n_days_when_days_truncates():
     # 08-03, [-4:] keeps 08-02.
     records = [
         {
-            "session_id": f"s{n}",  # one snapshot each, so each delta is its own total
+            "session_id": f"s{day}",  # one snapshot each, so each delta is its own total
             "duration_seconds": 0,
-            "timestamp_end": f"2026-08-0{n}T10:00:00",
-            "input_tokens": n,
+            "timestamp_end": f"2026-08-0{day}T10:00:00",
+            "input_tokens": day,
             "output_tokens": 0,
             "cache_read_tokens": 0,
             "cache_creation_tokens": 0,
         }
-        for n in range(1, 6)
+        for day in range(1, 6)
     ]
 
     assert mr.daily_totals(records, days=3) == [

@@ -55,8 +55,8 @@ def load_config(path: str | None = None) -> dict[str, Any]:
     opening. Every setting (project_roots, language) reads through here.
     """
     try:
-        with Path(path or CONFIG_FILE).open() as f:
-            config = json.load(f)
+        with Path(path or CONFIG_FILE).open() as config_file:
+            config = json.load(config_file)
     except (OSError, json.JSONDecodeError):
         return {}
     return config if isinstance(config, dict) else {}

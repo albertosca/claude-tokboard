@@ -10,24 +10,25 @@ from typing import Any
 
 import metrics_core as mr
 import metrics_core.records as records_module
+import pytest
 from metrics_core.transcript_ingest import TOKEN_FIELDS
 
 
 def snapshot(duration_seconds: int, timestamp_end: str, **tokens: int) -> dict[str, Any]:
-    r: dict[str, Any] = {"duration_seconds": duration_seconds, "timestamp_end": timestamp_end}
-    r.update(tokens)
-    return r
+    data: dict[str, Any] = {"duration_seconds": duration_seconds, "timestamp_end": timestamp_end}
+    data.update(tokens)
+    return data
 
 
 def _bucket(**tokens: int) -> dict[str, int]:
     """One model's inner mapping inside a record's tokens_by_model, with
     every one of the four fields present - the shape parse_transcript
     writes, where an unused field is an explicit zero rather than absent."""
-    b = dict.fromkeys(
+    bucket = dict.fromkeys(
         ("input_tokens", "output_tokens", "cache_read_tokens", "cache_creation_tokens"), 0
     )
-    b.update(tokens)
-    return b
+    bucket.update(tokens)
+    return bucket
 
 
 # --- TOKEN_FIELDS ---------------------------------------------------------
@@ -115,7 +116,7 @@ def test_dedupe_by_key_preserves_relative_order_of_distinct_keys():
         {"session_id": "b", "duration_seconds": 5},
     ]
     result = mr.dedupe_by_key(records, "session_id")
-    assert [r["session_id"] for r in result] == ["b", "a"]
+    assert [record["session_id"] for record in result] == ["b", "a"]
 
 
 def test_dedupe_sessions_dedupes_by_session_id():
@@ -168,7 +169,7 @@ def test_normalize_project_paths_collapses_a_lone_child_into_its_parent():
         {"project_path": "/Users/me/Programming/proj/hooks"},
     ]
     result = mr.normalize_project_paths(records)
-    assert [r["project_path"] for r in result] == [
+    assert [record["project_path"] for record in result] == [
         "/Users/me/Programming/proj",
         "/Users/me/Programming/proj",
     ]
@@ -183,7 +184,7 @@ def test_normalize_project_paths_collapses_at_the_two_child_boundary():
         {"project_path": "/Users/me/Programming/parent/b"},
     ]
     result = mr.normalize_project_paths(records)
-    assert [r["project_path"] for r in result] == [
+    assert [record["project_path"] for record in result] == [
         "/Users/me/Programming/parent",
         "/Users/me/Programming/parent",
         "/Users/me/Programming/parent",
@@ -201,10 +202,10 @@ def test_normalize_project_paths_does_not_collapse_a_container_with_many_childre
     # cutoff, so /Users/me/Programming is a real container, not a project
     # occasionally logged from a subdirectory - nothing collapses.
     records = [{"project_path": "/Users/me/Programming"}] + [
-        {"project_path": f"/Users/me/Programming/proj{i}"} for i in range(3)
+        {"project_path": f"/Users/me/Programming/proj{index}"} for index in range(3)
     ]
     result = mr.normalize_project_paths(records)
-    assert [r["project_path"] for r in result] == [
+    assert [record["project_path"] for record in result] == [
         "/Users/me/Programming",
         "/Users/me/Programming/proj0",
         "/Users/me/Programming/proj1",
@@ -225,7 +226,7 @@ def test_normalize_project_paths_excludes_worktree_paths_from_collapsing():
     # parent path never appeared in the dataset at all and so could never
     # have been a collapse target with or without the marker. With the
     # parent present, it has exactly one known child (feature-x), which
-    # is <= max_children_to_collapse - a genuine collapse candidate: if
+    # is <= maximum_children_to_collapse - a genuine collapse candidate: if
     # the marker didn't exclude worktree paths, feature-x would collapse
     # into it and both entries would read back as the bare
     # ".../worktrees" path. The marker keeps both untouched, preserving
@@ -237,7 +238,7 @@ def test_normalize_project_paths_excludes_worktree_paths_from_collapsing():
         {"project_path": "/Users/me/proj/.claude/worktrees/feature-x"},
     ]
     result = mr.normalize_project_paths(records)
-    assert [r["project_path"] for r in result] == [
+    assert [record["project_path"] for record in result] == [
         "/Users/me/proj",
         "/Users/me/proj/.claude/worktrees",
         "/Users/me/proj/.claude/worktrees/feature-x",
@@ -285,8 +286,8 @@ class _FrozenNow(datetime):
     fixed: "_FrozenNow"
 
     @classmethod
-    def now(cls, tz: tzinfo | None = None) -> "_FrozenNow":
-        return cls.fixed if tz is None else cls.fixed.astimezone(tz)
+    def now(frozen_class, timezone: tzinfo | None = None) -> "_FrozenNow":
+        return frozen_class.fixed if timezone is None else frozen_class.fixed.astimezone(timezone)
 
 
 _FrozenNow.fixed = _FrozenNow(2026, 8, 20, 12, 0, 0).astimezone()
@@ -438,7 +439,9 @@ def test_compute_model_totals_sums_to_the_same_number_record_token_total_does():
 
     by_model, unattributed = mr.compute_model_totals(records)
 
-    assert sum(by_model.values()) + unattributed == sum(mr.record_token_total(r) for r in records)
+    assert sum(by_model.values()) + unattributed == sum(
+        mr.record_token_total(record) for record in records
+    )
 
 
 def test_compute_model_totals_never_reports_a_negative_remainder():
@@ -492,8 +495,8 @@ def test_expand_turns_cumulative_snapshots_into_per_snapshot_deltas():
         },
     ]
     result = mr.expand_records_to_daily_deltas(raw)
-    assert [r["input_tokens"] for r in result] == [100, 150]
-    assert [r["output_tokens"] for r in result] == [10, 5]
+    assert [record["input_tokens"] for record in result] == [100, 150]
+    assert [record["output_tokens"] for record in result] == [10, 5]
 
 
 def test_expand_dates_each_delta_by_its_own_timestamp_end_not_the_session_start():
@@ -535,10 +538,11 @@ def test_expand_groups_by_agent_id_before_session_id_so_subagents_dont_contamina
         },
     ]
     result = mr.expand_records_to_daily_deltas(raw)
-    totals_by_agent = {r["agent_id"]: r["input_tokens"] for r in result}
+    totals_by_agent = {record["agent_id"]: record["input_tokens"] for record in result}
     assert totals_by_agent == {"ag1": 50, "ag2": 70}
     model_totals_by_agent = {
-        r["agent_id"]: r["tokens_by_model"]["model-x"]["input_tokens"] for r in result
+        record["agent_id"]: record["tokens_by_model"]["model-x"]["input_tokens"]
+        for record in result
     }
     assert model_totals_by_agent == {"ag1": 50, "ag2": 70}
 
@@ -549,7 +553,7 @@ def test_expand_sorts_out_of_order_snapshots_before_differencing():
         {"session_id": "s1", **snapshot(10, "first", input_tokens=100)},
     ]
     result = mr.expand_records_to_daily_deltas(raw)
-    assert [(r["timestamp_start"], r["input_tokens"]) for r in result] == [
+    assert [(record["timestamp_start"], record["input_tokens"]) for record in result] == [
         ("first", 100),
         ("second", 150),
     ]
@@ -590,11 +594,14 @@ def test_expand_differences_tokens_by_model_instead_of_copying_the_cumulative_ma
 
     result = mr.expand_records_to_daily_deltas(raw)
 
-    assert [r["tokens_by_model"]["model-alpha"]["input_tokens"] for r in result] == [100, 150]
+    assert [record["tokens_by_model"]["model-alpha"]["input_tokens"] for record in result] == [
+        100,
+        150,
+    ]
     # The reconciliation the four totals already satisfy, now for the map:
     # summing the deltas returns the session's final cumulative value.
-    assert sum(r["tokens_by_model"]["model-alpha"]["input_tokens"] for r in result) == 250
-    assert sum(r["input_tokens"] for r in result) == 250
+    assert sum(record["tokens_by_model"]["model-alpha"]["input_tokens"] for record in result) == 250
+    assert sum(record["input_tokens"] for record in result) == 250
 
 
 def test_expand_differences_a_model_that_first_appears_in_a_later_snapshot_against_zero():
@@ -625,9 +632,9 @@ def test_expand_differences_a_model_that_first_appears_in_a_later_snapshot_again
         "model-beta": _bucket(input_tokens=90),
     }
     for field in ("input_tokens", "output_tokens", "cache_read_tokens", "cache_creation_tokens"):
-        assert sum(b[field] for r in result for b in r["tokens_by_model"].values()) == sum(
-            r[field] for r in result
-        ), field
+        assert sum(
+            bucket[field] for record in result for bucket in record["tokens_by_model"].values()
+        ) == sum(record[field] for record in result), field
 
 
 def test_expand_attributes_the_whole_pre_deploy_session_to_the_first_snapshot_with_a_model_map():
@@ -748,6 +755,39 @@ def test_fold_mutates_the_input_records_in_place_not_a_copy():
     assert result[0] is sessions[0]
 
 
+def test_fold_carries_the_subagents_incomplete_usage_count_onto_the_session():
+    # The session's folded output includes its subagents' output, so it is a
+    # floor whenever any of theirs is.
+    sessions = [
+        {"session_id": "s1", "output_tokens": 1, "incomplete_usage_messages": 2},
+        {"session_id": "s2", "output_tokens": 1},
+        {"session_id": "s3", "output_tokens": 1},
+    ]
+    subagents = [
+        {"session_id": "s1", "output_tokens": 1, "incomplete_usage_messages": 3},
+        {"session_id": "s2", "output_tokens": 1, "incomplete_usage_messages": 4},
+        {"session_id": "s2", "output_tokens": 1},
+        {"session_id": "s3", "output_tokens": 1},
+    ]
+    mr.fold_subagent_tokens_into_sessions(sessions, subagents)
+    assert [mr.incomplete_usage_messages(session) for session in sessions] == [5, 4, 0]
+    # Absent stays absent: a session with nothing to flag gains no key.
+    assert "incomplete_usage_messages" not in sessions[2]
+
+
+@pytest.mark.parametrize("value", [None, 0, -1, "3", 2.5, True])
+def test_incomplete_usage_messages_reads_anything_but_a_positive_int_as_zero(value):
+    # The file is hand-editable and the key is absent on every older row.
+    # True is deliberately included: bool is an int subclass, so
+    # isinstance(True, int) is True and would let a hand-edited
+    # `"incomplete_usage_messages": true` sneak through as a truthy,
+    # non-int return value instead of being rejected like every other
+    # non-int.
+    assert mr.incomplete_usage_messages({"incomplete_usage_messages": value}) == 0
+    assert mr.incomplete_usage_messages({}) == 0
+    assert mr.incomplete_usage_messages({"incomplete_usage_messages": 7}) == 7
+
+
 # --- filter_sessions_by_window gap not covered by test_period_filters.py ---
 # test_period_filters.py exercises every overlap/window case for this
 # function, but never a record whose timestamp_start doesn't parse to a
@@ -785,7 +825,7 @@ def test_declared_root_collapses_any_depth_to_the_direct_child():
         _p("/home/me/code/blog-site/a/b/c/d", "b"),
     ]
     result = mr.normalize_project_paths(records, project_roots=["/home/me/code"])
-    assert [r["project_path"] for r in result] == [
+    assert [record["project_path"] for record in result] == [
         "/home/me/code/my-api",
         "/home/me/code/blog-site",
     ]
@@ -797,13 +837,19 @@ def test_declared_root_beats_the_fan_out_heuristic_that_would_swallow_a_project(
     # the exact 2026-07-21 failure its comment records.
     records = [_p("/home/me/code/my-api", "a"), _p("/home/me/code", "b")]
     result = mr.normalize_project_paths(records, project_roots=["/home/me/code"])
-    assert [r["project_path"] for r in result] == ["/home/me/code/my-api", "/home/me/code"]
+    assert [record["project_path"] for record in result] == [
+        "/home/me/code/my-api",
+        "/home/me/code",
+    ]
 
 
 def test_the_container_itself_is_not_turned_into_a_project():
     records = [_p("/home/me/code", "a"), _p("/home/me/code/", "b")]
     result = mr.normalize_project_paths(records, project_roots=["/home/me/code"])
-    assert [r["project_path"] for r in result] == ["/home/me/code", "/home/me/code/"]
+    assert [record["project_path"] for record in result] == [
+        "/home/me/code",
+        "/home/me/code/",
+    ]
 
 
 def test_a_declared_root_keeps_the_worktree_it_contains_distinguishable():
@@ -820,7 +866,10 @@ def test_a_declared_root_keeps_the_worktree_it_contains_distinguishable():
 def test_paths_outside_every_declared_root_still_go_through_the_heuristic():
     records = [_p("/elsewhere/proj/hooks", "a"), _p("/elsewhere/proj", "b")]
     result = mr.normalize_project_paths(records, project_roots=["/home/me/code"])
-    assert [r["project_path"] for r in result] == ["/elsewhere/proj", "/elsewhere/proj"]
+    assert [record["project_path"] for record in result] == [
+        "/elsewhere/proj",
+        "/elsewhere/proj",
+    ]
 
 
 def test_no_declared_roots_leaves_every_path_exactly_as_before():
@@ -914,7 +963,7 @@ def test_an_empty_or_non_string_project_root_is_ignored():
     records = [_r("/a/b/c", root=""), _r("/d/e/f", session_id="t")]
     records[1]["project_root"] = 7
     result = mr.normalize_project_paths(records)
-    assert [r["project_path"] for r in result] == ["/a/b/c", "/d/e/f"]
+    assert [record["project_path"] for record in result] == ["/a/b/c", "/d/e/f"]
 
 
 def test_the_project_root_is_taken_before_the_heuristic_sees_the_paths():
@@ -927,4 +976,8 @@ def test_the_project_root_is_taken_before_the_heuristic_sees_the_paths():
         _p("/x/proj/c/d", "s3"),
     ]
     result = mr.normalize_project_paths(records)
-    assert [r["project_path"] for r in result] == ["/x/proj", "/x/proj", "/x/proj/c/d"]
+    assert [record["project_path"] for record in result] == [
+        "/x/proj",
+        "/x/proj",
+        "/x/proj/c/d",
+    ]

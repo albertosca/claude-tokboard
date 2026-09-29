@@ -14,19 +14,19 @@ from pathlib import Path
 
 import pytest
 
-NODE_SKIP_ENV = "METRICS_SKIP_JS_TESTS"
+NODE_SKIP_ENVIRONMENT_VARIABLE = "METRICS_SKIP_JS_TESTS"
 
 _INSTALL_HINT = (
     "The rendering tests need Node and jsdom.\n"
     "  Install:  npm install\n"
     "  Skip explicitly (this is not free - nothing checks the rendering "
-    f"while it is set):  {NODE_SKIP_ENV}=1 pytest\n"
+    f"while it is set):  {NODE_SKIP_ENVIRONMENT_VARIABLE}=1 pytest\n"
 )
 
 
 def require_node_with_jsdom() -> str:
-    if os.environ.get(NODE_SKIP_ENV):
-        pytest.skip(f"{NODE_SKIP_ENV} is set - rendering is NOT being checked")
+    if os.environ.get(NODE_SKIP_ENVIRONMENT_VARIABLE):
+        pytest.skip(f"{NODE_SKIP_ENVIRONMENT_VARIABLE} is set - rendering is NOT being checked")
     node = shutil.which("node")
     if not node:
         pytest.fail(f"node not found on PATH.\n{_INSTALL_HINT}")

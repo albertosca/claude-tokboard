@@ -1,12 +1,12 @@
 """Tests for hooks/subagent-metrics-log.py.
 
-DANGER: this module's METRICS_DIR/METRICS_FILE constants resolve at import
-time to Alberto's real, irreplaceable metrics history
+DANGER: this module's METRICS_DIRECTORY/METRICS_FILE constants resolve at
+import time to Alberto's real, irreplaceable metrics history
 (~/.claude/metrics/subagents.jsonl), actively appended to by other running
 Claude sessions. monkeypatch.setenv("HOME", ...) does NOT redirect them,
 since they are already-resolved Path objects on the module object by the
 time any test runs. Every test in this file that can write MUST
-monkeypatch.setattr both METRICS_DIR and METRICS_FILE on the loaded
+monkeypatch.setattr both METRICS_DIRECTORY and METRICS_FILE on the loaded
 `script` module before calling anything that appends. Never point those
 constants at anything under ~/.claude/.
 
@@ -48,11 +48,11 @@ def script() -> types.ModuleType:
 def _isolate_metrics(
     monkeypatch: pytest.MonkeyPatch, script: types.ModuleType, tmp_path: Path
 ) -> Path:
-    """Redirect METRICS_DIR/METRICS_FILE to a throwaway location under
+    """Redirect METRICS_DIRECTORY/METRICS_FILE to a throwaway location under
     tmp_path. Must be called by every test that can reach append_record."""
-    metrics_dir = tmp_path / "metrics"
-    metrics_file = metrics_dir / "subagents.jsonl"
-    monkeypatch.setattr(script, "METRICS_DIR", metrics_dir)
+    metrics_directory = tmp_path / "metrics"
+    metrics_file = metrics_directory / "subagents.jsonl"
+    monkeypatch.setattr(script, "METRICS_DIRECTORY", metrics_directory)
     monkeypatch.setattr(script, "METRICS_FILE", metrics_file)
     return metrics_file
 
@@ -339,6 +339,7 @@ _PARSED_STUB = {
     "cache_read_tokens": 3,
     "cache_creation_tokens": 4,
     "tool_call_count": 6,
+    "incomplete_usage_messages": 0,
     "tokens_by_model": {
         "model-alpha": {
             "input_tokens": 1,
@@ -580,7 +581,7 @@ def test_module_guard_calls_main_and_exits_zero_when_run_as_a_script(tmp_path, m
     # hooks/subagent-metrics-log.py - it loads a second, independent copy
     # of it with __name__ pre-set to "__main__", which is a test
     # technique, not a production change. HOME is redirected to tmp_path
-    # BEFORE exec, because METRICS_DIR/METRICS_FILE are computed the
+    # BEFORE exec, because METRICS_DIRECTORY/METRICS_FILE are computed the
     # moment this fresh copy executes its top-level code - there is no
     # chance to monkeypatch.setattr them afterwards the way every other
     # test here does. The hook input carries no agent_transcript_path, so
@@ -632,3 +633,26 @@ def test_build_record_ignores_an_empty_project_root(script, monkeypatch):
     record = script.build_record({"agent_id": "a", "cwd": "/x"}, _PARSED_STUB)
 
     assert "project_root" not in record
+
+
+def test_build_record_records_incomplete_usage_messages_only_when_there_are_some(script):
+    # Absent means zero, as in the session hook.
+    flagged = dict(_PARSED_STUB, incomplete_usage_messages=2)
+
+    assert script.build_record({"agent_id": "a1"}, flagged)["incomplete_usage_messages"] == 2
+    assert "incomplete_usage_messages" not in script.build_record({"agent_id": "a1"}, _PARSED_STUB)
+
+
+def test_parse_transcript_counts_unfinalised_subagent_messages(script, tmp_path):
+    # The shape Claude Code 2.1.278+ leaves in subagent transcripts: a
+    # streamed message with a 1-4 token placeholder and no final entry.
+    path = tmp_path / "agent.jsonl"
+    entries = [
+        {"id": "m1", "stop_reason": None, "usage": {"output_tokens": 2}},
+        {"id": "m2", "stop_reason": "end_turn", "usage": {"output_tokens": 80}},
+    ]
+    path.write_text(
+        "".join(json.dumps({"type": "assistant", "message": entry}) + "\n" for entry in entries)
+    )
+
+    assert script.parse_transcript(str(path))["incomplete_usage_messages"] == 1

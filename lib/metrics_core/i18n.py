@@ -53,6 +53,17 @@ MESSAGES: dict[str, dict[str, str]] = {
     },
     # The detail panel's close button - also missed by the plan's table.
     "detail.close": {"en": "Close", "pt": "Fechar"},
+    # Why an output figure carries a "≥": the hooks' incomplete_usage_messages
+    # (transcript_ingest.count_incomplete). "output" stays untranslated, as in
+    # the composition legend it points at.
+    "floor_note.one": {
+        "en": "Claude Code didn't record the final usage of {n} message; output is a minimum",
+        "pt": "O Claude Code não registrou o uso final de {n} mensagem; o output é um mínimo",
+    },
+    "floor_note.other": {
+        "en": "Claude Code didn't record the final usage of {n} messages; output is a minimum",
+        "pt": "O Claude Code não registrou o uso final de {n} mensagens; o output é um mínimo",
+    },
     # Charts.
     "chart_title.pane": {"en": "Tokens per day (by project)", "pt": "Tokens por dia (por projeto)"},
     "chart_title.tokens": {
@@ -65,6 +76,34 @@ MESSAGES: dict[str, dict[str, str]] = {
     "mode.tokens": {"en": "By token type", "pt": "Por tipo de token"},
     "mode.model": {"en": "By model", "pt": "Por modelo"},
     "partial": {"en": " (partial, {pct}%)", "pt": " (parcial, {pct}%)"},
+    # The TUI chart's in-progress marker, one per granularity, printed on a
+    # line of its own under the x axis (see TrendChart._draw_chart for why
+    # not on the last tick). The short form is what a narrow chart gets.
+    "partial_bar.minute": {
+        "en": "last bar: {pct}% of the minute so far",
+        "pt": "última barra: {pct}% do minuto até agora",
+    },
+    "partial_bar.hour": {
+        "en": "last bar: {pct}% of the hour so far",
+        "pt": "última barra: {pct}% da hora até agora",
+    },
+    "partial_bar.day": {
+        "en": "last bar: {pct}% of the day so far",
+        "pt": "última barra: {pct}% do dia até agora",
+    },
+    "partial_bar.week": {
+        "en": "last bar: {pct}% of the week so far",
+        "pt": "última barra: {pct}% da semana até agora",
+    },
+    "partial_bar.month": {
+        "en": "last bar: {pct}% of the month so far",
+        "pt": "última barra: {pct}% do mês até agora",
+    },
+    "partial_bar.year": {
+        "en": "last bar: {pct}% of the year so far",
+        "pt": "última barra: {pct}% do ano até agora",
+    },
+    "partial_bar.short": {"en": "last bar: {pct}%", "pt": "última barra: {pct}%"},
     # Tabs and periods.
     "tab.sessions": {"en": "Sessions", "pt": "Sessões"},
     "tab.panorama": {"en": "Overview", "pt": "Panorama"},
@@ -140,8 +179,13 @@ def t(key: str, lang: str, **values: Any) -> str:
 
 
 def tn(key: str, count: int, lang: str, **values: Any) -> str:
+    """`count` always chooses singular/plural; the `{n}` placeholder shows
+    `count` itself unless the caller passes its own `n` (e.g. a count large
+    enough to need format_tokens's k/M/B/T formatting - this module cannot
+    format it here, since format.py imports FROM i18n)."""
     form = "one" if count == 1 else "other"
-    return t(f"{key}.{form}", lang, n=count, **values)
+    values.setdefault("n", count)
+    return t(f"{key}.{form}", lang, **values)
 
 
 # POSIX order: the first non-empty one wins, and an empty one counts as unset.

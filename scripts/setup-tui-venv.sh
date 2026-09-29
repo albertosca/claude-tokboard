@@ -34,10 +34,10 @@ python_major_minor() {
 }
 
 python_is_new_enough() {
-  local mm major minor
-  mm="$(python_major_minor "$1")" || return 1
-  major="${mm%% *}"
-  minor="${mm#* }"
+  local major_minor major minor
+  major_minor="$(python_major_minor "$1")" || return 1
+  major="${major_minor%% *}"
+  minor="${major_minor#* }"
   if [ "$major" -gt "$MIN_PY_MAJOR" ]; then
     return 0
   fi

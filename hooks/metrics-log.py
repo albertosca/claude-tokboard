@@ -14,8 +14,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 from metrics_core import append_record as _append_record
 from metrics_core import parse_transcript
 
-METRICS_DIR = Path("~/.claude/metrics").expanduser()
-METRICS_FILE = METRICS_DIR / "sessions.jsonl"
+METRICS_DIRECTORY = Path("~/.claude/metrics").expanduser()
+METRICS_FILE = METRICS_DIRECTORY / "sessions.jsonl"
 
 
 def get_tmux_window() -> str | None:
@@ -34,25 +34,25 @@ def get_tmux_window() -> str | None:
         return None
 
 
-def get_internal_name(session_id: str | None, sessions_dir: Path | None = None) -> str | None:
+def get_internal_name(session_id: str | None, sessions_directory: Path | None = None) -> str | None:
     if not session_id:
         return None
-    if sessions_dir is None:
-        sessions_dir = Path("~/.claude/sessions").expanduser()
-    candidates = [sessions_dir / f"{os.getppid()}.json"]
+    if sessions_directory is None:
+        sessions_directory = Path("~/.claude/sessions").expanduser()
+    candidates = [sessions_directory / f"{os.getppid()}.json"]
     with contextlib.suppress(Exception):
         # Path.glob (unlike glob.glob) also matches dot-prefixed entries; safe
         # here because Claude Code's own naming scheme never produces a
         # leading dot.
-        candidates += list(sessions_dir.glob("*.json"))
+        candidates += list(sessions_directory.glob("*.json"))
     seen: set[Path] = set()
     for path in candidates:
         if path in seen or not path.exists():
             continue
         seen.add(path)
         try:
-            with path.open() as f:
-                data = json.load(f)
+            with path.open() as session_file:
+                data = json.load(session_file)
         except Exception:
             continue
         if data.get("sessionId") == session_id and data.get("nameSource") is None:
@@ -97,6 +97,10 @@ def build_record(hook_input: dict[str, Any], parsed: dict[str, Any]) -> dict[str
         "internal_name": get_internal_name(session_id),
         "transcript_path": hook_input.get("transcript_path"),
     }
+    # Only when there are some: absent means zero, as for every row
+    # written before the key existed, and most rows have none.
+    if parsed["incomplete_usage_messages"]:
+        record["incomplete_usage_messages"] = parsed["incomplete_usage_messages"]
     # Added, never set to None: the whole historical corpus has no such
     # key, so "absent" already has to mean "unknown" - a null would be a
     # second spelling of the same thing for every reader to handle.

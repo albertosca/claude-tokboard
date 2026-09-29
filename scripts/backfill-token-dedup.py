@@ -63,10 +63,27 @@ Safety
 
 Limits
 ------
-- only the four token fields (and tokens_by_model) are rewritten:
-  tool_call_count on historical rows stays as recorded, first-entry
-  undercount included (the hook counts distinct tool_use blocks since
-  2026-09-23).
+- a token run rewrites only the four token fields (and tokens_by_model).
+  Two other fields have their own passes, run only when named with --fields
+  and never implied by a token run:
+
+  --fields tool_calls        rebuilds tool_call_count by the current rule
+                             (distinct tool_use block ids, as of each row's
+                             timestamp_end). Every hook before 2026-09-23
+                             undercounted it; a row is rewritten only when
+                             it exactly matches the every-entry or the
+                             first-entry count, and may only fall or rise
+                             accordingly.
+  --fields incomplete_usage  adds incomplete_usage_messages (see
+                             transcript_ingest.count_incomplete) to rows
+                             written before the hooks recorded it, only
+                             where it is positive, and only for units whose
+                             every row's tokens the transcript reproduces.
+
+  Both use the same backup, atomic write, live-append carry-over and
+  field-by-field verification as the token run - nothing but the named
+  field may change - and record their own entry under "fields" in the
+  state file, leaving the token entries the dashboards read alone.
 
 subagents.jsonl
 ---------------
@@ -104,29 +121,40 @@ from metrics_core.backfill import (
     BACKFILL_STATE_FILE,
     DEFAULT_CUTOFF,
     FIRST,
+    RAW,
     UNIT_ID_KEYS,
+    FieldPlan,
+    apply_field_plan,
     apply_plan,
     carry_late_appends,
     daily_totals,
     file_kind_problem,
     find_nonmonotonic_sessions,
+    find_subagent_transcripts,
     index_subagent_transcripts,
     index_transcripts,
     plan_corrections_by_formula,
+    plan_incomplete_usage,
+    plan_tool_call_corrections,
     sha256_bytes,
     sha256_of,
     subagent_transcripts,
     token_sum,
     verify_fields,
     write_backfill_state,
+    write_field_state,
 )
 from metrics_core.transcript_ingest import TOKEN_FIELDS
 
 METRICS_FILES = {
     kind: str(Path(f"~/.claude/metrics/{kind}.jsonl").expanduser()) for kind in UNIT_ID_KEYS
 }
-BACKUP_DIR = str(Path("~/.claude/metrics/backups").expanduser())
-PROJECTS_DIR = str(Path("~/.claude/projects").expanduser())
+BACKUP_DIRECTORY = str(Path("~/.claude/metrics/backups").expanduser())
+PROJECTS_DIRECTORY = str(Path("~/.claude/projects").expanduser())
+
+# --fields value -> the record key its pass writes.
+FIELD_KEYS = {"tool_calls": "tool_call_count", "incomplete_usage": "incomplete_usage_messages"}
+FORMULA_NAMES = {RAW: "every-entry", FIRST: "first-entry"}
 
 
 def print_daily_comparison(
@@ -137,11 +165,15 @@ def print_daily_comparison(
     print(f"\nPer-day token totals via expand_records_to_daily_deltas (last {days} days)")
     print(f"  {'day':<12}{'before':>18}{'after':>18}{'factor':>10}")
     for day in sorted(set(before_map) | set(after_map)):
-        b = before_map.get(day, 0)
-        a = after_map.get(day, 0)
-        factor = f"{b / a:.3f}x" if a else ("COLLAPSED" if b else "-")
-        print(f"  {day:<12}{b:>18,}{a:>18,}{factor:>10}")
-    collapsed = [d for d in before_map if before_map[d] > 0 and after_map.get(d, 0) == 0]
+        before_count = before_map.get(day, 0)
+        after_count = after_map.get(day, 0)
+        factor = (
+            f"{before_count / after_count:.3f}x"
+            if after_count
+            else ("COLLAPSED" if before_count else "-")
+        )
+        print(f"  {day:<12}{before_count:>18,}{after_count:>18,}{factor:>10}")
+    collapsed = [day for day in before_map if before_map[day] > 0 and after_map.get(day, 0) == 0]
     print(f"  days that collapsed to zero: {len(collapsed)} {collapsed if collapsed else ''}")
 
 
@@ -184,14 +216,14 @@ def print_summary(
     total_lines: int,
 ) -> None:
     print("\nRow disposition")
-    for reason, count in sorted(stats.items(), key=lambda kv: -kv[1]):
+    for reason, count in sorted(stats.items(), key=lambda item: -item[1]):
         print(f"  {count:>6}  {reason}")
     print(f"\nLines: {total_lines} read, {changed_lines} would change")
     if factors:
         factors = sorted(factors)
 
-        def pct(p: float) -> float:
-            return factors[min(len(factors) - 1, int(len(factors) * p))]
+        def pct(percentile: float) -> float:
+            return factors[min(len(factors) - 1, int(len(factors) * percentile))]
 
         print("Correction factor (stored / recomputed) over corrected rows:")
         print(
@@ -263,12 +295,12 @@ def write_atomically(
     temporary = Path(temporary_name)
     tail = b""
     try:
-        with os.fdopen(handle, "wb") as f:
+        with os.fdopen(handle, "wb") as temporary_handle:
             for line in new_lines:
-                f.write(line)
-                f.write(b"\n")
-            f.flush()
-            os.fsync(f.fileno())
+                temporary_handle.write(line)
+                temporary_handle.write(b"\n")
+            temporary_handle.flush()
+            os.fsync(temporary_handle.fileno())
 
         # Read through a handle that is kept open across the rename, so what
         # arrives on the old inode after this read can still be reached.
@@ -281,10 +313,10 @@ def write_atomically(
                 )
             tail = current[len(snapshot_prefix) :]
             if tail:
-                with temporary.open("ab") as f:
-                    f.write(tail)
-                    f.flush()
-                    os.fsync(f.fileno())
+                with temporary.open("ab") as tail_handle:
+                    tail_handle.write(tail)
+                    tail_handle.flush()
+                    os.fsync(tail_handle.fileno())
 
             temporary.chmod(mode)
             temporary.replace(target)
@@ -298,6 +330,154 @@ def write_atomically(
             temporary.unlink()
         raise
     return (len(tail.split(b"\n")) - 1 if tail else 0) + late
+
+
+def field_problems(
+    before: list[dict[str, Any]], after: list[dict[str, Any]], field: str, plan: FieldPlan
+) -> list[str]:
+    """Everything a field pass changed besides its own field's value, and any
+    tool_call_count that moved against the formula it was recognised as.
+
+    verify_fields lets token fields fall (the token run's direction), so the
+    four are compared for equality here: a field pass may not move them."""
+    key = FIELD_KEYS[field]
+    if field == "tool_calls":
+        problems = verify_fields(before, after, allow_changed_keys=frozenset({key}))
+    else:
+        problems = verify_fields(before, after, allow_new_keys=frozenset({key}))
+    for index, (old, new) in enumerate(zip(before, after, strict=True)):
+        for token_field in TOKEN_FIELDS:
+            if old.get(token_field) != new.get(token_field):
+                problems.append(
+                    f"line {index + 1}: {token_field} changed "
+                    f"{old.get(token_field)!r} -> {new.get(token_field)!r}"
+                )
+    for index, formula in plan.formulas.items():
+        old_count = before[index].get(key) or 0
+        new_count = after[index].get(key) or 0
+        name = FORMULA_NAMES[formula]
+        if formula == FIRST and new_count < old_count:
+            problems.append(
+                f"line {index + 1}: {key} fell {old_count} -> {new_count} but was "
+                f"recognised as the {name} count"
+            )
+        if formula == RAW and new_count > old_count:
+            problems.append(
+                f"line {index + 1}: {key} rose {old_count} -> {new_count} but was "
+                f"recognised as the {name} count"
+            )
+    return problems
+
+
+def back_up_and_write(
+    path: str,
+    snapshot: bytes,
+    line_count: int,
+    corrected: list[dict[str, Any]],
+    backup_directory: str,
+    record_state: Callable[[], None],
+) -> int:
+    """Back up the live file (verified by sha256), write `corrected` over it
+    atomically with live appends carried over, and check the line count.
+    `record_state` runs the moment the new file is in place (see main's
+    record_state for why then). Returns the exit code."""
+    metrics_path = Path(path)
+    backups_path = Path(backup_directory)
+    backups_path.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now().strftime("%Y-%m-%d-%H%M%S")
+    backup = backups_path / f"{metrics_path.name}.backfill-{stamp}.bak"
+    shutil.copy2(path, backup)
+    source_sha = sha256_of(path)
+    backup_sha = sha256_of(str(backup))
+    if source_sha != backup_sha:
+        # Can legitimately differ if a hook appended between the copy and the
+        # re-read; either way an unverified backup is not a backup.
+        print(
+            f"BACKUP VERIFICATION FAILED\n  source {source_sha}\n  backup {backup_sha}",
+            file=sys.stderr,
+        )
+        return 1
+    print(f"\nbackup verified: {backup}\n  sha256 {backup_sha}")
+
+    mode = stat.S_IMODE(metrics_path.stat().st_mode)
+    new_lines = [json.dumps(record).encode("utf-8") for record in corrected]
+    appended = write_atomically(path, snapshot, new_lines, mode, on_replaced=record_state)
+
+    written = metrics_path.read_bytes()
+    written_count = written.count(b"\n")
+    expected = line_count + appended
+    print(
+        f"wrote {path}: {written_count} lines "
+        f"({line_count} rewritten + {appended} appended while running)"
+    )
+    if written_count != expected:
+        print(f"LINE COUNT MISMATCH: expected {expected}, got {written_count}", file=sys.stderr)
+        return 1
+    print(f"  mode {oct(stat.S_IMODE(metrics_path.stat().st_mode))}")
+    print(f"  sha256 {sha256_bytes(written)}")
+    return 0
+
+
+def run_field_pass(
+    arguments: argparse.Namespace,
+    path: str,
+    snapshot: bytes,
+    records: list[dict[str, Any]],
+    transcripts: dict[str, str],
+    id_key: str,
+) -> int:
+    """One --fields pass: plan, report, verify, and (with --apply) write."""
+    field = arguments.fields
+    key = FIELD_KEYS[field]
+    planner = plan_tool_call_corrections if field == "tool_calls" else plan_incomplete_usage
+    plan = planner(records, transcripts, arguments.cutoff, id_key)
+    corrected = apply_field_plan(records, key, plan.values)
+
+    print("\nRow disposition")
+    for reason, count in sorted(plan.stats.items(), key=lambda item: -item[1]):
+        print(f"  {count:>6}  {reason}")
+    print(f"\nLines: {len(records)} read, {len(plan.values)} would change")
+    before_total = sum(record.get(key) or 0 for record in records)
+    after_total = sum(record.get(key) or 0 for record in corrected)
+    print(f"{key} total: before {before_total:,}  after {after_total:,}")
+
+    problems = field_problems(records, corrected, field, plan)
+    if problems:
+        print(f"\nFIELD VERIFICATION FAILED ({len(problems)} problems):", file=sys.stderr)
+        for problem in problems[:20]:
+            print(f"  {problem}", file=sys.stderr)
+        return 1
+    if field == "tool_calls":
+        rising = sum(1 for formula in plan.formulas.values() if formula == FIRST)
+        print(
+            f"\nfield-by-field verification: only {key} changed; "
+            f"{len(plan.formulas) - rising} every-entry row(s) only fell, "
+            f"{rising} first-entry row(s) only rose"
+        )
+    else:
+        print(f"\nfield-by-field verification: only {key} was added, nothing else changed")
+
+    if not arguments.apply:
+        print("\nDRY RUN - nothing written. Re-run with --apply to write.")
+        return 0
+    if not plan.values:
+        print("\nnothing to correct; leaving the file and the backfill state untouched")
+        return 0
+
+    def record_state() -> None:
+        write_field_state(
+            arguments.kind,
+            field,
+            arguments.cutoff,
+            datetime.now().isoformat(),
+            len(plan.values),
+            path=arguments.state_file,
+        )
+        print(f"  backfill state recorded: {arguments.state_file}")
+
+    return back_up_and_write(
+        path, snapshot, len(records), corrected, arguments.backup_dir, record_state
+    )
 
 
 def main() -> int:
@@ -318,8 +498,8 @@ def main() -> int:
         default=None,
         help="default: ~/.claude/metrics/<kind>.jsonl",
     )
-    parser.add_argument("--projects-dir", default=PROJECTS_DIR)
-    parser.add_argument("--backup-dir", default=BACKUP_DIR)
+    parser.add_argument("--projects-dir", default=PROJECTS_DIRECTORY)
+    parser.add_argument("--backup-dir", default=BACKUP_DIRECTORY)
     parser.add_argument(
         "--state-file",
         default=BACKFILL_STATE_FILE,
@@ -338,12 +518,22 @@ def main() -> int:
         help="how many days of the per-day comparison table to print",
     )
     parser.add_argument(
+        "--fields",
+        choices=["tokens", *FIELD_KEYS],
+        default="tokens",
+        help=(
+            "what to recompute: the four token fields (default), tool_call_count "
+            "(tool_calls), or incomplete_usage_messages (incomplete_usage). Each is its "
+            "own run; a token run never touches the other two"
+        ),
+    )
+    parser.add_argument(
         "--apply", action="store_true", help="write the result; without it this is a dry run"
     )
-    args = parser.parse_args()
+    arguments = parser.parse_args()
 
-    id_key = UNIT_ID_KEYS[args.kind]
-    path = args.metrics_file or METRICS_FILES[args.kind]
+    id_key = UNIT_ID_KEYS[arguments.kind]
+    path = arguments.metrics_file or METRICS_FILES[arguments.kind]
     metrics_path = Path(path)
     if not metrics_path.exists():
         print(f"no metrics file at {path}", file=sys.stderr)
@@ -366,33 +556,39 @@ def main() -> int:
             print(f"line {number} is not valid JSON, aborting: {error}", file=sys.stderr)
             return 1
 
-    kind_problem = file_kind_problem(records, args.kind)
+    kind_problem = file_kind_problem(records, arguments.kind)
     if kind_problem:
-        print(f"refusing: --kind {args.kind}, but {kind_problem}", file=sys.stderr)
+        print(f"refusing: --kind {arguments.kind}, but {kind_problem}", file=sys.stderr)
         return 1
 
-    if args.kind == "subagents":
-        index, ambiguous = index_subagent_transcripts(args.projects_dir)
-        print(f"indexed {len(index)} subagent transcripts under {args.projects_dir}")
+    if arguments.kind == "subagents":
+        found = find_subagent_transcripts(arguments.projects_dir)
+        index, ambiguous = index_subagent_transcripts(arguments.projects_dir, found)
+        print(f"indexed {len(index)} subagent transcripts under {arguments.projects_dir}")
         if ambiguous:
             print(
-                f"  {len(ambiguous)} id(s) found under more than one project slug and "
-                f"left unindexed: {ambiguous[:5]}"
+                f"  {len(ambiguous)} id(s) found under more than one project slug with "
+                f"differing copies, left unindexed (a row may still pick its copy by "
+                f"its parent session): {ambiguous[:5]}"
             )
-        transcripts = subagent_transcripts(records, index)
+        candidates = {agent_id: found[agent_id] for agent_id in ambiguous}
+        transcripts = subagent_transcripts(records, index, candidates)
     else:
-        transcripts = index_transcripts(args.projects_dir)
-        print(f"indexed {len(transcripts)} session transcripts under {args.projects_dir}")
+        transcripts = index_transcripts(arguments.projects_dir)
+        print(f"indexed {len(transcripts)} session transcripts under {arguments.projects_dir}")
 
-    result = plan_corrections_by_formula(records, transcripts, args.cutoff, id_key)
+    if arguments.fields != "tokens":
+        return run_field_pass(arguments, path, snapshot, records, transcripts, id_key)
+
+    result = plan_corrections_by_formula(records, transcripts, arguments.cutoff, id_key)
     plan, stats, factors = result.values, result.stats, result.factors
     corrected = apply_plan(records, plan, result.model_maps)
 
-    before_total = sum(token_sum(r) for r in records)
-    after_total = sum(token_sum(r) for r in corrected)
+    before_total = sum(token_sum(record) for record in records)
+    after_total = sum(token_sum(record) for record in corrected)
     print_summary(stats, factors, before_total, after_total, len(plan), len(raw_lines))
     print_field_deltas(records, corrected)
-    print_daily_comparison(records, corrected, args.daily_days)
+    print_daily_comparison(records, corrected, arguments.daily_days)
 
     # Each corrected row may move in ONE direction, fixed by the formula it
     # was recognised as: a raw sum only down, a first-occurrence sum only
@@ -430,7 +626,7 @@ def main() -> int:
         print(f"MONOTONICITY REGRESSION in {sorted(introduced)[:5]}", file=sys.stderr)
         return 1
 
-    if not args.apply:
+    if not arguments.apply:
         print("\nDRY RUN - nothing written. Re-run with --apply to write.")
         return 0
 
@@ -441,22 +637,6 @@ def main() -> int:
         # but zeros that would erase it.
         print("\nnothing to correct; leaving the file and the backfill state untouched")
         return 0
-    backup_dir = Path(args.backup_dir)
-    backup_dir.mkdir(parents=True, exist_ok=True)
-    stamp = datetime.now().strftime("%Y-%m-%d-%H%M%S")
-    backup = backup_dir / f"{metrics_path.name}.backfill-{stamp}.bak"
-    shutil.copy2(path, backup)
-    source_sha = sha256_of(path)
-    backup_sha = sha256_of(str(backup))
-    if source_sha != backup_sha:
-        # Can legitimately differ if a hook appended between the copy and the
-        # re-read; either way an unverified backup is not a backup.
-        print(
-            f"BACKUP VERIFICATION FAILED\n  source {source_sha}\n  backup {backup_sha}",
-            file=sys.stderr,
-        )
-        return 1
-    print(f"\nbackup verified: {backup}\n  sha256 {backup_sha}")
 
     def record_state() -> None:
         # The earliest timestamp_end actually corrected, and the count of
@@ -469,33 +649,19 @@ def main() -> int:
         # finds every row corrected and has nothing to write.
         earliest_corrected = min((records[index]["timestamp_end"] for index in plan), default=None)
         write_backfill_state(
-            args.cutoff,
+            arguments.cutoff,
             datetime.now().isoformat(),
             len(plan),
             uncorrectable_rows=stats.get("untouched: no transcript on disk", 0),
             earliest_corrected=earliest_corrected,
-            path=args.state_file,
-            kind=args.kind,
+            path=arguments.state_file,
+            kind=arguments.kind,
         )
-        print(f"  backfill state recorded: {args.state_file}")
+        print(f"  backfill state recorded: {arguments.state_file}")
 
-    mode = stat.S_IMODE(metrics_path.stat().st_mode)
-    new_lines = [json.dumps(record).encode("utf-8") for record in corrected]
-    appended = write_atomically(path, snapshot, new_lines, mode, on_replaced=record_state)
-
-    written = metrics_path.read_bytes()
-    written_count = written.count(b"\n")
-    expected = len(raw_lines) + appended
-    print(
-        f"wrote {path}: {written_count} lines "
-        f"({len(raw_lines)} rewritten + {appended} appended while running)"
+    return back_up_and_write(
+        path, snapshot, len(raw_lines), corrected, arguments.backup_dir, record_state
     )
-    if written_count != expected:
-        print(f"LINE COUNT MISMATCH: expected {expected}, got {written_count}", file=sys.stderr)
-        return 1
-    print(f"  mode {oct(stat.S_IMODE(metrics_path.stat().st_mode))}")
-    print(f"  sha256 {sha256_bytes(written)}")
-    return 0
 
 
 if __name__ == "__main__":
