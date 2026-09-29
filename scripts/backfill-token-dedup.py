@@ -750,7 +750,11 @@ def main() -> int:
     recovery_command = " ".join(
         shlex.quote(word)
         for word in (
-            *script_invocation(str(Path(__file__).parent / "backfill-tokens-by-model.py")),
+            # resolve(): run through a link kept elsewhere, the by-model
+            # script sits beside the file the link points to, not the link.
+            *script_invocation(
+                str(Path(__file__).resolve().parent / "backfill-tokens-by-model.py")
+            ),
             "--file",
             arguments.kind,
             "--metrics-file",

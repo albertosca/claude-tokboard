@@ -1338,6 +1338,41 @@ def test_a_token_pass_whose_state_write_fails_names_the_recovery(
     assert not (metrics.parent / "backfill_state.json").exists()
 
 
+def test_the_recovery_names_the_real_by_model_script_when_run_through_a_link(
+    tmp_path, monkeypatch, capsys
+):
+    # Run through a file-level symlink kept elsewhere, the dedup script's
+    # own directory holds no by-model script: the hint must name the one
+    # beside the file the link points to.
+    link = tmp_path / "bin dir" / "token-dedup.py"
+    link.parent.mkdir()
+    link.symlink_to(SCRIPT_PATH)
+    spec = importlib.util.spec_from_file_location("dedup_through_a_link", link)
+    assert spec is not None
+    assert spec.loader is not None
+    linked = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(linked)
+    assert linked.__file__ == str(link)
+
+    paths = _streamed_fixture(tmp_path)
+
+    def fail(*arguments: Any, **keywords: Any) -> None:
+        raise OSError("disk full")
+
+    monkeypatch.setattr(linked, "write_backfill_state", fail)
+    monkeypatch.setattr("sys.argv", _subagents_argv(paths, "--apply"))
+    directory = enter_working_directory("elsewhere", tmp_path, monkeypatch)
+
+    assert linked.main() == 0
+
+    warning = capsys.readouterr().err
+    marker = "the backup this run took: "
+    words = shlex.split(warning[warning.index(marker) + len(marker) :].splitlines()[0])
+    assert names_script(words[1], SCRIPT_PATH.parent / "backfill-tokens-by-model.py", directory)
+    recording = run_as_pasted(words, tmp_path, directory)
+    assert recording.returncode == 0, recording.stderr
+
+
 # ---------------------------------------------------------------------------
 # A dedup run on a copy keeps its backup and its state beside the copy. The
 # defaults used to be the real ~/.claude/metrics/backups and

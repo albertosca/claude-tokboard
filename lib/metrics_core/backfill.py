@@ -1431,11 +1431,20 @@ def script_invocation(script_path: str) -> tuple[str, str]:
     absolute path. The scripts are not executable, so a bare name would
     not run. Computed at call time, never at import, since the working
     directory is the one the command will be pasted into; callers
-    shell-quote both words with the rest of the command."""
-    absolute = str(Path(script_path).absolute())
+    shell-quote both words with the rest of the command.
+
+    Never raises over the working directory: the dedup pass prints its
+    recovery hint after the metrics file was replaced, and a directory
+    removed mid-run must not turn that hint into a traceback. Without
+    one, an absolute path is printed as it is, and a relative one as
+    given - there is nothing to resolve it against."""
+    try:
+        absolute = str(Path(script_path).absolute())
+    except OSError:
+        return ("python3", script_path)
     try:
         shown = os.path.relpath(absolute)
-    except ValueError:
+    except (OSError, ValueError):
         shown = absolute
     return ("python3", shown)
 

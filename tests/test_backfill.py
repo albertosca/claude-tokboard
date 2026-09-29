@@ -1931,3 +1931,86 @@ def test_script_invocation_falls_back_to_the_absolute_path(tmp_path, monkeypatch
 
     monkeypatch.setattr(os.path, "relpath", impossible)
     assert mr.script_invocation(str(script)) == ("python3", str(script))
+
+
+def test_script_invocation_survives_a_working_directory_that_was_removed(tmp_path, monkeypatch):
+    # The dedup recovery hint is printed after the metrics file was
+    # replaced; a working directory deleted mid-run must not turn it into
+    # a traceback. relpath needs the cwd, so the absolute path stands in.
+    script = _a_script(tmp_path)
+    doomed = tmp_path / "removed while running"
+    doomed.mkdir()
+    monkeypatch.chdir(doomed)
+    doomed.rmdir()
+    assert mr.script_invocation(str(script)) == ("python3", str(script))
+
+
+def test_script_invocation_of_a_relative_path_without_a_working_directory(monkeypatch):
+    # With no cwd there is nothing to resolve a relative path against, so
+    # it is printed as given.
+    def gone() -> str:
+        raise FileNotFoundError("the working directory was removed")
+
+    monkeypatch.setattr(os, "getcwd", gone)
+    relative = str(Path("scripts") / "some-script.py")
+    assert mr.script_invocation(relative) == ("python3", relative)
+
+
+def test_the_notice_is_silent_on_a_full_valid_state(tmp_path):
+    # Every block a real state file has carried, with synthetic values:
+    # the flat sessions keys (old count-only and current named), the
+    # subagents entry, field entries with and without names, and the
+    # rebuilt-maps entry. None of it may read as unreadable.
+    state = {
+        "cutoff": "2026-08-21",
+        "applied_at": "2026-09-01T10:00:00",
+        "corrected_rows": 5,
+        "rows_changed_this_run": 2,
+        "corrected_row_ids": ["row-a", "row-b"],
+        "unidentified_earlier_rows": 3,
+        "uncorrectable_rows": 4,
+        "earliest_corrected": "2026-07-01T09:00:00",
+        "subagents": {
+            "cutoff": "2026-08-21",
+            "applied_at": "2026-09-02T10:00:00",
+            "corrected_rows": 1,
+            "rows_changed_this_run": 1,
+            "corrected_row_ids": ["agent-row-a"],
+            "uncorrectable_rows": 0,
+            "earliest_corrected": None,
+        },
+        "fields": {
+            "sessions.tool_calls": {
+                "cutoff": "2026-08-21",
+                "applied_at": "2026-09-03T10:00:00",
+                "corrected_rows": 7,
+                "rows_changed_this_run": 1,
+                "corrected_row_ids": ["row-c"],
+                "unidentified_earlier_rows": 6,
+            },
+            "sessions.incomplete_usage": {
+                "cutoff": "2026-08-21",
+                "applied_at": "2026-09-04T10:00:00",
+                "corrected_rows": 2,
+            },
+            "sessions.tokens_by_model": {
+                "cutoff": None,
+                "applied_at": "2026-09-05T10:00:00",
+                "corrected_rows": 1,
+                "rows_changed_this_run": 1,
+                "corrected_row_ids": ["row-d"],
+            },
+            "subagents.tokens_by_model_rebuilt": {
+                "cutoff": "2026-08-21",
+                "applied_at": "2026-09-06T10:00:00",
+                "corrected_rows": 1,
+                "rows_changed_this_run": 1,
+                "corrected_row_ids": ["agent-row-b"],
+            },
+        },
+    }
+    path = tmp_path / "state.json"
+    path.write_text(json.dumps(state))
+    for apply in (True, False):
+        assert mr.unreadable_state_notice(str(path), apply=apply, dry_run_effect="x") is None
+    assert mr.read_state_for_update(str(path)) == state
