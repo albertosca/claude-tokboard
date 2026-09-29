@@ -382,6 +382,27 @@ def field_problems(
     return problems
 
 
+def record_without_raising(record_state: Callable[[], None]) -> None:
+    """Run `record_state`, turning any failure into a warning.
+
+    It runs the moment the rewritten file is in place, and
+    write_atomically carries over the lines a live hook appended in that
+    instant only AFTER it returns. A raise here would skip that carry-over
+    and report a finished rewrite as a traceback. The file is right either
+    way; only the record of the run would be missing, so that is what the
+    warning says.
+    """
+    try:
+        record_state()
+    except Exception as problem:
+        print(
+            "WARNING: the metrics file was rewritten, but the backfill state could not be "
+            f"recorded ({type(problem).__name__}: {problem}). The data is correct; the "
+            "state file does not know about this run.",
+            file=sys.stderr,
+        )
+
+
 def back_up_and_write(
     path: str,
     snapshot: bytes,
@@ -414,7 +435,9 @@ def back_up_and_write(
 
     mode = stat.S_IMODE(metrics_path.stat().st_mode)
     new_lines = [json.dumps(record).encode("utf-8") for record in corrected]
-    appended = write_atomically(path, snapshot, new_lines, mode, on_replaced=record_state)
+    appended = write_atomically(
+        path, snapshot, new_lines, mode, on_replaced=lambda: record_without_raising(record_state)
+    )
 
     written = metrics_path.read_bytes()
     written_count = written.count(b"\n")

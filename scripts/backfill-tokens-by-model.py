@@ -1129,14 +1129,25 @@ def main() -> int:
         print("\nnothing to write; leaving the file untouched")
         return 0
     apply_backfill(str(path), plan, records, arguments.backup_dir)
-    write_field_state(
-        arguments.file,
-        FIELD,
-        None,
-        datetime.now().isoformat(),
-        row_identities(records, sorted(plan), id_key),
-        path=state_path,
-    )
+    # The file is rewritten by now: a failure to record the run must not
+    # turn it into a traceback and a non-zero exit.
+    try:
+        write_field_state(
+            arguments.file,
+            FIELD,
+            None,
+            datetime.now().isoformat(),
+            row_identities(records, sorted(plan), id_key),
+            path=state_path,
+        )
+    except Exception as problem:
+        print(
+            "WARNING: the metrics file was rewritten, but the backfill state could not be "
+            f"recorded ({type(problem).__name__}: {problem}). The next dry run will count "
+            f"these {len(plan)} row(s) as native until they are recorded.",
+            file=sys.stderr,
+        )
+        return 0
     print(f"  backfill state recorded: {state_path}")
     return 0
 

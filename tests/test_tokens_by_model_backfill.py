@@ -1892,3 +1892,24 @@ def test_record_earlier_applies_refuses_a_backup_that_is_not_a_prefix_of_the_fil
     assert script.main() == 1
     assert "is not a prefix" in capsys.readouterr().err
     assert not _state_path(tmp_path).exists()
+
+
+def test_a_state_write_that_fails_after_the_apply_warns_instead_of_raising(
+    script, tmp_path, monkeypatch, capsys
+):
+    # The metrics file is already rewritten by then: a raise would turn a
+    # finished apply into a traceback and a non-zero exit.
+    _one_writable_session(tmp_path)
+
+    def fail(*arguments: Any, **keywords: Any) -> None:
+        raise OSError("disk full")
+
+    monkeypatch.setattr(script, "write_field_state", fail)
+    _applying_argv(monkeypatch, tmp_path, "--apply", "--expect-checked", "1")
+
+    assert script.main() == 0
+
+    assert not _refused_to_write(tmp_path)
+    warning = capsys.readouterr().err
+    assert "the backfill state could not be recorded" in warning
+    assert "disk full" in warning

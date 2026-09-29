@@ -1146,25 +1146,48 @@ def cumulative_rows(previous: Any, identities: list[str]) -> dict[str, Any]:
     a row corrected by two runs twice: the tool_calls pass re-corrected 2
     session rows its 2026-09-28 run had written, and the state said 2034
     rows where 2032 distinct ones had changed. An old entry that reported
-    no rows (0 or no count) leaves nothing unidentified.
+    no rows (0 or no count, or a null one) leaves nothing unidentified.
+
+    Never raises on what an earlier entry holds: the callers write the
+    state AFTER the metrics file was replaced, and a hand-edited state
+    once turned a successful apply into a TypeError there. An earlier
+    count that is not a non-negative integer is UNKNOWN, and so are both
+    `corrected_rows` and `unidentified_earlier_rows` (null) from then on
+    - the same "unknown for good" rule `earliest_corrected` follows. An
+    earlier name that is not a string names no row: it is carried as one
+    unidentified row. Every usable name is kept.
     """
     names = set(identities)
-    unidentified = 0
+    unidentified: int | None = 0
     if isinstance(previous, dict):
         earlier = previous.get("corrected_row_ids")
         if isinstance(earlier, list):
-            names.update(earlier)
-            unidentified = previous.get("unidentified_earlier_rows") or 0
+            names.update(name for name in earlier if isinstance(name, str))
+            unnamed = sum(1 for name in earlier if not isinstance(name, str))
+            carried = (
+                _usable_count(previous["unidentified_earlier_rows"])
+                if "unidentified_earlier_rows" in previous
+                else 0
+            )
+            unidentified = None if carried is None else carried + unnamed
         else:
-            unidentified = previous.get("corrected_rows") or 0
+            count = previous.get("corrected_rows")
+            unidentified = 0 if count is None else _usable_count(count)
     entry: dict[str, Any] = {
-        "corrected_rows": unidentified + len(names),
+        "corrected_rows": None if unidentified is None else unidentified + len(names),
         "rows_changed_this_run": len(identities),
         "corrected_row_ids": sorted(names),
     }
-    if unidentified:
+    if unidentified != 0:
         entry["unidentified_earlier_rows"] = unidentified
     return entry
+
+
+def _usable_count(value: Any) -> int | None:
+    """`value` as a row count, or None when it cannot be one."""
+    if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+        return value
+    return None
 
 
 def write_field_state(

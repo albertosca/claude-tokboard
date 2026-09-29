@@ -468,6 +468,101 @@ def test_write_field_state_replaces_a_fields_entry_that_is_not_a_dict(tmp_path):
     }
 
 
+# --- a hand-edited state never breaks a write ---------------------------------
+# write_field_state runs AFTER the metrics file was replaced, so a state it
+# cannot read must not raise: that turned a successful apply into a
+# traceback. Values it cannot use are recorded as unknown (null) and the
+# rest is kept.
+
+
+@pytest.mark.parametrize("count", ["2034", 3.5, True, -1, [1]], ids=repr)
+def test_write_field_state_records_an_unusable_old_count_as_unknown(tmp_path, count):
+    path = tmp_path / "state.json"
+    other = {"cutoff": "c", "applied_at": "t0", "corrected_rows": 9}
+    path.write_text(
+        json.dumps(
+            {
+                "fields": {
+                    "sessions.tool_calls": {
+                        "cutoff": "c",
+                        "applied_at": "t0",
+                        "corrected_rows": count,
+                    },
+                    "subagents.tool_calls": other,
+                }
+            }
+        )
+    )
+    identities = mr.row_identities(identified_rows("e1"), [0], "session_id")
+
+    state = mr.write_field_state("sessions", "tool_calls", "c", "t", identities, path=str(path))
+
+    entry = state["fields"]["sessions.tool_calls"]
+    assert entry["corrected_rows"] is None
+    assert entry["unidentified_earlier_rows"] is None
+    assert entry["rows_changed_this_run"] == 1
+    assert entry["corrected_row_ids"] == identities
+    assert state["fields"]["subagents.tool_calls"] == other
+
+
+def test_write_field_state_keeps_the_usable_names_of_a_mixed_list(tmp_path):
+    path = tmp_path / "state.json"
+    path.write_text(
+        json.dumps(
+            {
+                "fields": {
+                    "sessions.tool_calls": {
+                        "corrected_rows": 3,
+                        "corrected_row_ids": [1, "abc", None],
+                    }
+                }
+            }
+        )
+    )
+
+    state = mr.write_field_state("sessions", "tool_calls", "c", "t", ["def"], path=str(path))
+
+    entry = state["fields"]["sessions.tool_calls"]
+    # The two entries that are not names are rows nobody can name: they
+    # are carried as unidentified, like an old-shape count.
+    assert entry["corrected_row_ids"] == ["abc", "def"]
+    assert entry["unidentified_earlier_rows"] == 2
+    assert entry["corrected_rows"] == 4
+
+
+@pytest.mark.parametrize("carried", [None, "x", -3], ids=repr)
+def test_an_unknown_count_stays_unknown_on_later_runs(tmp_path, carried):
+    path = tmp_path / "state.json"
+    path.write_text(
+        json.dumps(
+            {
+                "fields": {
+                    "sessions.tool_calls": {
+                        "corrected_rows": None,
+                        "corrected_row_ids": ["abc"],
+                        "unidentified_earlier_rows": carried,
+                    }
+                }
+            }
+        )
+    )
+
+    state = mr.write_field_state("sessions", "tool_calls", "c", "t", ["def"], path=str(path))
+
+    entry = state["fields"]["sessions.tool_calls"]
+    assert entry["corrected_rows"] is None
+    assert entry["unidentified_earlier_rows"] is None
+    assert entry["corrected_row_ids"] == ["abc", "def"]
+
+
+def test_the_token_entry_tolerates_an_unusable_old_count_too(tmp_path):
+    path = tmp_path / "state.json"
+    path.write_text(json.dumps({"cutoff": "c", "applied_at": "t0", "corrected_rows": "many"}))
+    state = mr.write_backfill_state("c", "2026-09-29T10:00", ["e1"], path=str(path))
+    assert state["corrected_rows"] is None
+    assert state["rows_changed_this_run"] == 1
+
+
 # --- the script: --fields ----------------------------------------------------
 
 
@@ -666,3 +761,61 @@ def test_a_token_run_never_touches_tool_call_count(tmp_path, script, monkeypatch
     assert script.main() == 0
     assert "nothing to correct" in capsys.readouterr().out
     assert paths["metrics"].read_bytes() == before
+
+
+def test_an_apply_over_a_hand_edited_state_records_it_and_succeeds(
+    tmp_path, script, monkeypatch, capsys
+):
+    paths = fixture(tmp_path)
+    paths["state"].write_text(
+        json.dumps(
+            {
+                "fields": {
+                    "sessions.tool_calls": {
+                        "corrected_rows": "2034",
+                        "corrected_row_ids": [7, "abc"],
+                    }
+                }
+            }
+        )
+    )
+    monkeypatch.setattr("sys.argv", argv(paths, "--fields", "tool_calls", "--apply"))
+
+    assert script.main() == 0
+
+    entry = json.loads(paths["state"].read_text())["fields"]["sessions.tool_calls"]
+    assert entry["rows_changed_this_run"] == 1
+    assert "abc" in entry["corrected_row_ids"]
+
+
+def test_a_state_write_that_fails_after_the_rewrite_warns_instead_of_raising(
+    tmp_path, script, monkeypatch, capsys
+):
+    # The file is already replaced when the state is written, and the
+    # carry-over of lines a live hook appended in that instant runs after
+    # it: a raise there would both hide a finished apply behind a traceback
+    # and skip the carry-over.
+    paths = fixture(tmp_path)
+    before = paths["metrics"].read_bytes()
+
+    def fail(*arguments: Any, **keywords: Any) -> None:
+        raise OSError("disk full")
+
+    monkeypatch.setattr(script, "write_field_state", fail)
+    carried: list[str] = []
+    real_carry = script.carry_late_appends
+
+    def carry(*arguments: Any) -> int:
+        carried.append("called")
+        return int(real_carry(*arguments))
+
+    monkeypatch.setattr(script, "carry_late_appends", carry)
+    monkeypatch.setattr("sys.argv", argv(paths, "--fields", "tool_calls", "--apply"))
+
+    assert script.main() == 0
+
+    assert paths["metrics"].read_bytes() != before
+    assert carried == ["called"]
+    warning = capsys.readouterr().err
+    assert "the backfill state could not be recorded" in warning
+    assert "disk full" in warning
