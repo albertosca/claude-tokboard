@@ -124,11 +124,12 @@ def _resolved_path_or_none(path_argument: object) -> Path | None:
     turn into a path yields None rather than crashing the audit hook for
     an operation that has nothing to do with ~/.claude - the hook sees
     every open/rename/etc. in the whole suite, so it must be fast and it
-    must never itself be the thing that breaks an unrelated test. Not
-    coverage-gated (conftest.py is outside the pytest-cov scope in
-    pyproject.toml), but every branch here is deliberate, not defensive
-    filler: fd ints and bytes/PathLike arguments are real shapes the audit
-    events above pass in this very suite (verified in scratch).
+    must never itself be the thing that breaks an unrelated test. Every
+    branch here is deliberate, not defensive filler: fd ints and
+    bytes/PathLike arguments are real shapes the audit events above pass
+    in this very suite (verified in scratch), and an embedded null byte
+    (confirmed in scratch to raise ValueError from Path.resolve()) is a
+    real, if rare, shape a caller could hand any of these audit events.
     """
     if not isinstance(path_argument, str | bytes | os.PathLike):
         return None  # e.g. an int fd - nothing to resolve
@@ -136,7 +137,12 @@ def _resolved_path_or_none(path_argument: object) -> Path | None:
     if isinstance(candidate, bytes):
         try:
             candidate = candidate.decode("utf-8", "surrogateescape")
-        except UnicodeDecodeError:
+        except UnicodeDecodeError:  # pragma: no cover - defensive
+            # Dead in practice, same as _decoded_or_none's identical
+            # pattern: the "surrogateescape" error handler is defined to
+            # never raise UnicodeDecodeError for ANY byte sequence
+            # (confirmed in scratch) - every invalid byte becomes a
+            # lone-surrogate codepoint instead of failing.
             return None
     try:
         return Path(candidate).resolve()
@@ -159,14 +165,26 @@ def _lexical_abspath_or_none(path_argument: object) -> Path | None:
     if isinstance(candidate, bytes):
         try:
             candidate = candidate.decode("utf-8", "surrogateescape")
-        except UnicodeDecodeError:
+        except UnicodeDecodeError:  # pragma: no cover - defensive
+            # Dead in practice - same "surrogateescape" reasoning as
+            # _resolved_path_or_none's identical branch above.
             return None
     try:
         # os.path.abspath, deliberately NOT Path.resolve() - resolve()
         # follows symlinks, which is exactly the behavior this lexical
         # form exists to avoid (see the docstring above).
         return Path(os.path.abspath(candidate))  # noqa: PTH100
-    except (OSError, ValueError):
+    except (OSError, ValueError):  # pragma: no cover - defensive
+        # Confirmed in scratch: unlike _resolved_path_or_none's
+        # Path.resolve(), neither os.path.abspath (pure string join with
+        # os.getcwd(), no stat call) nor the bare Path(...) construction
+        # that wraps it raises for an embedded null byte - the one input
+        # that DOES reach the analogous except clause above. The only
+        # real way this could still raise is os.getcwd() itself failing
+        # because the process's own current directory was deleted out
+        # from under it - not reproducible from a test without deleting
+        # this test PROCESS's cwd, which would corrupt every other test
+        # that runs after it in the same session.
         return None
 
 
@@ -250,7 +268,9 @@ def _joined_with_directory_file_descriptor(
     if isinstance(raw_path, bytes):
         try:
             raw_path = raw_path.decode("utf-8", "surrogateescape")
-        except UnicodeDecodeError:
+        except UnicodeDecodeError:  # pragma: no cover - defensive
+            # Dead in practice - same "surrogateescape" reasoning as
+            # _resolved_path_or_none's identical branch.
             return None
     if Path(raw_path).is_absolute():
         return None

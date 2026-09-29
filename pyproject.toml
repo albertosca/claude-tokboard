@@ -114,7 +114,7 @@ disallow_untyped_defs = false
 # Textual's own testing API (see tests/test_tui_state.py's docstring for
 # why that, and not a COVERAGE_PROCESS_START/.pth arrangement), so it is
 # measured by a plain `pytest` run with no environment-level setup step.
-addopts = "--cov=lib/metrics_core --cov=dashboard_html --cov=dashboard_html_assets --cov=dashboard_tui --cov=scripts --cov=hooks --cov-branch"
+addopts = "--cov=lib/metrics_core --cov=dashboard_html --cov=dashboard_html_assets --cov=dashboard_tui --cov=scripts --cov=hooks --cov=conftest --cov-branch"
 
 [tool.coverage.report]
 # The gate (Phase 4, 2026-09-03). Every module in the --cov set above is at

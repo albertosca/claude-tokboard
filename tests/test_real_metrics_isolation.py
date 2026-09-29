@@ -35,6 +35,7 @@ never an actual write or an actual launch of the real CLI.
 """
 
 import os
+import shutil
 import sqlite3
 import subprocess
 import sys
@@ -536,6 +537,48 @@ class TestChmodAndUtimeAreBlocked:
         target.write_text("x")
         target.chmod(0o600)  # must not raise
         os.utime(target, None)  # must not raise
+
+
+class TestShutilCopyfileIsBlocked:
+    """Backlog 2026-09-28 #3 (Package N, coverage round): shutil.copyfile
+    fires its own "shutil.copyfile" audit event - (src, dst), no dir_fd
+    parameter at all - before the destination is ever opened, and covers
+    shutil.copy2 too (confirmed in scratch: copy2 calls copyfile
+    internally, no separate "shutil.copy2" event). conftest.py's guard
+    already handled this event, but no test in this file ever exercised
+    it - a genuine, previously untested gap this round's coverage sweep of
+    tests/conftest.py surfaced, not just a coverage-measurement artifact.
+    """
+
+    def test_copyfile_into_the_real_claude_dir_is_blocked(self, tmp_path: Path) -> None:
+        source = tmp_path / "source.txt"
+        source.write_text("do not copy me in")
+        # no-such-dir-canary does not exist under the real ~/.claude, so
+        # without the guard this would raise FileNotFoundError - it can
+        # never actually create anything real, guard or no guard.
+        canary = _REAL_CLAUDE_DIR / "no-such-dir-canary" / "copied.txt"
+        assert not canary.parent.exists()
+        with pytest.raises(RealClaudeDirWrite):
+            shutil.copyfile(source, canary)
+        assert not canary.parent.exists()
+        _assert_guard_hit_and_clear_it()
+
+    def test_copy2_into_the_real_claude_dir_is_blocked(self, tmp_path: Path) -> None:
+        source = tmp_path / "source.txt"
+        source.write_text("do not copy me in")
+        canary = _REAL_CLAUDE_DIR / "no-such-dir-canary" / "copied.txt"
+        assert not canary.parent.exists()
+        with pytest.raises(RealClaudeDirWrite):
+            shutil.copy2(source, canary)
+        assert not canary.parent.exists()
+        _assert_guard_hit_and_clear_it()
+
+    def test_copyfile_outside_the_real_claude_dir_remains_allowed(self, tmp_path: Path) -> None:
+        source = tmp_path / "source.txt"
+        source.write_text("harmless")
+        destination = tmp_path / "copied.txt"
+        shutil.copyfile(source, destination)
+        assert destination.read_text() == "harmless"
 
 
 class TestSqliteConnectIsBlocked:
