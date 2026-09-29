@@ -138,7 +138,7 @@ def warm_summary_source(transcript_path: str | None, maximum_turns: int = 4) -> 
 # Substrings (checked lowercased) that mean the model refused/couldn't
 # summarize instead of producing a real label ("Não há texto para
 # resumir", "I cannot complete this request...") - found 2026-07-23 in
-# 3 of 10 real backfill calls. Caching these verbatim as a "label" is
+# several real backfill calls. Caching these verbatim as a "label" is
 # worse than having no label at all - they read as a real (if odd) label
 # to anyone looking at the table, not as an error.
 _REFUSAL_MARKERS = (

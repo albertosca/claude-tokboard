@@ -595,7 +595,7 @@ def test_compute_quota_totals_sums_input_and_cache_creation_keeps_output_separat
 def test_compute_quota_totals_excludes_cache_read_entirely():
     # cache_read_input_tokens (series-3) does not count toward ITPM for any
     # current model - the exact finding that motivated this function: a day
-    # that is 96% cache_read should barely move the quota-relevant number.
+    # that is almost entirely cache_read should barely move the quota-relevant number.
     totals = {"series-3": 1_000_000_000}
     assert mr.compute_quota_totals(totals) == (0, 0)
 

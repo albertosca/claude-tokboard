@@ -922,8 +922,8 @@ def test_main_html_mode_is_unbounded_by_limit(
     # any test in this file before this one - defeating the `not` (always
     # slicing, even under --html) survived the whole suite. The module's
     # own comment at 1038-1040 documents this as deliberate ("the --html
-    # session-list table is unbounded by -n ... sem limite (mostra as
-    # 2401)") - pin it directly instead of only relying on the plain-mode
+    # session-list table is unbounded by -n ... sem limite (mostra
+    # todas)") - pin it directly instead of only relying on the plain-mode
     # slice-bound test above to imply it by omission.
     home = isolate_main_from_the_real_filesystem
     records = [_session_record(f"htmlrow{index}", "/work/proj-a", tokens=10) for index in range(5)]

@@ -401,8 +401,8 @@ def test_project_ranking_list_fewer_and_past_projects_speak_only_their_own_langu
 #
 # Textual's SVG export renders every inter-word gap as U+00A0 (a
 # non-breaking space, not a plain " ") - confirmed 2026-09-23 by inspecting
-# a real export: "(1 session · 154 tokens)" comes back as
-# "(1\xa0session\xa0·\xa0154\xa0tokens)". Left unnormalized, no multi-word
+# a real export: "(1 session · N tokens)" comes back as
+# "(1\xa0session\xa0·\xa0N\xa0tokens)". Left unnormalized, no multi-word
 # marker or catalog value could ever match, silently turning this into a
 # detector that only catches single-word leaks.
 def _visible_svg_text(svg: str) -> str:

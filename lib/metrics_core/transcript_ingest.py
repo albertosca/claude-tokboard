@@ -87,8 +87,8 @@ def usage_increment(
 
     Counting the first entry of an id, as this module did from 2026-08-11 to
     2026-09-23, handles replays and undercounts every streamed message - the
-    same subagent transcripts summed to 5,196,123 output tokens that way
-    against 31,540,502 at the peak. The last entry is not safe either: 5 ids
+    same subagent transcripts summed to a small fraction of the output
+    tokens their peaks give. The last entry is not safe either: some ids
     were replayed interleaved (2, 270, 2, 270, 2), so file order does not
     end on the peak. The per-field maximum recovers the LARGEST usage the
     transcript recorded for a message, whatever order its entries came in:
@@ -100,9 +100,9 @@ def usage_increment(
     What it cannot recover is usage the transcript never recorded. Since
     Claude Code 2.1.278, many subagent messages never get a final entry with
     a stop_reason, so their full usage is never written and the largest
-    recorded output is a streaming placeholder of 1-4 tokens (the 2026-09-23
-    review counted 12,214 such ids, an estimated ~7.8M output tokens missing
-    since 2026-09-21). No counting rule can restore those; these totals are
+    recorded output is a streaming placeholder of a few tokens (the
+    2026-09-23 review counted thousands of such ids since 2026-09-21, with
+    millions of output tokens missing). No counting rule can restore those; these totals are
     a floor for them, not the true figure.
 
     Entries with no id cannot be matched to anything, so they always count
@@ -130,7 +130,7 @@ def count_incomplete(message_order: list[Any], finalised: set[Any]) -> int:
     output there; replays repeat it, so an id can have several, all with
     the same reason. An id with NONE never had its usage written - since
     Claude Code 2.1.278, many subagent ids end on a streaming placeholder
-    (output of a few tokens) - so the totals counted for
+    (for some of them, an output of only a few tokens) - so the totals counted for
     it are a floor, and this is the count that says so.
 
     The message first seen LAST is excluded: a snapshot taken mid-response

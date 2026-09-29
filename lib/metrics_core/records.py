@@ -330,8 +330,8 @@ def incomplete_usage_messages(record: dict[str, Any]) -> int:
 def record_token_total(record: dict[str, Any]) -> int:
     # Every token a record consumed, all four kinds. Cache dominates real
     # usage by orders of magnitude - measured 2026-08-10 against Claude
-    # Code's own session transcripts, input+output was ~0.3% of the day's
-    # true volume (4.2M shown against 1.42B actually spent). Any view that
+    # Code's own session transcripts, input+output was a tiny fraction of
+    # the day's true volume. Any view that
     # calls its number a token "total" has to use this, or it reports a
     # rounding error as if it were the whole story.
     return (
@@ -434,7 +434,7 @@ def compute_model_totals(records: list[dict[str, Any]]) -> tuple[dict[str, int],
     a day's total tokens - by the model that produced them. Most of the
     history cannot be sliced that way: `tokens_by_model` only exists for
     records whose transcript survived long enough to be captured natively
-    or reconstructed, which was 25% of the volume when this was written.
+    or reconstructed, which was a minority of the volume when this was written.
 
     That remainder is returned rather than dropped, and the caller draws it
     as its own band. Dropping it would make a day's bar shorter in this mode
@@ -463,8 +463,8 @@ def compute_quota_totals(totals: dict[str, int]) -> tuple[int, int]:
     own output - the closest DOCUMENTED proxy available for how much of a
     usage limit a set of records actually consumed.
 
-    Backlog, 2026-09-02: record_token_total's flat 4-field sum can be 96%
-    cache_read on a real heavy day, while the tokens that actually move a
+    Backlog, 2026-09-02: record_token_total's flat 4-field sum can be almost
+    entirely cache_read on a real heavy day, while the tokens that actually move a
     rate limit are a small fraction of that - a headline built on the flat
     sum answers "how much text moved," not "how much of my quota did this
     eat." Anthropic's Messages API rate-limit docs are explicit about the
@@ -611,7 +611,7 @@ def fold_subagent_tokens_into_sessions(
     # total) silently excludes subagent usage - found 2026-08-05 when
     # a heavy subagent-driven-development week made the dashboard show
     # well under half of real token consumption (subagents outweighed
-    # direct session tokens 1.3x in that window). Mutates records
+    # direct session tokens in that window). Mutates records
     # in-place so every list derived from the same dicts earlier in the
     # pipeline (all_time_records, chart_records, the day/limit-filtered
     # records) picks up the fold automatically.

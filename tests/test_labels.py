@@ -625,9 +625,8 @@ def test_get_task_label_short_internal_name_used_directly_without_generating(
 def test_get_task_label_six_word_internal_name_used_directly_without_generating(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # Pins the exact boundary: real sessions.jsonl has 261 six-word
-    # internal_names (out of {1: 293, 4: 159, 5: 195, 6: 261, 7: 8}) -
-    # `<= 6` keeps them all free/verbatim; flipping to `< 6` would push
+    # Pins the exact boundary: a real sessions.jsonl holds many six-word
+    # internal_names - `<= 6` keeps them all free/verbatim; flipping to `< 6` would push
     # every one of them into a paid `claude -p --model haiku` call. The
     # existing tests above/below use 3-word and 7-word names, which
     # straddle nothing.

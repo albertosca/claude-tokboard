@@ -74,8 +74,8 @@ def render_composition_legend(totals: dict[str, int], *, lang: str) -> str:
             f'<span class="legend-total" data-series="{css_class}">'
             f"{metrics_core_module.format_tokens(totals.get(css_class, 0))}</span></span>"
         )
-    # Backlog, 2026-09-02: the flat 4-field total can be 96% cache_read on
-    # a real heavy day, so it answers "how much text moved," not "how much
+    # Backlog, 2026-09-02: the flat 4-field total can be almost entirely
+    # cache_read on a real heavy day, so it answers "how much text moved," not "how much
     # of my quota did this eat." Plain text, deliberately not wrapped in
     # its own tag around each number (unlike the chips above) - a `<b>`
     # wrapper here would add two more literal ">0<" substrings whenever
@@ -430,7 +430,7 @@ def render_trend_chart(
     # about its symptom (cache-heavy days starving the "por projeto"
     # bars) but wrong about the cause: "por projeto" was summing only
     # input+output, so it wasn't a scale problem at all - the mode was
-    # measuring a different, ~300x smaller quantity than its own axis
+    # measuring a different quantity, orders of magnitude smaller than its own axis
     # labels and tooltips claimed (2026-08-10).
     maximum_pane = max(day_totals) or 1
     maximum_tokens = maximum_pane
@@ -1421,7 +1421,7 @@ def main() -> None:
     chart_records = all_time_records
     records = metrics_core_module.filter_by_days(records, effective_days)
     # The --html session-list table is unbounded by -n (2026-07-21:
-    # "sem limite (mostra as 2401)") - only the terminal-table mode still
+    # "sem limite (mostra todas)") - only the terminal-table mode still
     # defaults to the last 20, unchanged.
     if not arguments.html:
         records = records[-arguments.limit :]

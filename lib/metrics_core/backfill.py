@@ -581,7 +581,7 @@ def _recognise(stored: list[int], now: AsOf) -> str | None:
     """Which prior formula produced `stored`, or None if neither did.
 
     Exact matches only. The August run accepted a raw-sum near-miss within
-    2% (58 of 59 such rows then sat within 0.3% of the raw sum), and those
+    2% (nearly every such row then sat far inside that margin), and those
     rows are corrected now. Extended to the first-occurrence formula, the
     same tolerance recognised session rows (2026-09-23) whose
     transcripts hold no streamed ids (first == peak) and which sat one late
@@ -1533,9 +1533,9 @@ def describe_backfill_state(state: dict[str, Any] | None, *, lang: str) -> str:
     # The OTHER boundary (2026-08-24 backlog entry): correction is also
     # bounded by transcript retention, not just the cutoff date above. A
     # reader can't otherwise tell "that week was genuinely busier" from
-    # "that week is still uncorrected" - measured on the 2026-08-21
-    # production run, pre-2026-07-22 days averaged roughly the same
-    # 1.6-2x factor the correction removes elsewhere.
+    # "that week is still uncorrected" - on the 2026-08-21 production
+    # run, pre-2026-07-22 days carried roughly the same inflation the
+    # correction removes elsewhere.
     earliest_corrected = state.get("earliest_corrected")
     if isinstance(earliest_corrected, str) and earliest_corrected:
         note += t("backfill.retention", lang, date=earliest_corrected[:10])

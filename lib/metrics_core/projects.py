@@ -72,7 +72,7 @@ def compute_project_totals(
         project = record.get("project_path")
         # All four token kinds - this panel is titled "Total de tokens por
         # projeto", and until 2026-08-10 it summed input+output only,
-        # reporting ~0.3% of real volume under a label promising totals.
+        # reporting a tiny fraction of real volume under a label promising totals.
         totals[project] = totals.get(project, 0) + record_token_total(record)
     # Sorted by spend, with most-recent activity only as a tie-break.
     # This panel used to sort by recency, answering "what have I touched

@@ -132,8 +132,8 @@ def test_delta_e_measures_what_it_claims() -> None:
 
 
 def test_the_palette_has_room_for_every_model_seen_so_far_and_then_some() -> None:
-    # The model chart gives each model its own PANE_COLORS slot. The
-    # author's history held 8 models on 2026-09-29; 12 leaves headroom
+    # The model chart gives each model its own PANE_COLORS slot. A real
+    # history outgrew the old palette on 2026-09-29; 12 leaves headroom
     # for the next few before the overflow marker comes back.
     assert len(tui.PANE_COLORS) >= 12
 

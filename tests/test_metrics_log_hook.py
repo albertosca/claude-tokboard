@@ -2,7 +2,7 @@
 
 DANGER: this module's METRICS_DIRECTORY/METRICS_FILE constants resolve at
 import time to Alberto's real, irreplaceable metrics history
-(~/.claude/metrics/sessions.jsonl - roughly 8,000 records going back
+(~/.claude/metrics/sessions.jsonl - thousands of records going back
 months, and actively appended to by other running Claude sessions).
 monkeypatch.setenv("HOME", ...) does NOT redirect them, since they are
 already-resolved Path objects on the module object by the time any test
@@ -447,7 +447,7 @@ def _streamed(message_id: str, outputs: list[int], model: str = "model-alpha") -
 
 def test_parse_transcript_counts_a_streamed_message_at_its_peak_usage(script, tmp_path):
     # Keeping the FIRST entry of the id counted 3 output tokens for a message
-    # that produced 179 - the undercount that left subagent output 5.75x low.
+    # that produced 179 - the undercount that left subagent output several times too low.
     path = tmp_path / "t.jsonl"
     _write_lines(path, _streamed("m1", [3, 40, 179]))
 

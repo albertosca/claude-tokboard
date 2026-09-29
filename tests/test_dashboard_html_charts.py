@@ -389,8 +389,9 @@ def test_render_trend_chart_y_axis_labels_read_the_scale_from_zero_up_to_the_bus
     # to size a bar by eye. Both panes share one denominator (the busiest
     # day's total), so both axes must read 0 .. that total, formatted by
     # format_tokens. This is the surface the 2026-08-10 incident recorded in
-    # the module's own comment was about ("measuring a different, ~300x
-    # smaller quantity than its own axis labels and tooltips claimed").
+    # the module's own comment was about ("measuring a different quantity,
+    # orders of magnitude smaller than its own axis labels and tooltips
+    # claimed").
     out = dashboard_html.render_trend_chart(
         _DAY_GRANULARITY_RECORDS, {"/proj/a": "group-color-1"}, "p1", lang="pt"
     )

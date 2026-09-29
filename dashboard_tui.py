@@ -73,8 +73,8 @@ def load_base_data(
     # Dedupe + normalize the same way dashboard_html.py's main() does
     # before ANYTHING else touches records (2026-07-21) - the Stop hook
     # appends a fresh cumulative snapshot every turn, so one session_id can
-    # have dozens of duplicate rows with growing token counts (found up to
-    # ~50x inflation upstream). normalize_project_paths then rolls a
+    # have dozens of duplicate rows with growing token counts (found
+    # inflating a session's totals many times over upstream). normalize_project_paths then rolls a
     # subdirectory cwd up to its real project root and folds scratchpad/tmp
     # cwds into "sem projeto" - see that function's docstring in
     # dashboard_html.py for the fan-out safeguard that keeps it from
@@ -604,7 +604,7 @@ PlotColor = str | tuple[int, int, int]
 # gray; tests/test_tui_palette.py measures the rendered result.
 #
 # Twelve, not seven (2026-09-29): the model chart gives every model its
-# own slot, and the author's history already held 8 models, so the
+# own slot, and a real history had already outgrown seven, so the
 # newest was drawn in a borrowed colour. The five added RGB tuples (pink,
 # hot magenta, deep blue, forest green, red) were picked greedily to
 # keep the closest pair of the whole palette, gray included, as far

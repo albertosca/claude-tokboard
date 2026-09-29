@@ -42,8 +42,8 @@ import dashboard_tui as tui  # noqa: E402
 def _strip(svg: str) -> str:
     """Textual's SVG export renders every inter-word gap as U+00A0 (a
     non-breaking space, not a plain " ") - confirmed 2026-09-23 by
-    inspecting a real export: "(1 session · 154 tokens)" comes back as
-    "(1\xa0session\xa0·\xa0154\xa0tokens)". Left unnormalized, every
+    inspecting a real export: "(1 session · N tokens)" comes back as
+    "(1\xa0session\xa0·\xa0N\xa0tokens)". Left unnormalized, every
     multi-word assertion here (and in the leak detector) would silently
     never match, since a plain-space literal cannot appear in a string
     that never contains a plain space between words."""

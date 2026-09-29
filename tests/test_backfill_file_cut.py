@@ -379,8 +379,8 @@ def test_a_hook_formula_wins_over_the_time_cut_count_when_both_match(tmp_path):
     assert plan.formulas == {0: mr.RAW}
 
 
-# The two real rows the 2026-09-28 apply wrote at the time cut (one
-# session, 149 -> 148 and 152 -> 151), scaled down: the hook stopped at a
+# The real rows the 2026-09-28 apply wrote at the time cut (one session,
+# each one above its file cut's count), scaled down: the hook stopped at a
 # line stamped after the three entries of one in-flight message that were
 # written below it, the last of which carries the only new tool_use block.
 # The hook value is m1's first-entry count (1); the time cut's distinct
