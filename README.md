@@ -125,6 +125,8 @@ Since 2.1.0, AI task labels are cached per language. The first time 2.1.0 or lat
 
 From 2.2.0, the tools count is per distinct tool call - about 4x higher than before on the same work - while older rows keep their old counts as logged. Also from 2.2.0: subagent output recorded on Claude Code 2.1.278 or later is a lower bound, since Claude Code doesn't always write a subagent message's final usage.
 
+From 2.3.0, a row's token total prefixed with "≥" is that same floor made visible: some of its messages never got a final usage entry, so the real total may be higher than shown. `scripts/backfill-token-dedup.py --fields incomplete_usage` can backfill that marker onto rows logged before this version.
+
 ## Contributing
 
 ```bash
