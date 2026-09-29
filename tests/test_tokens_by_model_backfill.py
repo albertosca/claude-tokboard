@@ -12,6 +12,8 @@ import importlib.util
 import json
 import os
 import shlex
+import shutil
+import subprocess
 import sys
 import types
 from collections.abc import Iterable
@@ -19,7 +21,13 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from pasted_command import run_as_pasted
+from pasted_command import (
+    REPOSITORY_ROOT,
+    WORKING_DIRECTORIES,
+    enter_working_directory,
+    names_script,
+    run_as_pasted,
+)
 from state_shapes import (
     SHAPE_NAMES,
     UNREADABLE_STATES,
@@ -963,6 +971,7 @@ def _argv(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, *extra: str) -> None:
 def test_main_reports_the_plan_when_every_reconstruction_agrees(
     script, tmp_path, monkeypatch, capsys
 ):
+    enter_working_directory("repository root", tmp_path, monkeypatch)
     transcript_path = _transcript(
         tmp_path / "t.jsonl",
         [
@@ -1714,6 +1723,7 @@ def _two_native_session_rows(tmp_path: Path) -> None:
 
 
 def test_the_dry_run_prints_the_file_it_actually_read(script, tmp_path, monkeypatch, capsys):
+    enter_working_directory("repository root", tmp_path, monkeypatch)
     # The printed command is meant to be pasted. Without --file, a subagents
     # dry run hands over a line that runs against sessions.jsonl, and the
     # hazard is ASYMMETRIC: the subagent file's smaller evidence count
@@ -1948,9 +1958,13 @@ def _fail_state_write(script: types.ModuleType, monkeypatch: pytest.MonkeyPatch)
     monkeypatch.setattr(script, "write_field_state", fail)
 
 
-def test_the_warning_names_a_recovery_that_records_the_rows(script, tmp_path, monkeypatch, capsys):
+@pytest.mark.parametrize("where", WORKING_DIRECTORIES)
+def test_the_warning_names_a_recovery_that_records_the_rows(
+    script, tmp_path, monkeypatch, capsys, where
+):
     base = tmp_path / "with space"
     base.mkdir()
+    directory = enter_working_directory(where, tmp_path, monkeypatch)
     _one_writable_session(base)
     real_write = script.write_field_state
     _fail_state_write(script, monkeypatch)
@@ -1958,12 +1972,13 @@ def test_the_warning_names_a_recovery_that_records_the_rows(script, tmp_path, mo
     assert script.main() == 0
     warning = capsys.readouterr().err
     words = _printed_command(warning, "from the backup this run took: ")
-    assert words[:2] == ["python3", "scripts/backfill-tokens-by-model.py"]
+    assert words[0] == "python3"
+    assert names_script(words[1], SCRIPT_PATH, directory)
     assert words[words.index("--metrics-dir") + 1] == str(base / "metrics")
     assert words[words.index("--backup-dir") + 1] == str(base / "backups")
 
     monkeypatch.setattr(script, "write_field_state", real_write)
-    recording = run_as_pasted(words, base)
+    recording = run_as_pasted(words, base, directory)
     assert recording.returncode == 0, recording.stderr
     records = _live_records(base)
     assert _recorded_ids(base) == script.row_identities(records, [0], "session_id")
@@ -1981,63 +1996,111 @@ def test_the_recovery_command_names_no_backup_dir_the_run_did_not_get(
     assert words[words.index("--metrics-dir") + 1] == str(tmp_path / "metrics")
 
 
+@pytest.mark.parametrize("where", WORKING_DIRECTORIES)
 def test_the_dry_run_prints_commands_aimed_at_the_files_it_read(
-    script, tmp_path, monkeypatch, capsys
+    script, tmp_path, monkeypatch, capsys, where
 ):
     # A dry run on a copy that printed a bare --file command would have the
     # operator paste one that runs against the real ~/.claude/metrics.
     base = tmp_path / "with space"
     base.mkdir()
+    directory = enter_working_directory(where, tmp_path, monkeypatch)
     _backfilled_history(base)
     _applying_argv(monkeypatch, base, "--record-earlier-applies")
     assert script.main() == 0
     words = _printed_command(capsys.readouterr().out, "To record: ")
-    assert words[:2] == ["python3", "scripts/backfill-tokens-by-model.py"]
+    assert words[0] == "python3"
+    assert names_script(words[1], SCRIPT_PATH, directory)
     assert words[words.index("--metrics-dir") + 1] == str(base / "metrics")
     assert words[words.index("--backup-dir") + 1] == str(base / "backups")
-    recording = run_as_pasted(words, base)
+    recording = run_as_pasted(words, base, directory)
     assert recording.returncode == 0, recording.stderr
     assert len(_recorded_ids(base)) == 2
 
     _argv(monkeypatch, base)
     assert script.main() == 0
     words = _printed_command(capsys.readouterr().out, "To write: ", " (and read")
-    assert words[:6] == [
-        "python3",
-        "scripts/backfill-tokens-by-model.py",
-        "--file",
-        "sessions",
-        "--apply",
-        "--expect-checked",
-    ]
+    assert words[0] == "python3"
+    assert names_script(words[1], SCRIPT_PATH, directory)
+    assert words[2:6] == ["--file", "sessions", "--apply", "--expect-checked"]
     assert words[words.index("--metrics-dir") + 1] == str(base / "metrics")
     assert words[words.index("--projects-dir") + 1] == str(base / "projects")
     # Every row here already has its map: pasted, the command passes the
     # evidence floor it names and finds nothing left to write.
-    writing = run_as_pasted(words, base)
+    writing = run_as_pasted(words, base, directory)
     assert writing.returncode == 0, writing.stderr
     assert "nothing to write; leaving the file untouched" in writing.stdout
 
 
-def test_the_printed_write_command_writes_when_pasted(script, tmp_path, monkeypatch, capsys):
+@pytest.mark.parametrize("where", WORKING_DIRECTORIES)
+def test_the_printed_write_command_writes_when_pasted(script, tmp_path, monkeypatch, capsys, where):
     base = tmp_path / "with space"
     base.mkdir()
+    directory = enter_working_directory(where, tmp_path, monkeypatch)
     _one_writable_session(base)
     _argv(monkeypatch, base)
     assert script.main() == 0
     words = _printed_command(capsys.readouterr().out, "To write: ", " (and read")
     assert _refused_to_write(base)
 
-    writing = run_as_pasted(words, base)
+    writing = run_as_pasted(words, base, directory)
 
     assert writing.returncode == 0, writing.stderr
     assert f"backfill state recorded: {_state_path(base)}" in writing.stdout
     assert not _refused_to_write(base)
 
 
+def test_a_repository_under_a_path_with_spaces_prints_a_command_that_runs(tmp_path):
+    # The whole layout moved under a directory with a space in its name,
+    # the printing run started from yet another directory, and every step
+    # a separate process: the program path in the printed command is
+    # relative to where it was printed, crosses the space, and still runs.
+    copy = tmp_path / "a repo with space"
+    for part in ("scripts", "lib"):
+        shutil.copytree(
+            REPOSITORY_ROOT / part,
+            copy / part,
+            ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
+        )
+    base = tmp_path / "data with space"
+    base.mkdir()
+    _backfilled_history(base)
+    directory = tmp_path / "some other dir"
+    directory.mkdir()
+    copied_script = copy / "scripts" / SCRIPT_PATH.name
+    printing = subprocess.run(
+        [
+            sys.executable,
+            str(copied_script),
+            "--metrics-dir",
+            str(base / "metrics"),
+            "--projects-dir",
+            str(base / "projects"),
+            "--backup-dir",
+            str(base / "backups"),
+            "--record-earlier-applies",
+        ],
+        cwd=directory,
+        env={"PATH": "/usr/bin:/bin", "HOME": str(tmp_path / "home")},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert printing.returncode == 0, printing.stderr
+    words = _printed_command(printing.stdout, "To record: ")
+    assert names_script(words[1], copied_script, directory)
+    assert " " in words[1]
+
+    recording = run_as_pasted(words, base, directory)
+
+    assert recording.returncode == 0, recording.stderr
+    assert len(_recorded_ids(base)) == 2
+
+
 def test_an_explicit_metrics_file_and_state_file_carry_into_the_printed_command(
     script, tmp_path, monkeypatch, capsys
 ):
+    enter_working_directory("repository root", tmp_path, monkeypatch)
     # The dedup pass may run on a metrics file of any name, with its state
     # anywhere; the recording has to follow both, and find the backups by
     # the metrics file's own name.

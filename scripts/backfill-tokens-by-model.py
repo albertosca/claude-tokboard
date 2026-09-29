@@ -1103,10 +1103,6 @@ def print_plan_summary(
         print(f"Earliest snapshot that would be written: {earliest}")
 
 
-# How every printed command names this program (see script_invocation).
-PROGRAM = script_invocation(__file__)
-
-
 def shell_command(*words: str) -> str:
     """`words` as one line a shell reads back as the same words: every
     printed command is meant to be pasted, and a path with a space in it
@@ -1318,7 +1314,7 @@ def main() -> int:
         # survives casual reading: the subagent file's smaller count clears
         # the session file's floor and writes, while the reverse refuses.
         write_command = shell_command(
-            *PROGRAM,
+            *script_invocation(__file__),
             "--file",
             arguments.file,
             "--apply",
@@ -1379,7 +1375,7 @@ def main() -> int:
         # The backup this run took names these rows, so the one-time
         # recovery path records them - aimed at the same files.
         recovery = shell_command(
-            *PROGRAM,
+            *script_invocation(__file__),
             "--file",
             arguments.file,
             "--record-earlier-applies",
@@ -1450,7 +1446,7 @@ def record_earlier_applies(
         )
     if not arguments.apply:
         record_command = shell_command(
-            *PROGRAM,
+            *script_invocation(__file__),
             "--file",
             arguments.file,
             "--record-earlier-applies",

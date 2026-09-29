@@ -12,7 +12,12 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from pasted_command import run_as_pasted
+from pasted_command import (
+    WORKING_DIRECTORIES,
+    enter_working_directory,
+    names_script,
+    run_as_pasted,
+)
 from state_shapes import (
     SHAPE_NAMES,
     UNREADABLE_STATES,
@@ -1288,8 +1293,9 @@ def test_a_token_pass_over_rows_without_a_map_names_none(tmp_path, script, monke
     assert "fields" not in state
 
 
+@pytest.mark.parametrize("where", WORKING_DIRECTORIES)
 def test_a_token_pass_whose_state_write_fails_names_the_recovery(
-    tmp_path, script, monkeypatch, capsys
+    tmp_path, script, monkeypatch, capsys, where
 ):
     # Unrecorded, the maps this pass rebuilt count as native in the
     # by-model oracle; its recovery path finds them in the backup this
@@ -1311,6 +1317,7 @@ def test_a_token_pass_whose_state_write_fails_names_the_recovery(
 
     monkeypatch.setattr(script, "write_backfill_state", fail)
     monkeypatch.setattr("sys.argv", _subagents_argv(paths, "--apply"))
+    directory = enter_working_directory(where, tmp_path, monkeypatch)
 
     assert script.main() == 0
 
@@ -1318,10 +1325,12 @@ def test_a_token_pass_whose_state_write_fails_names_the_recovery(
     assert "the backfill state could not be recorded" in warning
     marker = "the backup this run took: "
     words = shlex.split(warning[warning.index(marker) + len(marker) :].splitlines()[0])
-    assert words[:4] == ["python3", "scripts/backfill-tokens-by-model.py", "--file", "subagents"]
+    assert words[0] == "python3"
+    assert names_script(words[1], SCRIPT_PATH.parent / "backfill-tokens-by-model.py", directory)
+    assert words[2:4] == ["--file", "subagents"]
 
     # And the command, pasted, does what the warning says it does.
-    recording = run_as_pasted(words, tmp_path)
+    recording = run_as_pasted(words, tmp_path, directory)
     assert recording.returncode == 0, recording.stderr
     records = [json.loads(line) for line in metrics.read_text().splitlines()]
     entry = json.loads(state.read_text())["fields"]["subagents.tokens_by_model_rebuilt"]

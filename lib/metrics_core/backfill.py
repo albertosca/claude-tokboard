@@ -1422,13 +1422,22 @@ def verify_fields(
     return problems
 
 
-def script_invocation(script_file: str) -> tuple[str, str]:
-    """How a printed command names the script `script_file` (a path or a
-    bare file name under scripts/): python3 and its path from the
-    repository root, the way scripts/README.md runs its scripts. The
-    scripts are not executable, so a bare name would not run; every
-    command the backfill scripts print starts with these two words."""
-    return ("python3", f"scripts/{Path(script_file).name}")
+def script_invocation(script_path: str) -> tuple[str, str]:
+    """How a printed command names the script at `script_path`: python3
+    and the script's path relative to the current working directory, so
+    the command runs when pasted where the printing run was started -
+    `scripts/<name>` at the repository root, a `../`-path anywhere else.
+    Where no relative path exists (on Windows, another drive) it is the
+    absolute path. The scripts are not executable, so a bare name would
+    not run. Computed at call time, never at import, since the working
+    directory is the one the command will be pasted into; callers
+    shell-quote both words with the rest of the command."""
+    absolute = str(Path(script_path).absolute())
+    try:
+        shown = os.path.relpath(absolute)
+    except ValueError:
+        shown = absolute
+    return ("python3", shown)
 
 
 class UnreadableStateError(Exception):

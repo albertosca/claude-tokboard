@@ -1887,3 +1887,47 @@ def test_a_state_write_leaves_the_process_umask_as_it_found_it(tmp_path):
     finally:
         os.umask(previous)
     assert after == 0o027
+
+
+# A printed command names its program relative to the directory the
+# printing run was started from, so it runs when pasted there - the repo
+# root or anywhere else - and quoted by the caller, so spaces survive.
+
+
+def _a_script(tmp_path: Path) -> Path:
+    script = tmp_path / "repo with space" / "scripts" / "some-script.py"
+    script.parent.mkdir(parents=True)
+    script.write_text("")
+    return script
+
+
+def test_script_invocation_names_the_script_from_the_repository_root(tmp_path, monkeypatch):
+    script = _a_script(tmp_path)
+    monkeypatch.chdir(tmp_path / "repo with space")
+    assert mr.script_invocation(str(script)) == (
+        "python3",
+        str(Path("scripts") / "some-script.py"),
+    )
+
+
+def test_script_invocation_names_the_script_from_anywhere_else(tmp_path, monkeypatch):
+    script = _a_script(tmp_path)
+    elsewhere = tmp_path / "some other dir"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+    program, shown = mr.script_invocation(str(script))
+    assert program == "python3"
+    assert shown == str(Path("..") / "repo with space" / "scripts" / "some-script.py")
+    assert (elsewhere / shown).resolve() == script.resolve()
+
+
+def test_script_invocation_falls_back_to_the_absolute_path(tmp_path, monkeypatch):
+    # os.path.relpath raises when no relative path exists - on Windows,
+    # a script on another drive than the working directory.
+    script = _a_script(tmp_path)
+
+    def impossible(*arguments: Any) -> str:
+        raise ValueError("path is on mount 'C:', start on mount 'D:'")
+
+    monkeypatch.setattr(os.path, "relpath", impossible)
+    assert mr.script_invocation(str(script)) == ("python3", str(script))
