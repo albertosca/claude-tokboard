@@ -105,6 +105,32 @@ def test_check_hook_reports_an_unexpected_record(tmp_path: Path, script: types.M
     assert "unexpected record" in failure
 
 
+def test_check_hook_reports_a_missing_incomplete_usage_messages_value(
+    tmp_path: Path, script: types.ModuleType
+) -> None:
+    # The synthetic transcript's first message is never finalised and a
+    # second message follows it, so a hook that correctly runs
+    # parse_transcript must write incomplete_usage_messages=1 - a fake hook
+    # that writes the right token totals but omits it (or gets the count
+    # wrong) is exactly the shape of a hook whose incomplete-usage branch
+    # silently regressed, and must be caught here, not just by the real
+    # hooks happening to still get it right.
+    hook = tmp_path / "omits_incomplete_usage.py"
+    _write_fake_hook(
+        hook,
+        "import os, json\n"
+        "from pathlib import Path\n"
+        'metrics = Path(os.environ["HOME"]) / ".claude" / "metrics" / "sessions.jsonl"\n'
+        "metrics.parent.mkdir(parents=True, exist_ok=True)\n"
+        'metrics.write_text(json.dumps({"input_tokens": 10, "output_tokens": 5}) + "\\n")\n',
+    )
+
+    failure = script.check_hook(hook, "sessions.jsonl", "transcript_path", sys.executable)
+
+    assert failure is not None
+    assert "incomplete_usage_messages" in failure
+
+
 def test_main_reports_every_failing_hook_on_stderr_and_exits_1(
     tmp_path: Path, script: types.ModuleType, capsys: pytest.CaptureFixture[str]
 ) -> None:
