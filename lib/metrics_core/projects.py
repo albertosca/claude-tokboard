@@ -91,6 +91,26 @@ def compute_project_totals(
     return ordered_projects, totals, maximum_total
 
 
+def compute_project_series_totals(
+    records: list[dict[str, Any]],
+) -> tuple[dict[str | None, dict[str, int]], dict[str | None, int]]:
+    """Each project's tokens split by type (series-1..4 = input, output,
+    cache read, cache creation), and each project's grand total. Shared by
+    both dashboards' Panorama rankings since 2026-10-05."""
+    per_project: dict[str | None, dict[str, int]] = {}
+    for record in records:
+        project = record.get("project_path")
+        bucket = per_project.setdefault(
+            project, {"series-1": 0, "series-2": 0, "series-3": 0, "series-4": 0}
+        )
+        bucket["series-1"] += record.get("input_tokens", 0) or 0
+        bucket["series-2"] += record.get("output_tokens", 0) or 0
+        bucket["series-3"] += record.get("cache_read_tokens", 0) or 0
+        bucket["series-4"] += record.get("cache_creation_tokens", 0) or 0
+    grand_totals = {project: sum(series.values()) for project, series in per_project.items()}
+    return per_project, grand_totals
+
+
 def project_days_running(
     project_first_seen: dict[str, str],
     project: str | None,

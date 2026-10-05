@@ -52,12 +52,16 @@ guard beside it is what actually matters and is already pinned) and the
 width; `* 40` is already caught by the column-alignment test above).
 """
 
+import re
 import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+import plotext
 import pytest
+from textual.color import Color
+from textual.markup import to_content
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "lib"))
@@ -437,7 +441,7 @@ def test_project_ranking_row_columns_land_at_their_fixed_offsets():
         }
     ]
     panel = tui.ProjectRankingList(mr, records, {}, {}, set(), lang="pt")
-    row = panel.render().split("\n")[2]
+    row = _ranking_plain(panel)[2]
     formatted_total = mr.format_tokens(100)
     assert row[26:58].strip("▓ ") == "" or "▓" in row[26:58], (
         "sanity check: the bar column must actually be at offset 26"
@@ -514,7 +518,7 @@ def test_project_ranking_bar_length_is_proportional_to_each_rows_own_total():
     unnoticed by every test above, none of which counts bar characters."""
     records = [_daily("/projects/big", 1, 900), _daily("/projects/small", 1, 100)]
     panel = tui.ProjectRankingList(mr, records, {}, {}, set(), lang="pt")
-    lines = panel.render().split("\n")
+    lines = _ranking_plain(panel)
     big_line = next(line for line in lines if "big" in line and "small" not in line)
     small_line = next(line for line in lines if "small" in line)
     big_bar = big_line[26:58].count("▓")
@@ -668,3 +672,70 @@ def test_a_project_without_a_slot_goes_to_the_gray_others_bucket(
     assert captured["color"] == [tui.PANE_COLORS[3], tui.PANE_OTHER_COLOR]
     legend = tui.ProjectLegend(mr, records, lang="en", project_slots={"/projects/alpha": 3})
     assert legend.render().split("   ")[-1] == mr.t("others", "en")
+
+
+# ---------------------------------------------------------------------------
+# 2026-10-05 review, items 14 and 15: the Panorama ranking marks a cut name
+# and splits each bar by token type, like the HTML dashboard's ranking.
+# ---------------------------------------------------------------------------
+
+
+def _ranking_plain(panel: Any) -> list[str]:
+    return to_content(panel.render()).plain.split("\n")
+
+
+def test_project_ranking_marks_a_cut_label_with_an_ellipsis() -> None:
+    name = "a-very-long-project-name-indeed"  # 31 characters, over the 24-cell column
+    records = [_daily(f"/projects/{name}", 1, 100)]
+    panel = tui.ProjectRankingList(mr, records, {}, {}, set(), lang="pt")
+    row = _ranking_plain(panel)[2]
+    assert row[:24] == name[:23] + "…"
+    assert row[24:26] == "  "
+
+
+def test_project_ranking_keeps_a_label_that_fits_untouched() -> None:
+    records = [_daily("/projects/exactly-twenty-four-chars", 1, 100)]
+    assert len("exactly-twenty-four-chars") == 25  # one over: must be cut
+    records_fitting = [_daily("/projects/twenty-four-characters-x", 1, 100)]
+    assert len("twenty-four-characters-x") == 24
+    fitting = _ranking_plain(tui.ProjectRankingList(mr, records_fitting, {}, {}, set(), lang="pt"))
+    assert fitting[2][:24] == "twenty-four-characters-x"
+    cut = _ranking_plain(tui.ProjectRankingList(mr, records, {}, {}, set(), lang="pt"))
+    assert cut[2][:24].endswith("…")
+
+
+def test_project_ranking_bar_is_split_by_token_type_in_the_chart_colours() -> None:
+    record = _daily("/projects/mixed", 1, 10)
+    record.update(output_tokens=10, cache_read_tokens=80)
+    panel = tui.ProjectRankingList(mr, [record], {}, {}, set(), lang="pt")
+    markup = panel.render().split("\n")[2]
+    segments = re.findall(r"\[(ansi_\w+)\](▓+)\[/\1\]", markup)
+    assert segments == [("ansi_green", "▓" * 3), ("ansi_blue", "▓" * 3), ("ansi_magenta", "▓" * 24)]
+
+
+def test_project_ranking_segments_always_add_up_to_the_bar_length() -> None:
+    # Largest remainder: three equal thirds of a 30-cell bar are 10/10/10,
+    # and 1/1/1 of 100 tokens on a shorter bar never loses or gains a cell.
+    big = _daily("/projects/big", 1, 900)
+    thirds = _daily("/projects/thirds", 1, 0)
+    thirds.update(input_tokens=33, output_tokens=33, cache_read_tokens=34)
+    panel = tui.ProjectRankingList(mr, [big, thirds], {}, {}, set(), lang="pt")
+    plain = _ranking_plain(panel)
+    thirds_row = next(line for line in plain if line.startswith("thirds"))
+    assert thirds_row[26:58].count("▓") == int(100 / 900 * 30)
+
+
+def test_project_ranking_series_colours_are_the_trend_charts_own() -> None:
+    # The markup colours must be the ANSI codes plotext gives the chart's
+    # series colours, or the ranking and the chart would disagree.
+    for series_index, chart_colour in enumerate(tui.TrendChart.SERIES_COLORS):
+        code = plotext.colorize("x", chart_colour).split("38;5;")[1].split("m")[0]
+        assert Color.parse(tui.SERIES_MARKUP_COLORS[series_index]).ansi == int(code)
+
+
+def test_project_ranking_ends_with_a_colour_key_for_the_token_types() -> None:
+    panel = tui.ProjectRankingList(mr, [_daily("/projects/a", 1, 10)], {}, {}, set(), lang="en")
+    markup = panel.render()
+    for series_index, name in enumerate(("input", "output", "cache read", "cache creation")):
+        colour = tui.SERIES_MARKUP_COLORS[series_index]
+        assert f"[{colour}]█[/{colour}] {name}" in markup

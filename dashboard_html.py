@@ -911,23 +911,6 @@ def render_trend_chart(
     )
 
 
-def compute_project_series_totals(
-    records: list[dict[str, Any]],
-) -> tuple[dict[str | None, dict[str, int]], dict[str | None, int]]:
-    per_project: dict[str | None, dict[str, int]] = {}
-    for record in records:
-        project = record.get("project_path")
-        bucket = per_project.setdefault(
-            project, {"series-1": 0, "series-2": 0, "series-3": 0, "series-4": 0}
-        )
-        bucket["series-1"] += record.get("input_tokens", 0) or 0
-        bucket["series-2"] += record.get("output_tokens", 0) or 0
-        bucket["series-3"] += record.get("cache_read_tokens", 0) or 0
-        bucket["series-4"] += record.get("cache_creation_tokens", 0) or 0
-    grand_totals = {project: sum(series.values()) for project, series in per_project.items()}
-    return per_project, grand_totals
-
-
 def render_project_totals_chart(
     records: list[dict[str, Any]],
     project_first_seen: dict[str, str],
@@ -944,7 +927,7 @@ def render_project_totals_chart(
     # composition legend can highlight/filter these bars the same way it
     # already does the trend chart's "por tipo de token" mode - same
     # series-N classes, same highlightTokenType handler, same CSS.
-    series_by_project, totals = compute_project_series_totals(records)
+    series_by_project, totals = metrics_core_module.compute_project_series_totals(records)
     # Omit zero-token projects (2026-07-20) - a project section with
     # nothing to show is just dead weight in this list.
     ordered_projects = [project for project in ordered_projects if totals.get(project, 0) > 0]

@@ -1232,6 +1232,38 @@ class ProjectLegend(Static):
         self.post_message(self.Highlight(self.highlighted))
 
 
+# Textual markup for the trend chart's four series colours. plotext draws
+# SERIES_COLORS ("green", "blue", "magenta", "orange") as the ANSI codes
+# 2, 4, 5 and 3; these names are the same four ANSI colours, and Textual
+# repaints both through its theme, so the ranking's segments match the
+# chart's bands (tests/test_tui_unconstrained.py checks the codes).
+SERIES_MARKUP_COLORS = ["ansi_green", "ansi_blue", "ansi_magenta", "ansi_yellow"]
+SERIES_NAMES = ["input", "output", "cache read", "cache creation"]
+
+
+def composition_bar_markup(
+    series_totals: dict[str, int], bar_length: int, bar_character: str
+) -> str:
+    """A bar of `bar_length` cells split by token type, one coloured run per
+    series. Cells are shared out by largest remainder, so the runs always
+    add up to exactly `bar_length` - never a cell gained or lost to
+    rounding."""
+    values = [series_totals.get(f"series-{index + 1}", 0) for index in range(4)]
+    total = sum(values)
+    if bar_length <= 0 or total <= 0:
+        return ""
+    exact = [value / total * bar_length for value in values]
+    cells = [int(share) for share in exact]
+    by_remainder = sorted(range(4), key=lambda index: exact[index] - cells[index], reverse=True)
+    for index in by_remainder[: bar_length - sum(cells)]:
+        cells[index] += 1
+    return "".join(
+        f"[{SERIES_MARKUP_COLORS[index]}]{bar_character * count}[/{SERIES_MARKUP_COLORS[index]}]"
+        for index, count in enumerate(cells)
+        if count
+    )
+
+
 class ProjectRankingList(Static):
     expanded = reactive(False)
 
@@ -1269,6 +1301,9 @@ class ProjectRankingList(Static):
             return f"[dim]{self.metrics_core_module.t('no_data', self.lang)}[/dim]"
 
         maximum_total = maximum_total or 1
+        series_by_project, _grand_totals = self.metrics_core_module.compute_project_series_totals(
+            self.chart_records
+        )
         visible = ordered[:10]
         hidden = ordered[10:]
         shown = visible + (hidden if self.expanded else [])
@@ -1287,9 +1322,14 @@ class ProjectRankingList(Static):
                 self.project_first_seen, project, lang=self.lang
             )
             formatted_total = self.metrics_core_module.format_tokens(total)
-            lines.append(
-                f"{label[:24]:<26}{bar_char * bar_length:<32}{formatted_total}{days_running}"
-            )
+            # A cut name says so (2026-10-05 review: "candidatador-de-vagas /"
+            # read as a whole name), and the bar is split by token type like
+            # the HTML ranking's. The markup tags take no cells, so the bar is
+            # padded by hand to keep the total column at its fixed offset.
+            shown_label = label if len(label) <= 24 else label[:23] + "…"
+            bar = composition_bar_markup(series_by_project.get(project, {}), bar_length, bar_char)
+            padding = " " * (32 - bar_length)
+            lines.append(f"{shown_label:<26}{bar}{padding}{formatted_total}{days_running}")
 
         if hidden:
             toggle_label = (
@@ -1301,6 +1341,12 @@ class ProjectRankingList(Static):
             lines.append(f"[dim]{toggle_label}[/dim]")
 
         lines.append("")
+        lines.append(
+            "   ".join(
+                f"[{colour}]█[/{colour}] {name}"
+                for colour, name in zip(SERIES_MARKUP_COLORS, SERIES_NAMES, strict=True)
+            )
+        )
         lines.append(
             f"[dim]{self.metrics_core_module.t('legend.open_session_tui', self.lang)}[/dim]"
         )

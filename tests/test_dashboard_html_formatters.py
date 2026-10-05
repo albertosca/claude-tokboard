@@ -300,7 +300,7 @@ def test_compute_project_series_totals_return_shape_is_pinned():
         {"project_path": "/a", "input_tokens": 3, "output_tokens": 0},
         {"project_path": None, "output_tokens": 7},
     ]
-    per_project, grand_totals = dashboard_html.compute_project_series_totals(records)
+    per_project, grand_totals = mr.compute_project_series_totals(records)
     assert per_project == {
         "/a": {"series-1": 13, "series-2": 5, "series-3": 1, "series-4": 2},
         None: {"series-1": 0, "series-2": 7, "series-3": 0, "series-4": 0},
@@ -312,7 +312,7 @@ def test_compute_project_series_totals_explicit_none_value_does_not_raise():
     # `r.get("input_tokens", 0) or 0` guards against a key that is PRESENT
     # but explicitly None, not just a missing key.
     records = [{"project_path": "/x", "input_tokens": None, "output_tokens": 5}]
-    per_project, grand_totals = dashboard_html.compute_project_series_totals(records)
+    per_project, grand_totals = mr.compute_project_series_totals(records)
     assert per_project == {"/x": {"series-1": 0, "series-2": 5, "series-3": 0, "series-4": 0}}
     assert grand_totals == {"/x": 5}
 
@@ -330,7 +330,7 @@ def test_compute_project_series_totals_all_four_fields_guard_explicit_none():
         {"project_path": "/x", "cache_read_tokens": None},
         {"project_path": "/x", "cache_creation_tokens": None},
     ]
-    per_project, grand_totals = dashboard_html.compute_project_series_totals(records)
+    per_project, grand_totals = mr.compute_project_series_totals(records)
     assert per_project == {"/x": {"series-1": 0, "series-2": 0, "series-3": 0, "series-4": 0}}
     assert grand_totals == {"/x": 0}
 
