@@ -122,6 +122,12 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "No subagents in this session.",
         "pt": "Nenhum subagente nesta sessão.",
     },
+    # Shown in the empty detail pane until a session is opened (2026-10-05
+    # review: the right-hand half of the page started blank, with no hint).
+    "detail.hint": {
+        "en": "Select a session to see its subagents.",
+        "pt": "Selecione uma sessão para ver os subagentes.",
+    },
     "detail.subagents_title": {
         "en": "Subagents dispatched ({n})",
         "pt": "Subagentes despachados ({n})",

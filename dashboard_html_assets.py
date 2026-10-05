@@ -281,6 +281,11 @@ STYLE = """
         clip: rect(0 0 0 0);
         white-space: nowrap;
       }
+      /* Hidden while a session's panel is open and in the active period. */
+      .detail-hint { padding: 16px; color: var(--text-muted); font-size: 13px; }
+      .detail-container:has(.detail-panel.open:not(.period-hidden)) .detail-hint {
+        display: none;
+      }
       .tab-pane { display: none; }
       .tab-pane.active { display: block; }
       .main-row { display: flex; }

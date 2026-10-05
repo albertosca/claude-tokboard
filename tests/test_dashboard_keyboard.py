@@ -115,3 +115,12 @@ def test_the_page_has_a_heading_a_main_region_and_named_charts(
     for chart in keyboard_report["charts"]:
         assert chart["role"] == "img"
         assert chart["label"]
+
+
+def test_the_empty_detail_pane_says_what_to_do_until_a_session_is_open(
+    keyboard_report: dict[str, Any],
+) -> None:
+    assert keyboard_report["hintText"] == mr.t("detail.hint", "pt")
+    assert keyboard_report["hintDisplayBefore"] != "none"
+    assert keyboard_report["hintDisplayAfterOpen"] == "none"
+    assert keyboard_report["hintDisplayAfterClose"] != "none"

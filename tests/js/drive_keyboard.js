@@ -57,6 +57,15 @@ report.rowsCollapsedAfterEnter = Array.from(
   document.querySelectorAll(`.session-row[data-group="${groupId}"]`),
 ).filter((row) => row.classList.contains("collapsed")).length;
 
+// The empty detail pane explains itself until a session is open
+// (2026-10-05 review, item 13).
+function hintDisplay() {
+  const hint = document.querySelector(".detail-container .detail-hint");
+  return hint ? window.getComputedStyle(hint).display : null;
+}
+report.hintText = (document.querySelector(".detail-hint") || { textContent: null }).textContent;
+report.hintDisplayBefore = hintDisplay();
+
 // A session row: Space opens its panel and does not scroll the page.
 const row = document.querySelector(`.session-row[data-group="${groupId}"]`);
 const sessionId = row.id.replace("row-", "");
@@ -65,6 +74,10 @@ report.panelOpenAfterSpace = document
   .getElementById(`detail-${sessionId}`)
   .classList.contains("open");
 report.rowControls = row.getAttribute("aria-controls");
+report.hintDisplayAfterOpen = hintDisplay();
+window.closeDetail(sessionId);
+report.hintDisplayAfterClose = hintDisplay();
+window.showSession(sessionId);
 
 // A key that is not an activation key does nothing.
 const otherRow = document.querySelectorAll(`.session-row[data-group="${groupId}"]`)[1] || row;

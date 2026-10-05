@@ -1354,7 +1354,9 @@ def render_html(
         '<div class="main-row">'
         f'<div class="session-list">{legend_blocks_html}'
         f"{render_session_header(has_tmux_data, lang=lang)}{''.join(rows_html)}</div>"
-        f'<div class="detail-container">{"".join(panels_html)}</div>'
+        '<div class="detail-container">'
+        f'<p class="detail-hint">{metrics_core_module.t("detail.hint", lang)}</p>'
+        f"{''.join(panels_html)}</div>"
         "</div>"
         "</div>"
     )
