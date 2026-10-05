@@ -365,8 +365,11 @@ def test_build_group_colors_project_reachable_only_via_daily_feed_still_gets_a_c
     # in chart_records (a worktree/subagent path visible only in the raw
     # per-day feed) must still receive a real colour, not fall back to
     # "group-color-none".
-    chart_records = [{"project_path": "/a"}]
-    daily_chart_records = [{"project_path": "/a"}, {"project_path": "/only-in-daily"}]
+    chart_records = [{"project_path": "/a", "input_tokens": 5}]
+    daily_chart_records = [
+        {"project_path": "/a", "input_tokens": 5},
+        {"project_path": "/only-in-daily", "input_tokens": 3},
+    ]
     colors = dashboard_html.build_group_colors(chart_records, daily_chart_records)
     assert colors["/only-in-daily"] != "group-color-none"
     assert colors == {"/a": "group-color-1", "/only-in-daily": "group-color-2"}

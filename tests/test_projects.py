@@ -250,7 +250,9 @@ def test_get_open_projects_on_a_glob_error_is_empty():
 
 
 def test_assign_group_colors_gives_each_project_its_own_slot():
-    colors = mr.assign_group_colors([record("/a"), record("/b"), record("/a")])
+    colors = mr.assign_group_colors(
+        [record("/a", input_tokens=2), record("/b", input_tokens=1), record("/a", input_tokens=2)]
+    )
     assert colors["/a"] == "group-color-1"
     assert colors["/b"] == "group-color-2"
 
@@ -446,3 +448,24 @@ def test_assign_group_colors_ranks_by_ranking_records_and_still_colours_every_pa
     assert colors["/b"] == "group-color-1"
     assert colors["/a"] == "group-color-2"
     assert colors[WORKTREE] == "group-color-other"
+
+
+def test_assign_project_slots_never_spends_a_slot_on_a_project_without_tokens():
+    # Whole-branch review (2026-10-05): a project opened in the last 30 days
+    # that recorded nothing ranked ahead of every all-time spender and
+    # pushed a real one into "others".
+    records = [record("/zero", RECENT, input_tokens=0)] + [
+        record(f"/old{index}", OLD, input_tokens=100 + index) for index in range(8)
+    ]
+    slots = mr.assign_project_slots(records, SLOT_NOW)
+    assert "/zero" not in slots
+    assert sorted(slots) == sorted(f"/old{index}" for index in range(8))
+
+
+@pytest.mark.parametrize("timestamp", [12345, ["2026-10-01"], {"at": "now"}])
+def test_assign_project_slots_survives_a_non_string_timestamp(timestamp: Any) -> None:
+    # A malformed row must not take the whole dashboard down; it simply
+    # does not count as recent (session_date tolerates the same shapes).
+    records = [record("/a", None, input_tokens=5), record("/b", RECENT, input_tokens=1)]
+    records[0]["timestamp_start"] = timestamp
+    assert mr.assign_project_slots(records, SLOT_NOW, slot_count=1) == {"/b": 0}
