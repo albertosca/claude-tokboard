@@ -460,15 +460,17 @@ def test_render_trend_chart_bar_tooltips_name_the_slice_the_bucket_and_the_amoun
     )
     first_project_label = mr.project_display_label("/proj/a", lang="pt")
     second_project_label = mr.project_display_label("/proj/b", lang="pt")
+    # Buckets are named the way the axis names them (2026-10-05 review).
+    first_day, last_day = "01/08", "10/08"
     assert _titles(_svg_block(out, "chart-pane-")) == [
-        f"{first_project_label} · 2026-08-01 - {mr.format_tokens(100)} tokens",
-        f"{second_project_label} · 2026-08-01 - {mr.format_tokens(40)} tokens",
-        f"{first_project_label} · 2026-08-10 - {mr.format_tokens(300)} tokens",
+        f"{first_project_label} · {first_day} - {mr.format_tokens(100)} tokens",
+        f"{second_project_label} · {first_day} - {mr.format_tokens(40)} tokens",
+        f"{first_project_label} · {last_day} - {mr.format_tokens(300)} tokens",
     ]
     assert _titles(_svg_block(out, "chart-tokens-")) == [
-        f"{dashboard_html.SERIES_NAMES['series-1']} · 2026-08-01 - {mr.format_tokens(100)} tokens",
-        f"{dashboard_html.SERIES_NAMES['series-2']} · 2026-08-01 - {mr.format_tokens(40)} tokens",
-        f"{dashboard_html.SERIES_NAMES['series-3']} · 2026-08-10 - {mr.format_tokens(300)} tokens",
+        f"{dashboard_html.SERIES_NAMES['series-1']} · {first_day} - {mr.format_tokens(100)} tokens",
+        f"{dashboard_html.SERIES_NAMES['series-2']} · {first_day} - {mr.format_tokens(40)} tokens",
+        f"{dashboard_html.SERIES_NAMES['series-3']} · {last_day} - {mr.format_tokens(300)} tokens",
     ]
 
 
@@ -1364,3 +1366,47 @@ def test_pane_legend_lists_the_slotted_projects_then_one_others_chip():
     swatches = re.findall(r'legend-swatch (group-color-[\w-]+)"', legend_html)
     assert swatches == [*[f"group-color-{slot}" for slot in range(1, 9)], "group-color-other"]
     assert legend_html.rstrip().endswith("others</span>")
+
+
+# --- chart labels (2026-10-05 review, items 10 and 11) -----------------------
+
+
+def _bar_titles(svg: str) -> list[str]:
+    return re.findall(r"<rect [^>]*chart-bar[^>]*><title>([^<]*)</title>", svg)
+
+
+@pytest.mark.parametrize("lang", ["pt", "en"])
+def test_bar_tooltips_name_the_bucket_the_way_the_axis_does(lang: str) -> None:
+    # The review's tooltip read "2026-W41-1" under an axis reading "S41/26".
+    out = dashboard_html.render_trend_chart(
+        _DAY_GRANULARITY_RECORDS, {"/proj/a": "group-color-1"}, "p1", lang=lang
+    )
+    expected = mr.tick_label("day", datetime(2026, 8, 5), lang)
+    for prefix in ("chart-pane-", "chart-tokens-", "chart-model-"):
+        titles = _bar_titles(_svg_block(out, prefix))
+        assert titles, prefix
+        assert any(f" · {expected} - " in title for title in titles), (prefix, titles)
+        assert not any("2026-08-05" in title for title in titles), (prefix, titles)
+
+
+def _many_day_records(day_count: int) -> list[dict[str, Any]]:
+    return [
+        _day_record(f"2026-08-{day:02d}", input_tokens=100 * day) for day in range(1, day_count + 1)
+    ]
+
+
+def test_the_shaded_band_explains_itself_when_it_is_drawn() -> None:
+    out = dashboard_html.render_trend_chart(
+        _many_day_records(10), {"/proj/a": "group-color-1"}, "p1", lang="pt"
+    )
+    note = mr.t("chart.band_note", "pt")
+    assert f'class="chart-highlight-band"><title>{note}</title></rect>' in out
+    assert f'<p class="chart-band-note">{note}</p>' in out
+
+
+def test_no_band_note_when_there_is_no_band() -> None:
+    out = dashboard_html.render_trend_chart(
+        _many_day_records(5), {"/proj/a": "group-color-1"}, "p1", lang="pt"
+    )
+    assert "chart-highlight-band" not in out
+    assert "chart-band-note" not in out

@@ -133,6 +133,7 @@ STYLE = """
       .trend-scroll { overflow-x: auto; max-width: 100%; }
       .trend-svg { height: 150px; display: block; margin: 0 auto; }
       .chart-highlight-band { fill: var(--series-1); opacity: 0.06; }
+      .chart-band-note { font-size: 10px; margin: 4px 0 0; color: var(--text-muted); }
       /* Diagonal hatch drawn over the trend chart's last (still-running)
          bucket, so it reads as "in progress" rather than a flat, seemingly
          final bar like every complete one beside it (backlog, 2026-09-02:

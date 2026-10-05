@@ -521,6 +521,15 @@ def render_trend_chart(
             )
         return "".join(parts)
 
+    # Tooltips name a bucket the way the x axis does ("S41/26", "Aug 5"),
+    # never by its raw key ("2026-W41-1") - 2026-10-05 review.
+    bucket_labels = [
+        metrics_core_module.tick_label(
+            granularity, datetime.strptime(day["day"], parse_format), lang
+        )
+        for day in days
+    ]
+
     tick_labels = []
     tick_count = min(5, day_count)
     for tick in range(tick_count):
@@ -541,15 +550,20 @@ def render_trend_chart(
     # now possible too, "last 7 of whatever unit is on screen" is the
     # only version of this that still makes sense across all of them).
     highlight_html = ""
+    band_note_html = ""
     if day_count > 7:
         highlight_start_index = day_count - 7
         highlight_left = padding_left + highlight_start_index * step
         hwidth = 7 * step
+        # The band explains itself (2026-10-05 review: nothing on the page
+        # said what it meant) - as a tooltip on the band and a caption.
+        band_note = html.escape(metrics_core_module.t("chart.band_note", lang))
         highlight_html = (
             f'<rect x="{highlight_left:.1f}" y="{padding_top}" '
             f'width="{hwidth:.1f}" height="{plot_height}" '
-            'class="chart-highlight-band" />'
+            f'class="chart-highlight-band"><title>{band_note}</title></rect>'
         )
+        band_note_html = f'<p class="chart-band-note">{band_note}</p>'
 
     # Tooltip suffix and hatch overlay for the last bucket while it's
     # still partial - `hatch_url` is None for a complete last bucket, so
@@ -615,7 +629,7 @@ def render_trend_chart(
                     f'width="{bar_width:.1f}" height="{seg_height:.1f}" '
                     f'class="chart-bar {group_class}" '
                     f"onclick=\"highlightProject('{group_class}', event)\">"
-                    f"<title>{html.escape(project_label)} · {day['day']} - "
+                    f"<title>{html.escape(project_label)} · {bucket_labels[day_index]} - "
                     f"{metrics_core_module.format_tokens(value)} tokens{note}</title></rect>"
                 )
                 if day_index == day_count - 1 and partial_fraction is not None:
@@ -654,7 +668,7 @@ def render_trend_chart(
                     f'width="{bar_width:.1f}" height="{seg_height:.1f}" '
                     f'class="chart-bar {css_class}" '
                     f"onclick=\"highlightTokenType('{css_class}', event)\">"
-                    f"<title>{type_name} · {day['day']} - "
+                    f"<title>{type_name} · {bucket_labels[day_index]} - "
                     f"{metrics_core_module.format_tokens(value)} tokens{note}</title></rect>"
                 )
                 if day_index == day_count - 1 and partial_fraction is not None:
@@ -733,7 +747,7 @@ def render_trend_chart(
                     f'width="{bar_width:.1f}" height="{seg_height:.1f}" '
                     f'class="chart-bar {css_class}" '
                     f"onclick=\"highlightModel('{css_class}', event)\">"
-                    f"<title>{html.escape(label)} · {day['day']} - "
+                    f"<title>{html.escape(label)} · {bucket_labels[day_index]} - "
                     f"{metrics_core_module.format_tokens(value)} tokens{note}</title></rect>"
                 )
                 if day_index == day_count - 1 and partial_fraction is not None:
@@ -928,6 +942,7 @@ def render_trend_chart(
         f'<div class="trend-scroll" data-floor-hit="{str(scrollable).lower()}">{model_svg}</div>'
         f'<div class="trend-legend-slot">{model_legend_html}</div>'
         "</div>"
+        f"{band_note_html}"
         "</div>"
     )
 

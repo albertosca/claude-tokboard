@@ -76,6 +76,11 @@ MESSAGES: dict[str, dict[str, str]] = {
     "mode.tokens": {"en": "By token type", "pt": "Por tipo de token"},
     "mode.model": {"en": "By model", "pt": "Por modelo"},
     "partial": {"en": " (partial, {pct}%)", "pt": " (parcial, {pct}%)"},
+    # What the trend chart's shaded band marks (2026-10-05 review).
+    "chart.band_note": {
+        "en": "shaded band: the last 7 bars",
+        "pt": "faixa sombreada: as últimas 7 barras",
+    },
     # The TUI chart's in-progress marker, one per granularity, printed on a
     # line of its own under the x axis (see TrendChart._draw_chart for why
     # not on the last tick). The short form is what a narrow chart gets.
