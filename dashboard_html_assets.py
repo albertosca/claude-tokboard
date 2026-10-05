@@ -384,7 +384,7 @@ STYLE = """
         border-bottom: 1px solid var(--border);
         font-family: monospace;
       }
-      .legend-chip { display: inline-flex; align-items: center; }
+      .legend-chip { display: inline-flex; align-items: center; min-height: 24px; }
       .comp-legend .legend-chip { cursor: pointer; }
       .legend-swatch {
         display: inline-block;

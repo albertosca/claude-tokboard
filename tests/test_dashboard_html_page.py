@@ -992,3 +992,19 @@ def test_main_saves_label_caches_periodically_during_a_large_batch(
     _run_main(monkeypatch, ["--html", "--label-budget", "0"])
     out = capsys.readouterr().out.strip()
     assert Path(out).read_text().startswith("<!DOCTYPE html>")
+
+
+def test_render_html_declares_a_device_width_viewport() -> None:
+    # 2026-10-05 review: without it a phone laid the page out at 980px and
+    # shrank it to fit, turning 11px text into ~4px.
+    out = dashboard_html.render_html(**_empty_render_html_kwargs(), lang="pt")
+    head = out[: out.index("</head>")]
+    assert '<meta name="viewport" content="width=device-width, initial-scale=1">' in head
+
+
+def test_legend_chips_are_at_least_a_24px_target() -> None:
+    # 2026-10-05 review: the chips measured 12px tall - under WCAG 2.2's
+    # 24px minimum target size for a control people click many times.
+    assert ".legend-chip { display: inline-flex; align-items: center; min-height: 24px; }" in (
+        dashboard_html_assets.STYLE
+    )

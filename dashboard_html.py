@@ -1378,6 +1378,7 @@ def render_html(
     )
     return (
         f"<!DOCTYPE html><html lang=\"{html_lang}\"><head><meta charset='utf-8'>"
+        '<meta name="viewport" content="width=device-width, initial-scale=1">'
         f"<title>{page_title}</title>{STYLE}</head>"
         f'<body data-highlight="{default_highlight}">'
         # A heading and a main region for screen readers, and a polite live
