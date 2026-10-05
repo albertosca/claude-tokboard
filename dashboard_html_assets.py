@@ -13,7 +13,9 @@ STYLE = """
         --surface-1: #fcfcfb;
         --text-primary: #0b0b0b;
         --text-secondary: #52514e;
-        --text-muted: #898781;
+        /* 4.98:1 on --surface-1; the old #898781 was 3.5:1, under WCAG's
+           4.5:1 for the 9-11px text it colours (2026-10-05 review). */
+        --text-muted: #6f6e69;
         --border: #e1e0d9;
         /* Pinned height for the sticky period filter, so the trend chart's
            own sticky wrapper (body > .period-block, see below) can offset
