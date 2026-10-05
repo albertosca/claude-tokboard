@@ -1077,10 +1077,12 @@ class TrendChart(PlotextPlot):
         maximum_total = max((sum(day) for day in zip(*series_lists, strict=True)), default=0)
         # plotext's default y-axis ticks are raw, unformatted floats (e.g.
         # "1591684.7") - unreadable next to token counts everywhere else in
-        # this dashboard already using k/M/B/T suffixes. Overriding with
-        # explicit ticks at even fractions of the tallest bar keeps the
-        # scale meaningful while reusing format_tokens for the labels.
-        tick_values = [maximum_total * fraction for fraction in (0, 0.25, 0.5, 0.75, 1.0)]
+        # this dashboard already using k/M/B/T suffixes. The ticks sit on
+        # round values (the same nice_axis_ticks the HTML chart uses; an
+        # even split of the tallest bar printed 2.0B/4.1B/6.1B/8.1B), and
+        # ylim below tops the axis at the last one so the bars are measured
+        # against the gridlines they are read by.
+        tick_values = self.metrics_core_module.nice_axis_ticks(maximum_total)
         tick_labels = [self.metrics_core_module.format_tokens(value) for value in tick_values]
         # The canvas is what is left of the widget once plotext has drawn
         # the widest y tick label and the two vertical frame lines beside
@@ -1104,6 +1106,7 @@ class TrendChart(PlotextPlot):
             self.plt, labels, series_lists, series_labels, color, canvas_width=canvas_width
         )
         self.plt.title(self.metrics_core_module.t(title, self.lang))
+        self.plt.ylim(0, tick_values[-1])
         self.plt.yticks(tick_values, tick_labels)
         # On a line of its own under the axis, not appended to the last
         # tick label as it once was: plotext drops any tick label that

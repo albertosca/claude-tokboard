@@ -432,7 +432,11 @@ def render_trend_chart(
     # input+output, so it wasn't a scale problem at all - the mode was
     # measuring a different quantity, orders of magnitude smaller than its own axis
     # labels and tooltips claimed (2026-08-10).
-    maximum_pane = max(day_totals) or 1
+    # The scale is the axis's top tick, not the busiest bucket: the y labels
+    # sit on round values (nice_axis_ticks), so a bar must be measured
+    # against the same top or it would disagree with its own gridlines.
+    axis_ticks = metrics_core_module.nice_axis_ticks(max(day_totals))
+    maximum_pane = axis_ticks[-1]
     maximum_tokens = maximum_pane
 
     height = 150
@@ -490,8 +494,7 @@ def render_trend_chart(
 
     def build_y_axis(maximum_value: float) -> str:
         parts = []
-        for fraction in (0, 0.25, 0.5, 0.75, 1.0):
-            value = maximum_value * fraction
+        for value in axis_ticks:
             vertical_position = y_for(value, maximum_value)
             parts.append(
                 f'<line x1="{padding_left}" y1="{vertical_position:.1f}" '

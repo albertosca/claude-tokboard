@@ -1,3 +1,4 @@
+import itertools
 import os
 import random
 import subprocess
@@ -306,3 +307,38 @@ def test_assign_model_slots_is_a_monotonic_subset_over_hundreds_of_random_histor
                     f"{history[prefix_length - 1]!r} was appended"
                 )
             previous_assignment = assignment
+
+
+# --- nice_axis_ticks ---------------------------------------------------
+
+
+def test_nice_axis_ticks_rounds_a_real_maximum_up_to_a_round_step() -> None:
+    # The review's real chart: an even split of 8.1B printed 2.0B/4.1B/6.1B/8.1B.
+    assert mr.nice_axis_ticks(8_100_000_000) == [
+        0,
+        2_500_000_000,
+        5_000_000_000,
+        7_500_000_000,
+        10_000_000_000,
+    ]
+
+
+def test_nice_axis_ticks_keeps_an_exact_round_maximum_as_the_top_tick() -> None:
+    assert mr.nice_axis_ticks(8_000) == [0, 2_000, 4_000, 6_000, 8_000]
+    assert mr.nice_axis_ticks(300) == [0, 100, 200, 300]
+
+
+def test_nice_axis_ticks_steps_are_one_two_two_and_a_half_or_five_times_a_power_of_ten() -> None:
+    for maximum in (1, 7, 13, 99, 101, 450, 1_234_567, 9_999_999_999):
+        ticks = mr.nice_axis_ticks(maximum)
+        step = ticks[1] - ticks[0]
+        mantissa = step / 10 ** len(str(int(step))) * 10
+        assert round(mantissa, 6) in (1, 2, 2.5, 5, 10), (maximum, step)
+        assert ticks[0] == 0
+        assert ticks[-1] >= maximum
+        assert ticks[-2] < maximum, (maximum, ticks)
+        assert all(later - earlier == step for earlier, later in itertools.pairwise(ticks))
+
+
+def test_nice_axis_ticks_survives_an_all_zero_chart() -> None:
+    assert mr.nice_axis_ticks(0) == [0, 1]

@@ -621,7 +621,10 @@ def test_every_mode_draws_a_day_against_the_same_scale():
 
     assert scales["model"] == scales["pane"]
     assert scales["model"] == scales["tokens"]
-    assert scales["model"][0] == mr.format_tokens(250), (
+    # The top tick is the first round value at or above the tallest day
+    # (nice_axis_ticks, 2026-10-05): 300 for a 250-token day. An axis built
+    # from the attributed part alone would top out at 40.
+    assert scales["model"][0] == mr.format_tokens(mr.nice_axis_ticks(250)[-1]) == "300", (
         "the tallest day is the one with NO attribution at all - reading its "
         "height off the ticks is what proves the remainder is carrying it"
     )

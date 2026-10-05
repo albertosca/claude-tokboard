@@ -352,13 +352,13 @@ _DAY_GRANULARITY_RECORDS = [
     _day_record("2026-08-05", input_tokens=200),
     _day_record("2026-08-10", input_tokens=300),
 ]
-# maximum_pane / maximum_tokens for the record set above: the largest per-day total.
-_DAY_GRANULARITY_MAX = 300
-VERTICAL_AXIS_FRACTIONS = (0.0, 0.25, 0.5, 0.75, 1.0)
+# The record set's busiest day is 300 tokens, a round value already, so the
+# axis tops out exactly there in steps of 100 (nice_axis_ticks).
+VERTICAL_AXIS_TICKS = (0, 100, 200, 300)
 
 
-def test_render_trend_chart_y_axis_draws_five_gridlines_spanning_the_whole_plot_area():
-    # Pins gridline COUNT (one per fraction in build_y_axis's tuple), their
+def test_render_trend_chart_y_axis_draws_one_gridline_per_round_tick_across_the_plot():
+    # Pins gridline COUNT (one per nice_axis_ticks value), their
     # class (the stylesheet hook - renaming it silently unstyles every
     # gridline), their y positions (top of plot to baseline, evenly
     # spaced), and their horizontal EXTENT: a gridline runs from the left
@@ -371,12 +371,12 @@ def test_render_trend_chart_y_axis_draws_five_gridlines_spanning_the_whole_plot_
         gridlines = [
             line for line in _parse_elements(svg, "line") if line.get("class") == "chart-gridline"
         ]
-        assert len(gridlines) == len(VERTICAL_AXIS_FRACTIONS)
+        assert len(gridlines) == len(VERTICAL_AXIS_TICKS)
         expected_ys = [
-            PADDING_TOP + PLOT_HEIGHT - fraction * PLOT_HEIGHT
-            for fraction in VERTICAL_AXIS_FRACTIONS
+            PADDING_TOP + PLOT_HEIGHT - tick / VERTICAL_AXIS_TICKS[-1] * PLOT_HEIGHT
+            for tick in VERTICAL_AXIS_TICKS
         ]
-        assert expected_ys == [130.0, 100.0, 70.0, 40.0, 10.0]
+        assert expected_ys == [130.0, 90.0, 50.0, 10.0]
         assert [line["y1"] for line in gridlines] == expected_ys
         for line in gridlines:
             assert line["y2"] == line["y1"]  # horizontal
@@ -395,10 +395,8 @@ def test_render_trend_chart_y_axis_labels_read_the_scale_from_zero_up_to_the_bus
     out = dashboard_html.render_trend_chart(
         _DAY_GRANULARITY_RECORDS, {"/proj/a": "group-color-1"}, "p1", lang="pt"
     )
-    expected_labels = [
-        mr.format_tokens(_DAY_GRANULARITY_MAX * fraction) for fraction in VERTICAL_AXIS_FRACTIONS
-    ]
-    assert expected_labels == ["0", "75", "150", "225", "300"]
+    expected_labels = [mr.format_tokens(tick) for tick in VERTICAL_AXIS_TICKS]
+    assert expected_labels == ["0", "100", "200", "300"]
     for svg in (_svg_block(out, "chart-pane-"), _svg_block(out, "chart-tokens-")):
         # The x-axis date ticks share the chart-axis-label class but are the
         # only ones centred on their bar (text-anchor="middle"); the y-axis
@@ -1302,3 +1300,27 @@ def test_render_trend_chart_model_mode_overflow_band_and_chip_agree_and_stay_ind
     borrowed_class = overflow_bands[0][0].replace("model-overflow-", "group-color-")
     assert any(css_class == borrowed_class for css_class, _ in bands), bands
     assert overflow_bands[0][0] != borrowed_class
+
+
+def test_render_trend_chart_y_axis_reads_round_values_and_scales_bars_to_the_top_tick():
+    # The review's real chart (2026-10-05): a busiest week of 8.1B printed
+    # 2.0B/4.1B/6.1B/8.1B. The axis now reads 0..10.0B in 2.5B steps, and the
+    # scale is the top tick, so the tallest bar is 8.1/10 of the plot.
+    records = [
+        _day_record("2026-08-01", input_tokens=1_000_000_000),
+        _day_record("2026-08-05", input_tokens=8_100_000_000),
+        _day_record("2026-08-10", input_tokens=2_000_000_000),
+    ]
+    out = dashboard_html.render_trend_chart(records, {"/proj/a": "group-color-1"}, "p1", lang="pt")
+    for svg in (_svg_block(out, "chart-pane-"), _svg_block(out, "chart-tokens-")):
+        axis_labels = [
+            text["text"]
+            for text in _parse_texts(svg)
+            if text.get("class") == "chart-axis-label" and "text-anchor" not in text
+        ]
+        assert axis_labels == ["0", "2.5B", "5.0B", "7.5B", "10.0B"]
+        bars = [
+            rect for rect in _parse_elements(svg, "rect") if "chart-bar" in rect.get("class", "")
+        ]
+        tallest = max(bar["height"] for bar in bars)
+        assert tallest == pytest.approx(PLOT_HEIGHT * 8.1 / 10, abs=0.1)

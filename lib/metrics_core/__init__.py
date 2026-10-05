@@ -62,6 +62,7 @@ from .format import (
     format_duration,
     format_tokens,
     model_display_label,
+    nice_axis_ticks,
 )
 from .granularity import (
     GRANULARITY_CONFIG,
@@ -218,6 +219,7 @@ __all__ = [
     "load_records",
     "model_display_label",
     "model_totals_as_of",
+    "nice_axis_ticks",
     "normalize_project_paths",
     "order_models_by_first_appearance",
     "parse_transcript",

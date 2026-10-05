@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import re
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -167,6 +168,28 @@ def assign_model_slots(models: Iterable[str], slots: int) -> dict[str, ModelColo
         assignment[model] = ModelColorSlot(palette_index=overflow_count % slots, is_overflow=True)
         overflow_count += 1
     return assignment
+
+
+# Token counts are whole numbers, so a step is one of these factors times a
+# power of ten, and never below 1 (an axis reading 0.25 tokens is noise).
+NICE_STEP_FACTORS = (1, 2, 2.5, 5, 10)
+
+
+def nice_axis_ticks(maximum_value: float, tick_count: int = 4) -> list[int]:
+    """Axis ticks at round values, from 0 up to the first round value at or
+    above maximum_value. An even split of the raw maximum (the old
+    behaviour of both trend charts) printed 2.0B, 4.1B, 6.1B, 8.1B."""
+    if maximum_value <= 0:
+        return [0, 1]
+    raw_step = maximum_value / tick_count
+    magnitude = max(1, 10 ** math.floor(math.log10(raw_step)))
+    step = next(
+        factor * magnitude
+        for factor in NICE_STEP_FACTORS
+        if factor * magnitude >= raw_step and float(factor * magnitude).is_integer()
+    )
+    count = math.ceil(maximum_value / step - 1e-9)
+    return [int(step * index) for index in range(count + 1)]
 
 
 def format_tokens(count: int | float | None) -> str:

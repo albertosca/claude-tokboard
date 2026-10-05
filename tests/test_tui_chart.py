@@ -380,3 +380,54 @@ def test_set_project_highlight_is_a_no_op_while_tokens_mode_is_showing(highlight
         "set_project_highlight (fed by the project legend, a pane-mode control) "
         "changed the currently-visible TOKENS render"
     )
+
+
+# --- the y axis (2026-10-05 review, item 6) -------------------------------
+
+
+async def _drive_axis_ticks() -> dict[str, Any]:
+    arguments = tui.build_arg_parser().parse_args(["--label-budget", "0"])
+    data = tui.load_data(arguments, metrics_core_module=mr)
+    async with tui.MetricsTUIApp(mr, data, arguments=arguments).run_test(size=(140, 45)) as pilot:
+        chart = await _open_panorama(pilot)
+        calls: dict[str, Any] = {}
+        original_yticks = chart.plt.yticks
+        original_ylim = chart.plt.ylim
+
+        def record_yticks(values: list[float], labels: list[str]) -> None:
+            calls["yticks"] = (list(values), list(labels))
+            original_yticks(values, labels)
+
+        def record_ylim(lower: float, upper: float) -> None:
+            calls["ylim"] = (lower, upper)
+            original_ylim(lower, upper)
+
+        chart.plt.yticks = record_yticks
+        chart.plt.ylim = record_ylim
+        chart.render_chart()
+        _granularity, days = mr.aggregate_by_day(data["daily_chart_records"])
+        calls["busiest"] = max(
+            sum(mr.record_token_total(record) for record in day["records"]) for day in days
+        )
+        return calls
+
+
+@pytest.fixture(scope="session")
+def axis_ticks(tmp_path_factory: pytest.TempPathFactory) -> Any:
+    monkeypatch = pytest.MonkeyPatch()
+    try:
+        seeded_tui_home(monkeypatch, tmp_path_factory.mktemp("tui-chart-axis-home"))
+        return _run(_drive_axis_ticks())
+    finally:
+        monkeypatch.undo()
+
+
+def test_y_ticks_sit_on_round_values_like_the_html_chart(axis_ticks):
+    # An even split of the busiest bar printed 2.0B/4.1B/6.1B/8.1B in both
+    # dashboards; both now ask nice_axis_ticks for the same round values.
+    expected = mr.nice_axis_ticks(axis_ticks["busiest"])
+    assert axis_ticks["yticks"] == (expected, [mr.format_tokens(value) for value in expected])
+
+
+def test_y_axis_tops_out_at_the_last_tick_so_bars_agree_with_their_gridlines(axis_ticks):
+    assert axis_ticks["ylim"] == (0, axis_ticks["yticks"][0][-1])
