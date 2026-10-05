@@ -1561,7 +1561,7 @@ def test_the_live_pass_and_the_backup_diff_name_the_same_rebuilt_rows(
 
 
 # ---------------------------------------------------------------------------
-# A backfill state that exists but cannot be read safely stops an apply
+# A backfill state that cannot be read, or is malformed, stops an apply
 # before anything is written: read as empty, the recording would replace
 # every boundary and name the file held with this run's entry alone. The
 # shapes are shared (tests/state_shapes.py).

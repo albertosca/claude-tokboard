@@ -29,7 +29,11 @@ sys.path.insert(0, str(REPO_ROOT / "lib"))
 sys.path.insert(0, str(REPO_ROOT))
 
 import metrics_core as mr  # noqa: E402
-from state_shapes import write_unreadable_state  # noqa: E402
+from state_shapes import (  # noqa: E402
+    SHAPE_NAMES,
+    restore_permissions,
+    write_unreadable_state,
+)
 from test_tui_state import seeded_tui_home  # noqa: E402
 from textual.widgets import Static  # noqa: E402
 
@@ -120,15 +124,17 @@ def test_the_note_is_one_line_cut_with_an_ellipsis_and_whole_on_hover(
     assert last_word in opened["hover_screen"]
 
 
-def test_the_tui_opens_over_a_state_that_is_not_utf8(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+@pytest.mark.parametrize("shape", SHAPE_NAMES)
+def test_the_tui_opens_over_every_state_the_strict_reader_refuses(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, shape: str
 ) -> None:
     # The dashboards read the state leniently: a file the strict reader
-    # refuses still opens the app, with the never-applied note.
+    # refuses still opens the app, with the note the lenient read gives.
     seeded_tui_home(monkeypatch, tmp_path)
     metrics = tmp_path / ".claude" / "metrics"
     (metrics / "config.json").write_text(json.dumps({"language": "en"}))
-    write_unreadable_state(metrics / "backfill_state.json", "not UTF-8")
+    state = metrics / "backfill_state.json"
+    write_unreadable_state(state, shape)
     arguments = tui.build_arg_parser().parse_args(["--label-budget", "0"])
 
     async def drive() -> str:
@@ -139,4 +145,10 @@ def test_the_tui_opens_over_a_state_that_is_not_utf8(
             await pilot.pause()
             return str(app.query(".backfill-note").first(Static).tooltip)
 
-    assert asyncio.run(drive()) == mr.describe_backfill_state(None, lang="en")
+    try:
+        expected = mr.describe_backfill_state(mr.load_backfill_state(str(state)), lang="en")
+        tooltip = asyncio.run(drive())
+    finally:
+        restore_permissions(state)
+    assert tooltip == expected
+    assert tooltip

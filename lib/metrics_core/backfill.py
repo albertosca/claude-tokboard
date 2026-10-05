@@ -1130,8 +1130,8 @@ def row_identities(records: list[dict[str, Any]], indexes: Iterable[int], id_key
 def cumulative_rows(previous: Any, identities: list[str]) -> dict[str, Any]:
     """The row-count keys of a state entry, over every run so far.
 
-    `previous` is the entry an earlier run left (anything else counts as
-    no earlier run) and `identities` names the rows this run changed (see
+    `previous` is the entry an earlier run left, or None when there is
+    none, and `identities` names the rows this run changed (see
     row_identities). Returns:
 
     - `corrected_rows`: CUMULATIVE - the distinct rows ever changed,
@@ -1147,20 +1147,36 @@ def cumulative_rows(previous: Any, identities: list[str]) -> dict[str, Any]:
     Adding each run's count, as every entry did before 2026-09-29, counted
     a row corrected by two runs twice: the tool_calls pass re-corrected
     session rows its 2026-09-28 run had written, and the state counted each
-    of them twice. An old entry that reported
-    no rows (0 or no count, or a null one) leaves nothing unidentified.
+    of them twice.
 
-    `previous` is an entry read_state_for_update accepted: the writers
-    refuse a state whose counts or names are malformed before anything is
-    written, so none reaches here. A null count is a valid one, meaning
-    UNKNOWN: an entry written while malformed counts were still read
-    leniently records them that way, and `corrected_rows` and
-    `unidentified_earlier_rows` stay null from then on - the same
-    "unknown for good" rule `earliest_corrected` follows.
+    A null count means one thing on an entry without names and another on
+    one with them:
+
+    - Count-only (written before names existed): a null `corrected_rows`,
+      like 0 or no count, reported no rows, and leaves nothing
+      unidentified.
+    - With `corrected_row_ids`: a null `unidentified_earlier_rows` is
+      UNKNOWN - what an entry written while malformed counts were still
+      read leniently recorded - and it and `corrected_rows` stay null from
+      then on, the same "unknown for good" rule `earliest_corrected`
+      follows.
+
+    Raises UnreadableStateError when `previous` is neither None nor an
+    object, or holds a malformed leaf (see _leaf_problem): folded in, a
+    string of names would become one name per character, and a decimal
+    count would be summed. The writers read the state through
+    read_state_for_update, which refuses those first.
     """
     names = set(identities)
     unidentified: int | None = 0
-    if isinstance(previous, dict):
+    if previous is not None:
+        problem = (
+            _entry_leaf_problem(previous, "the earlier entry")
+            if isinstance(previous, dict)
+            else f"the earlier entry is {_type_name(previous)}, not an object"
+        )
+        if problem:
+            raise UnreadableStateError(None, problem, malformed=True)
         if "corrected_row_ids" in previous:
             names.update(previous["corrected_row_ids"])
             unidentified = previous.get("unidentified_earlier_rows", 0)
@@ -1434,10 +1450,16 @@ def script_invocation(script_path: str) -> tuple[str, str]:
 
 
 class UnreadableStateError(Exception):
-    """A backfill state file that exists but cannot be read safely."""
+    """A backfill state a writer must not merge into: a file that exists
+    but cannot be read, or that reads fine and is malformed.
 
-    def __init__(self, path: str, reason: str) -> None:
-        super().__init__(f"the backfill state at {path} cannot be read ({reason})")
+    `path` is None for an entry handed over directly (cumulative_rows).
+    """
+
+    def __init__(self, path: str | None, reason: str, *, malformed: bool = False) -> None:
+        subject = "a backfill state entry" if path is None else f"the backfill state at {path}"
+        verdict = "is malformed" if malformed else "cannot be read"
+        super().__init__(f"{subject} {verdict} ({reason})")
         self.path = path
 
 
@@ -1456,6 +1478,13 @@ _JSON_TYPES: tuple[tuple[Any, str], ...] = (
 def _json_type(value: Any) -> str:
     """`value`'s type as JSON names it, for a message about the file."""
     return next(name for kinds, name in _JSON_TYPES if isinstance(value, kinds))
+
+
+def _type_name(value: Any) -> str:
+    """`value`'s type for a message: JSON's name when it has one."""
+    if any(isinstance(value, kinds) for kinds, _ in _JSON_TYPES):
+        return f"a JSON {_json_type(value)}"
+    return f"a {type(value).__name__}"
 
 
 def _container_problem(state: dict[str, Any]) -> str | None:
@@ -1543,10 +1572,18 @@ def _leaf_problem(state: dict[str, Any]) -> str | None:
     for name, entry in state.get("fields", {}).items():
         entries.append((f'"fields" entry "{name}"', entry))
     for place, entry in entries:
-        for key, value in entry.items():
-            problem = _leaf_value_problem(key, value)
-            if problem:
-                return f'the "{key}" of its {place} {problem}'
+        problem = _entry_leaf_problem(entry, f"its {place}")
+        if problem:
+            return problem
+    return None
+
+
+def _entry_leaf_problem(entry: dict[str, Any], place: str) -> str | None:
+    """What is wrong with the first malformed leaf of `entry`, or None."""
+    for key, value in entry.items():
+        problem = _leaf_value_problem(key, value)
+        if problem:
+            return f'the "{key}" of {place} {problem}'
     return None
 
 
@@ -1554,12 +1591,12 @@ def read_state_for_update(path: str) -> dict[str, Any]:
     """The backfill state at `path`, for a writer about to merge into it.
 
     A missing file is a first run, and reads as an empty state. Anything
-    else that cannot be read safely raises UnreadableStateError instead:
-    an empty file, bytes that are not UTF-8, malformed JSON, another
-    top-level type, a file this process may not open, a readable object
-    whose "subagents" or "fields" container (or one "fields" entry) is
-    not an object, or one whose entries hold a malformed leaf (see
-    _leaf_problem). A writer that took any of these for an empty state
+    else unsafe to merge into raises UnreadableStateError instead. A file
+    that "cannot be read": one this process may not open, an empty one,
+    bytes that are not UTF-8, malformed JSON. One that reads fine but "is
+    malformed": another top-level type, a "subagents" or "fields"
+    container (or one "fields" entry) that is not an object, or an entry
+    holding a malformed leaf (see _leaf_problem). A writer that took any of these for an empty state
     would replace every recorded boundary and row name with its own entry
     alone. load_backfill_state, which the dashboards read through, stays
     lenient.
@@ -1577,17 +1614,19 @@ def read_state_for_update(path: str) -> dict[str, Any]:
     except ValueError as problem:
         raise UnreadableStateError(path, f"{type(problem).__name__}: {problem}") from problem
     if not isinstance(state, dict):
-        raise UnreadableStateError(path, f"it holds a JSON {_json_type(state)}, not an object")
+        raise UnreadableStateError(
+            path, f"it holds a JSON {_json_type(state)}, not an object", malformed=True
+        )
     shape_problem = _container_problem(state) or _leaf_problem(state)
     if shape_problem:
-        raise UnreadableStateError(path, shape_problem)
+        raise UnreadableStateError(path, shape_problem, malformed=True)
     return state
 
 
 def unreadable_state_notice(path: str, *, apply: bool, dry_run_effect: str) -> str | None:
     """What a backfill script prints before it starts when the state at
-    `path` exists but cannot be read safely, or None when it can (or is
-    missing).
+    `path` exists but cannot be read or is malformed, or None when it is
+    safe to merge into (or missing).
 
     For an apply it is a refusal, printed before anything is written: the
     state is recorded only after the metrics file has been replaced, too

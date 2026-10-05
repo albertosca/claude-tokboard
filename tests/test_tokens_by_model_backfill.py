@@ -32,6 +32,7 @@ from state_shapes import (
     SHAPE_NAMES,
     UNREADABLE_STATES,
     restore_permissions,
+    valid_state_with_an_unknown_entry,
     write_unreadable_state,
 )
 
@@ -2460,10 +2461,36 @@ def test_a_backup_directory_that_does_not_exist_is_refused(script, tmp_path, mon
     assert not _state_path(tmp_path).exists()
 
 
-# A backfill state that exists but cannot be read safely stops an apply
+# A backfill state that cannot be read, or is malformed, stops an apply
 # before it writes anything: read as empty, the recording would replace
 # every name the file held with this run's alone. A dry run says so and
 # carries on. The shapes are shared (tests/state_shapes.py).
+
+
+def test_a_valid_state_with_null_counts_is_neither_warned_about_nor_refused(
+    script, tmp_path, monkeypatch, capsys
+):
+    _one_writable_session(tmp_path)
+    path = _state_path(tmp_path)
+    state = valid_state_with_an_unknown_entry("sessions.tokens_by_model")
+    path.write_text(json.dumps(state))
+
+    _applying_argv(monkeypatch, tmp_path)
+    assert script.main() == 0
+    error = capsys.readouterr().err
+    assert "WARNING" not in error
+    assert json.loads(path.read_text()) == state
+
+    _applying_argv(monkeypatch, tmp_path, "--apply", "--expect-checked", "1")
+    assert script.main() == 0
+    assert "refusing" not in capsys.readouterr().err
+    written = json.loads(path.read_text())
+    entry = written["fields"].pop("sessions.tokens_by_model")
+    assert entry["rows_changed_this_run"] == 1
+    assert entry["corrected_rows"] is None
+    assert entry["unidentified_earlier_rows"] is None
+    del state["fields"]["sessions.tokens_by_model"]
+    assert written == state
 
 
 @pytest.mark.parametrize("shape", SHAPE_NAMES)

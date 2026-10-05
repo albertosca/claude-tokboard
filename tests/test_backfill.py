@@ -8,6 +8,8 @@ from typing import Any
 import metrics_core as mr
 import pytest
 from state_shapes import (
+    FULL_VALID_STATE,
+    READ_FAILURE_SHAPES,
     SHAPE_NAMES,
     UNREADABLE_STATES,
     restore_permissions,
@@ -1461,7 +1463,7 @@ def test_a_later_apply_that_reaches_further_back_moves_the_boundary_back(tmp_pat
     assert written["corrected_rows"] == 13
 
 
-# A state that exists but cannot be read safely is never taken for an
+# A state that cannot be read, or is malformed, is never taken for an
 # empty one: a writer that did would replace every recorded boundary and
 # row name with its own entry alone. The shapes are shared with the script
 # and dashboard tests (tests/state_shapes.py).
@@ -1541,72 +1543,6 @@ def test_read_state_for_update_returns_a_readable_state(tmp_path):
     }
     path.write_text(json.dumps(state))
     assert mr.read_state_for_update(str(path)) == state
-
-
-# Every leaf shape a writer in this repository's history has produced, in
-# every place it can sit. A valid state is never refused: the nulls are
-# the writers' own ("unknown for good" counts, a by-model cutoff, no
-# retention boundary), and so is total_distinct_rows, which entries
-# written on 2026-09-29 carry (an int, or null) and later writers left in
-# place. Keys this version does not know are kept, for a newer one.
-FULL_VALID_STATE: dict[str, Any] = {
-    # The flat sessions entry, as written before row names existed.
-    "cutoff": "2026-08-21",
-    "applied_at": "2026-09-01T10:00:00",
-    "corrected_rows": 0,
-    "uncorrectable_rows": 0,
-    "earliest_corrected": None,
-    "a key from a newer version": {"anything": [1, None]},
-    "subagents": {
-        "cutoff": "2026-08-21",
-        "applied_at": "2026-09-02T10:00:00",
-        "corrected_rows": None,
-        "rows_changed_this_run": 0,
-        "corrected_row_ids": [],
-        "unidentified_earlier_rows": None,
-        "uncorrectable_rows": 4,
-        "earliest_corrected": "2026-07-01T09:00:00",
-    },
-    "fields": {
-        "sessions.tool_calls": {
-            "cutoff": "2026-08-21",
-            "applied_at": "2026-09-03T10:00:00",
-            "corrected_rows": 7,
-            "rows_changed_this_run": 1,
-            "corrected_row_ids": ["0123456789abcdef", "row-c"],
-            "unidentified_earlier_rows": 6,
-        },
-        "subagents.tool_calls": {
-            "cutoff": "2026-08-21",
-            "applied_at": "2026-09-04T10:00:00",
-            "corrected_rows": None,
-        },
-        "sessions.incomplete_usage": {
-            "cutoff": "2026-08-21",
-            "applied_at": "2026-09-05T10:00:00",
-            "corrected_rows": 2,
-            "total_distinct_rows": 2,
-            "corrected_row_ids": ["row-d", "row-e"],
-        },
-        "subagents.incomplete_usage": {
-            "cutoff": "2026-08-21",
-            "applied_at": "2026-09-05T10:00:00",
-            "corrected_rows": 3,
-            "total_distinct_rows": None,
-            "corrected_row_ids": ["row-f"],
-            "unidentified_earlier_rows": 0,
-        },
-        "sessions.tokens_by_model": {
-            "cutoff": None,
-            "applied_at": "2026-09-06T10:00:00",
-            "corrected_rows": 1,
-            "rows_changed_this_run": 1,
-            "corrected_row_ids": ["row-g"],
-            "a key from a newer version": "kept",
-        },
-        "sessions.a pass from a newer version": {},
-    },
-}
 
 
 def test_a_full_valid_state_is_read_for_an_update_as_it_is(tmp_path):
@@ -1699,6 +1635,63 @@ def test_the_refusal_names_the_malformed_leaf(tmp_path, shape, place, key, probl
     reason = f'the "{key}" of its {place} {problem}'
     with pytest.raises(mr.UnreadableStateError, match=re.escape(reason)):
         mr.read_state_for_update(str(path))
+
+
+@pytest.mark.parametrize("shape", SHAPE_NAMES)
+def test_the_refusal_says_cannot_be_read_only_for_a_read_failure(tmp_path, shape):
+    # A file whose bytes do not read as JSON "cannot be read"; one that
+    # reads fine but holds the wrong shape "is malformed".
+    path = _unreadable_state(tmp_path, shape)
+    try:
+        with pytest.raises(mr.UnreadableStateError) as raised:
+            mr.read_state_for_update(str(path))
+    finally:
+        restore_permissions(path)
+    message = str(raised.value)
+    if shape in READ_FAILURE_SHAPES:
+        assert f"the backfill state at {path} cannot be read (" in message
+        assert "malformed (" not in message
+    else:
+        assert f"the backfill state at {path} is malformed (" in message
+        assert "cannot be read" not in message
+
+
+@pytest.mark.parametrize(
+    ("previous", "reason"),
+    [
+        # A string of names would otherwise become one name per character.
+        (
+            {"corrected_row_ids": "abc"},
+            'the "corrected_row_ids" of the earlier entry is a JSON string, '
+            "not a list of non-empty strings",
+        ),
+        # A decimal count would otherwise be summed into the total.
+        (
+            {"corrected_rows": 3.5},
+            'the "corrected_rows" of the earlier entry is a decimal number, '
+            "not a non-negative integer or null",
+        ),
+        ([1], "the earlier entry is a JSON array, not an object"),
+        ((1,), "the earlier entry is a tuple, not an object"),
+    ],
+    ids=["string names", "decimal count", "a list", "not JSON at all"],
+)
+def test_cumulative_rows_refuses_a_malformed_earlier_entry(previous, reason):
+    with pytest.raises(mr.UnreadableStateError) as raised:
+        mr.cumulative_rows(previous, ["x"])
+    assert str(raised.value) == f"a backfill state entry is malformed ({reason})"
+
+
+def test_cumulative_rows_reads_a_null_count_by_what_the_entry_holds():
+    # Count-only (before names): null reported no rows. With names: null
+    # is the writers' own "unknown for good", and stays unknown.
+    assert mr.cumulative_rows({"corrected_rows": None}, ["x"])["corrected_rows"] == 1
+    named = {"corrected_rows": None, "corrected_row_ids": ["a"], "unidentified_earlier_rows": None}
+    entry = mr.cumulative_rows(named, ["x"])
+    assert entry["corrected_rows"] is None
+    assert entry["unidentified_earlier_rows"] is None
+    assert entry["corrected_row_ids"] == ["a", "x"]
+    assert mr.cumulative_rows(None, ["x"])["corrected_rows"] == 1
 
 
 @pytest.mark.parametrize("shape", SHAPE_NAMES)

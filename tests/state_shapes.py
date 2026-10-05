@@ -1,4 +1,4 @@
-"""Every shape of backfill state that exists but cannot be read safely.
+"""Every shape of backfill state that cannot be read, or is malformed.
 
 One list, imported by every test that needs it, so the library, the two
 scripts and the dashboards are all checked against the same shapes and
@@ -20,8 +20,10 @@ into what it writes, so it is refused like a malformed container.
 
 from __future__ import annotations
 
+import copy
 import json
 from pathlib import Path
+from typing import Any
 
 UNREADABLE_SHAPE = "unreadable"
 
@@ -98,6 +100,91 @@ UNREADABLE_STATES: dict[str, bytes] = {
 }
 
 SHAPE_NAMES = sorted(UNREADABLE_STATES)
+
+# The shapes whose bytes cannot be read as a JSON value at all. Every
+# other one reads fine and is malformed; the refusal says which.
+READ_FAILURE_SHAPES = frozenset({"malformed JSON", "not UTF-8", "empty", UNREADABLE_SHAPE})
+
+
+# Every leaf shape a writer in this repository's history has produced, in
+# every place it can sit. A valid state is never refused: the nulls are
+# the writers' own ("unknown for good" counts, a by-model cutoff, no
+# retention boundary), and so is total_distinct_rows, which entries
+# written on 2026-09-29 carry (an int, or null) and later writers left in
+# place. Keys this version does not know are kept, for a newer one.
+FULL_VALID_STATE: dict[str, Any] = {
+    # The flat sessions entry, as written before row names existed.
+    "cutoff": "2026-08-21",
+    "applied_at": "2026-09-01T10:00:00",
+    "corrected_rows": 0,
+    "uncorrectable_rows": 0,
+    "earliest_corrected": None,
+    "a key from a newer version": {"anything": [1, None]},
+    "subagents": {
+        "cutoff": "2026-08-21",
+        "applied_at": "2026-09-02T10:00:00",
+        "corrected_rows": None,
+        "rows_changed_this_run": 0,
+        "corrected_row_ids": [],
+        "unidentified_earlier_rows": None,
+        "uncorrectable_rows": 4,
+        "earliest_corrected": "2026-07-01T09:00:00",
+    },
+    "fields": {
+        "sessions.tool_calls": {
+            "cutoff": "2026-08-21",
+            "applied_at": "2026-09-03T10:00:00",
+            "corrected_rows": 7,
+            "rows_changed_this_run": 1,
+            "corrected_row_ids": ["0123456789abcdef", "row-c"],
+            "unidentified_earlier_rows": 6,
+        },
+        "subagents.tool_calls": {
+            "cutoff": "2026-08-21",
+            "applied_at": "2026-09-04T10:00:00",
+            "corrected_rows": None,
+        },
+        "sessions.incomplete_usage": {
+            "cutoff": "2026-08-21",
+            "applied_at": "2026-09-05T10:00:00",
+            "corrected_rows": 2,
+            "total_distinct_rows": 2,
+            "corrected_row_ids": ["row-d", "row-e"],
+        },
+        "subagents.incomplete_usage": {
+            "cutoff": "2026-08-21",
+            "applied_at": "2026-09-05T10:00:00",
+            "corrected_rows": 3,
+            "total_distinct_rows": None,
+            "corrected_row_ids": ["row-f"],
+            "unidentified_earlier_rows": 0,
+        },
+        "sessions.tokens_by_model": {
+            "cutoff": None,
+            "applied_at": "2026-09-06T10:00:00",
+            "corrected_rows": 1,
+            "rows_changed_this_run": 1,
+            "corrected_row_ids": ["row-g"],
+            "a key from a newer version": "kept",
+        },
+        "sessions.a pass from a newer version": {},
+    },
+}
+
+
+def valid_state_with_an_unknown_entry(key: str) -> dict[str, Any]:
+    """FULL_VALID_STATE, with the "fields" entry `key` holding the null
+    "unknown for good" counts a writer records and keeps."""
+    state = copy.deepcopy(FULL_VALID_STATE)
+    state["fields"][key] = {
+        "cutoff": None,
+        "applied_at": "2026-09-07T10:00:00",
+        "corrected_rows": None,
+        "rows_changed_this_run": 1,
+        "corrected_row_ids": ["row-h"],
+        "unidentified_earlier_rows": None,
+    }
+    return state
 
 
 def write_unreadable_state(path: Path, shape: str) -> None:

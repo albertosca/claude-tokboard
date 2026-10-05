@@ -14,6 +14,7 @@ from typing import Any
 
 import metrics_core as mr
 import pytest
+from state_shapes import valid_state_with_an_unknown_entry
 
 SCRIPT_PATH = Path(__file__).resolve().parent.parent / "scripts" / "backfill-token-dedup.py"
 
@@ -725,31 +726,55 @@ def test_a_token_run_never_touches_tool_call_count(tmp_path, script, monkeypatch
     assert paths["metrics"].read_bytes() == before
 
 
+@pytest.mark.parametrize(
+    ("leaf", "value"),
+    [("corrected_rows", "2000"), ("corrected_row_ids", [7, "abc"])],
+    ids=["a string count", "a number among the names"],
+)
 def test_an_apply_over_a_hand_edited_state_refuses_before_writing(
-    tmp_path, script, monkeypatch, capsys
+    tmp_path, script, monkeypatch, capsys, leaf, value
 ):
+    # One malformed leaf at a time, so the refusal is pinned to the check
+    # that names it.
     paths = fixture(tmp_path)
-    paths["state"].write_text(
-        json.dumps(
-            {
-                "fields": {
-                    "sessions.tool_calls": {
-                        "corrected_rows": "2000",
-                        "corrected_row_ids": [7, "abc"],
-                    }
-                }
-            }
-        )
-    )
+    paths["state"].write_text(json.dumps({"fields": {"sessions.tool_calls": {leaf: value}}}))
     state_before = paths["state"].read_bytes()
     metrics_before = paths["metrics"].read_bytes()
     monkeypatch.setattr("sys.argv", argv(paths, "--fields", "tool_calls", "--apply"))
 
     assert script.main() == 1
 
-    assert "refusing to apply" in capsys.readouterr().err
+    error = capsys.readouterr().err
+    assert "refusing to apply" in error
+    assert f'the "{leaf}" of its "fields" entry "sessions.tool_calls"' in error
     assert paths["state"].read_bytes() == state_before
     assert paths["metrics"].read_bytes() == metrics_before
+    assert not paths["backups"].exists()
+
+
+def test_a_valid_state_with_null_counts_is_neither_warned_about_nor_refused(
+    tmp_path, script, monkeypatch, capsys
+):
+    paths = fixture(tmp_path)
+    state = valid_state_with_an_unknown_entry("sessions.tool_calls")
+    paths["state"].write_text(json.dumps(state))
+
+    monkeypatch.setattr("sys.argv", argv(paths, "--fields", "tool_calls"))
+    assert script.main() == 0
+    assert capsys.readouterr().err == ""
+    assert json.loads(paths["state"].read_text()) == state
+
+    monkeypatch.setattr("sys.argv", argv(paths, "--fields", "tool_calls", "--apply"))
+    assert script.main() == 0
+    assert "refusing" not in capsys.readouterr().err
+    written = json.loads(paths["state"].read_text())
+    entry = written["fields"].pop("sessions.tool_calls")
+    # The run's own row joined, and the unknown count stayed unknown.
+    assert entry["rows_changed_this_run"] == 1
+    assert entry["corrected_rows"] is None
+    assert entry["unidentified_earlier_rows"] is None
+    del state["fields"]["sessions.tool_calls"]
+    assert written == state  # every other null and key as it was
 
 
 def test_a_state_write_that_fails_after_the_rewrite_warns_instead_of_raising(
