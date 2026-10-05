@@ -159,6 +159,29 @@ def test_is_ephemeral_path_false_for_an_ordinary_project_path():
     assert not mr.is_ephemeral_path("/Users/me/Programming/proj")
 
 
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/private/var/folders/ab/cdef_123/T/evalcwd-Ab12Cd",
+        "/var/folders/ab/cdef_123/T/evalcwd-Ab12Cd",
+        "/private/var/folders/ab/cdef_123/T",
+    ],
+)
+def test_is_ephemeral_path_matches_the_macos_per_user_temp_dir(path: str) -> None:
+    assert mr.is_ephemeral_path(path)
+
+
+def test_is_ephemeral_path_matches_the_temp_root_itself() -> None:
+    # A session started in /tmp itself used to become a project named "tmp".
+    assert mr.is_ephemeral_path("/tmp")
+    assert mr.is_ephemeral_path("/private/tmp/")
+
+
+def test_is_ephemeral_path_does_not_swallow_a_project_named_like_a_temp_dir() -> None:
+    assert not mr.is_ephemeral_path("/Users/me/Programming/var-folders-viewer")
+    assert not mr.is_ephemeral_path("/tmpfiles/proj")
+
+
 # --- normalize_project_paths ------------------------------------------------
 
 

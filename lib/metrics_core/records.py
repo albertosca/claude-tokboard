@@ -211,13 +211,18 @@ def normalize_project_paths(
     return records
 
 
+# macOS gives every user a private TMPDIR under /var/folders (reached as
+# /private/var/folders through the /var symlink). Tools that create a
+# throwaway cwd there - skill evals, for one - were each becoming a
+# "project" of their own: 201 of them on a real history (2026-10-05).
+EPHEMERAL_PREFIXES = ("/tmp/", "/private/tmp/", "/var/folders/", "/private/var/folders/")
+
+
 def is_ephemeral_path(path: str) -> bool:
-    normalized = path.rstrip("/")
-    return (
-        normalized.startswith("/tmp/")
-        or normalized.startswith("/private/tmp/")
-        or "/scratchpad" in normalized
-    )
+    # The trailing slash makes a temp root itself (a session started in
+    # /tmp) match its own prefix, while "/tmpfiles" still does not.
+    normalized = path.rstrip("/") + "/"
+    return normalized.startswith(EPHEMERAL_PREFIXES) or "/scratchpad" in normalized
 
 
 def dedupe_sessions(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
