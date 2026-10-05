@@ -750,3 +750,23 @@ def test_project_ranking_row_of_a_tiny_project_has_no_bar_and_keeps_its_columns(
     assert "[ansi_" not in markup_row
     plain_row = next(line for line in _ranking_plain(panel) if line.startswith("tiny"))
     assert plain_row[58 : 58 + len(mr.format_tokens(100))] == mr.format_tokens(100)
+
+
+def test_no_project_keeps_its_own_band_apart_from_others(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Whole-branch review (2026-10-05): the TUI folded "sem projeto" into
+    # "outros" while the HTML keeps it apart - and since the ephemeral-path
+    # fix, "sem projeto" holds every eval session.
+    no_project = _daily("ignored", 1, 300)
+    no_project["project_path"] = None
+    records = [_daily("/projects/alpha", 1, 100), _daily("/projects/unslotted", 2, 50), no_project]
+    chart = tui.TrendChart(mr, records, lang="pt", project_slots={"/projects/alpha": 0})
+    captured = _capture_stacked_bar_color(monkeypatch)
+    chart.render_chart()
+    assert chart.pane_series_keys == ["/projects/alpha", None, tui.PANE_OTHER_KEY]
+    assert captured["color"] == [
+        tui.PANE_COLORS[0],
+        tui.PANE_NO_PROJECT_COLOR,
+        tui.PANE_OTHER_COLOR,
+    ]
+    legend = tui.ProjectLegend(mr, records, lang="pt", project_slots={"/projects/alpha": 0})
+    assert legend.render().split("   ")[1:] == [mr.t("no_project", "pt"), mr.t("others", "pt")]

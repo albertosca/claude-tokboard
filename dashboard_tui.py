@@ -635,6 +635,12 @@ PANE_COLORS: list[PlotColor] = [
     (255, 30, 0),
 ]
 PANE_OTHER_COLOR = "gray"
+# "sem projeto" keeps a band of its own, as in the HTML dashboard: since the
+# ephemeral-path fix it holds every throwaway-cwd session (skill evals),
+# which "outros" would hide (2026-10-05 review). A light neutral, measured
+# at delta E 30.7 from the closest rendered colour above
+# (tests/test_tui_palette.py).
+PANE_NO_PROJECT_COLOR: PlotColor = (200, 198, 190)
 
 
 class OthersBucket:
@@ -660,30 +666,41 @@ def compute_pane_projects(
     metrics_core_module: ModuleType,
     chart_records: list[dict[str, Any]],
     project_slots: dict[str, int],
-) -> tuple[list[str], bool]:
+) -> tuple[list[str | None], bool]:
     """The projects that get their own band in this window, and whether an
     "outros" bucket is needed.
 
     Returns (keys, has_other): keys are the color_group_keys holding one
     of the colour slots that have tokens in chart_records, ordered by
     their spend here (the legend reads busiest first); has_other is True
-    when any project without a slot has tokens here. The slots themselves
+    when any project without a slot has tokens here. "No project" (None)
+    is listed last when it has tokens - it never holds a slot, and never
+    folds into "outros" either. The slots themselves
     are fixed for the run (metrics_core.assign_project_slots), so a
     project's colour does not change with the period on screen.
     """
     totals: dict[str, int] = {}
+    no_project_tokens = 0
     has_other = False
     for record in chart_records:
         key = metrics_core_module.color_group_key(record.get("project_path"))
         tokens = metrics_core_module.record_token_total(record)
-        if key is None or key not in project_slots:
+        if key is None:
+            no_project_tokens += tokens
+            continue
+        if key not in project_slots:
             has_other = has_other or tokens > 0
             continue
         totals[key] = totals.get(key, 0) + tokens
-    keys = sorted(
+    project_keys = sorted(
         (key for key in totals if totals[key] > 0),
         key=lambda sort_key: (-totals[sort_key], sort_key),
     )
+    keys: list[str | None] = [*project_keys]
+    # "sem projeto" keeps its own band after the projects, like the HTML
+    # legend; it never takes a colour slot.
+    if no_project_tokens > 0:
+        keys.append(None)
     return keys, has_other
 
 
@@ -1022,7 +1039,9 @@ class TrendChart(PlotextPlot):
             # "outros" bucket is gray by its key.
             palette = [
                 PANE_OTHER_COLOR
-                if isinstance(series_key, OthersBucket) or series_key is None
+                if isinstance(series_key, OthersBucket)
+                else PANE_NO_PROJECT_COLOR
+                if series_key is None
                 else PANE_COLORS[self.project_slots[series_key]]
                 for series_key in series_keys
             ]
@@ -1185,8 +1204,10 @@ class ProjectLegend(Static):
         self.metrics_core_module = metrics_core_module
         self.chart_records = chart_records
         self.lang = lang
-        # The chart's own slots (TrendChart.project_slots): the legend must
-        # list exactly the bands the chart draws.
+        # The chart's own slots (TrendChart.project_slots), so a project
+        # wears one colour in both. The legend still reads chart_records
+        # (sessions) where the chart reads daily deltas - a pre-existing
+        # difference, recorded in the backlog (2026-10-05 review).
         self.project_slots = (
             project_slots
             if project_slots is not None

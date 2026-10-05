@@ -139,7 +139,7 @@ def test_the_palette_has_room_for_every_model_seen_so_far_and_then_some() -> Non
 
 
 def test_every_project_colour_is_distinct_on_screen() -> None:
-    palette = [*tui.PANE_COLORS, tui.PANE_OTHER_COLOR]
+    palette = [*tui.PANE_COLORS, tui.PANE_OTHER_COLOR, tui.PANE_NO_PROJECT_COLOR]
     shown = rendered_colors(palette)
     too_close = [
         (palette[first_index], palette[second_index], round(delta_e(first_color, second_color), 1))
