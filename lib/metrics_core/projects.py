@@ -4,7 +4,7 @@ shared by both dashboard entry points."""
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -148,14 +148,83 @@ def get_open_projects(sessions_directory: str | None = None) -> set[str]:
     return open_projects
 
 
-def assign_group_colors(records: list[dict[str, Any]]) -> dict[str | None, str]:
-    # Keyed by raw project_path (so every existing `group_colors.get(project)`
-    # call site keeps working unchanged) but the SLOT is decided by
-    # color_group_key, so a worktree gets the exact same color as its
-    # parent project instead of its own slot (2026-07-21).
+# Eight colours, not thirty (2026-10-05 review): the old thirty slots cycled
+# through a generated hue sweep whose neighbours read as the same colour
+# (normal-vision delta E 1.6). Eight is what the validated palette in
+# dashboard_html_assets.py holds; the TUI's PANE_COLORS uses its first eight.
+PROJECT_COLOR_SLOTS = 8
+PROJECT_SLOT_WINDOW_DAYS = 30
+
+
+def _started_on_or_after(record: dict[str, Any], cutoff: datetime) -> bool:
+    timestamp_start = record.get("timestamp_start")
+    if not timestamp_start:
+        return False
+    try:
+        started = datetime.fromisoformat(timestamp_start.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    if started.tzinfo is None:
+        started = started.astimezone()
+    return started >= cutoff
+
+
+def assign_project_slots(
+    records: list[dict[str, Any]],
+    now: datetime,
+    slot_count: int = PROJECT_COLOR_SLOTS,
+    window_days: int = PROJECT_SLOT_WINDOW_DAYS,
+) -> dict[str, int]:
+    """Which projects get one of the colour slots, keyed by color_group_key.
+
+    The busiest projects of the last `window_days` come first, so the
+    projects a reader is working on now are the coloured ones in every
+    period (Alberto's choice, 2026-10-05). Slots still free go to the
+    biggest all-time spenders, so an old heavy project is not gray only
+    because few projects were active lately. Ties break by name, so a
+    render is deterministic. "No project" never takes a slot.
+    """
+    cutoff = now - timedelta(days=window_days)
+    recent_totals: dict[str, int] = {}
+    all_time_totals: dict[str, int] = {}
+    for record in records:
+        key = color_group_key(record.get("project_path"))
+        if key is None:
+            continue
+        tokens = record_token_total(record)
+        all_time_totals[key] = all_time_totals.get(key, 0) + tokens
+        if _started_on_or_after(record, cutoff):
+            recent_totals[key] = recent_totals.get(key, 0) + tokens
+
+    def by_spend(totals: dict[str, int]) -> list[str]:
+        return sorted(totals, key=lambda key: (-totals[key], key))
+
+    ordered = by_spend(recent_totals)
+    ordered += [key for key in by_spend(all_time_totals) if key not in recent_totals]
+    return {key: slot for slot, key in enumerate(ordered[:slot_count])}
+
+
+def assign_group_colors(
+    records: list[dict[str, Any]],
+    now: datetime | None = None,
+    ranking_records: list[dict[str, Any]] | None = None,
+) -> dict[str | None, str]:
+    """The colour class of every raw project_path in `records`.
+
+    Keyed by raw path (every `group_colors.get(project)` call site keeps
+    working) while the slot is decided by color_group_key, so a worktree
+    shares its parent's colour. A project without a slot is
+    "group-color-other" - drawn and listed as "others" - and a record with
+    no project is "group-color-none".
+
+    `ranking_records` is the feed whose spend decides the slots when
+    `records` holds more than one view of the same tokens (the HTML
+    dashboard's session snapshots plus their per-day deltas)."""
+    slots = assign_project_slots(
+        records if ranking_records is None else ranking_records,
+        now or datetime.now().astimezone(),
+    )
     assignment: dict[str | None, str] = {}
-    key_to_color: dict[str | None, str] = {}
-    next_slot = 0
     for record in records:
         project = record.get("project_path")
         if project in assignment:
@@ -164,11 +233,8 @@ def assign_group_colors(records: list[dict[str, Any]]) -> dict[str | None, str]:
             assignment[project] = "group-color-none"
             continue
         key = color_group_key(project)
-        if key not in key_to_color:
-            slot = (next_slot % 30) + 1
-            key_to_color[key] = f"group-color-{slot}"
-            next_slot += 1
-        assignment[project] = key_to_color[key]
+        slot = slots.get(key) if key is not None else None
+        assignment[project] = "group-color-other" if slot is None else f"group-color-{slot + 1}"
     return assignment
 
 

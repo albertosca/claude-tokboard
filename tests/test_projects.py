@@ -1,5 +1,5 @@
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import metrics_core as mr
@@ -265,11 +265,87 @@ def test_assign_group_colors_marks_a_pathless_record():
     assert colors[None] == "group-color-none"
 
 
-def test_assign_group_colors_wraps_after_thirty_slots():
-    colors = mr.assign_group_colors([record(f"/p{index}") for index in range(31)])
-    assert colors["/p0"] == "group-color-1"
-    assert colors["/p29"] == "group-color-30"
-    assert colors["/p30"] == "group-color-1"
+# --- assign_project_slots: the eight colours go to the busiest projects ---
+#
+# 2026-10-05 review: thirty first-appearance slots cycled through a hue
+# sweep whose neighbours were indistinguishable (normal-vision delta E 1.6).
+# Eight validated colours now go to the projects with the most spend in the
+# last 30 days; free slots go to the biggest all-time spenders; everything
+# else is "others".
+
+SLOT_NOW = datetime(2026, 10, 5, 12, 0, tzinfo=timezone.utc)
+RECENT = "2026-10-01T10:00:00+00:00"
+OLD = "2026-06-01T10:00:00+00:00"
+
+
+def test_assign_project_slots_gives_the_eight_slots_to_the_biggest_recent_spenders():
+    records = [record(f"/p{index}", RECENT, input_tokens=100 + index) for index in range(10)]
+    slots = mr.assign_project_slots(records, SLOT_NOW)
+    assert slots == {f"/p{index}": 9 - index for index in range(2, 10)}
+
+
+def test_assign_group_colors_folds_projects_without_a_slot_into_others():
+    records = [record(f"/p{index}", RECENT, input_tokens=100 + index) for index in range(10)]
+    colors = mr.assign_group_colors(records, now=SLOT_NOW)
+    assert colors["/p9"] == "group-color-1"
+    assert colors["/p2"] == "group-color-8"
+    assert colors["/p1"] == colors["/p0"] == "group-color-other"
+
+
+def test_assign_project_slots_fills_free_slots_by_all_time_spend():
+    # Review Focus 1: three recent projects must not leave five slots empty
+    # while big old projects turn gray.
+    records = [
+        record("/recent-small", RECENT, input_tokens=10),
+        record("/recent-big", RECENT, input_tokens=30),
+        record("/recent-mid", RECENT, input_tokens=20),
+        *[record(f"/old{index}", OLD, input_tokens=1000 * (index + 1)) for index in range(6)],
+    ]
+    slots = mr.assign_project_slots(records, SLOT_NOW)
+    assert [slots["/recent-big"], slots["/recent-mid"], slots["/recent-small"]] == [0, 1, 2]
+    assert [slots[f"/old{index}"] for index in (5, 4, 3, 2, 1)] == [3, 4, 5, 6, 7]
+    assert "/old0" not in slots
+
+
+def test_assign_project_slots_ranks_recent_spend_not_lifetime_spend():
+    records = [
+        record("/old-giant", OLD, input_tokens=1_000_000),
+        record("/old-giant", RECENT, input_tokens=1),
+        record("/new-busy", RECENT, input_tokens=500),
+    ]
+    slots = mr.assign_project_slots(records, SLOT_NOW, slot_count=1)
+    assert slots == {"/new-busy": 0}
+
+
+def test_assign_project_slots_never_gives_a_slot_to_no_project_and_shares_it_with_worktrees():
+    # Review Focus 2.
+    records = [
+        record(None, RECENT, input_tokens=10_000),
+        record("/home/me/proj", RECENT, input_tokens=5),
+        record(WORKTREE, RECENT, input_tokens=5),
+    ]
+    slots = mr.assign_project_slots(records, SLOT_NOW)
+    assert slots == {"/home/me/proj": 0}
+    colors = mr.assign_group_colors(records, now=SLOT_NOW)
+    assert colors[WORKTREE] == colors["/home/me/proj"] == "group-color-1"
+    assert colors[None] == "group-color-none"
+
+
+def test_assign_project_slots_counts_an_undated_record_only_in_the_all_time_ranking():
+    # Review Focus 5: no timestamp_start must not crash, and must not count
+    # as recent spend.
+    records = [
+        record("/undated", None, input_tokens=1_000),
+        record("/recent", RECENT, input_tokens=1),
+    ]
+    slots = mr.assign_project_slots(records, SLOT_NOW, slot_count=1)
+    assert slots == {"/recent": 0}
+    assert mr.assign_project_slots(records, SLOT_NOW, slot_count=2) == {"/recent": 0, "/undated": 1}
+
+
+def test_assign_project_slots_breaks_ties_by_name_so_colours_are_deterministic():
+    records = [record("/b", RECENT, input_tokens=5), record("/a", RECENT, input_tokens=5)]
+    assert mr.assign_project_slots(records, SLOT_NOW) == {"/a": 0, "/b": 1}
 
 
 # --- build_project_groups --------------------------------------------
@@ -358,3 +434,15 @@ def test_the_claude_marker_still_wins_inside_a_plain_worktrees_directory():
     # the path was actually created by, so it decides.
     both = "/home/me/proj/.worktrees/a/.claude/worktrees/b"
     assert mr.project_display_label(both, lang="pt") == "a / b"
+
+
+def test_assign_group_colors_ranks_by_ranking_records_and_still_colours_every_path():
+    # The HTML dashboard colours paths from two feeds (session snapshots and
+    # their per-day deltas); ranking both would count every token twice and
+    # rank a delta-only path at half weight. Spend comes from ranking_records.
+    snapshots = [record("/a", RECENT, input_tokens=10), record("/b", RECENT, input_tokens=20)]
+    deltas = [record("/a", RECENT, input_tokens=10_000), record(WORKTREE, RECENT, input_tokens=1)]
+    colors = mr.assign_group_colors(snapshots + deltas, now=SLOT_NOW, ranking_records=snapshots)
+    assert colors["/b"] == "group-color-1"
+    assert colors["/a"] == "group-color-2"
+    assert colors[WORKTREE] == "group-color-other"

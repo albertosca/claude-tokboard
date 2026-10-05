@@ -11,6 +11,7 @@ innocent refactor of e.g. whitespace doesn't fail the suite.
 
 import re
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -339,25 +340,29 @@ def test_compute_project_series_totals_all_four_fields_guard_explicit_none():
 # --------------------------------------------------------------------------
 
 
-def test_build_group_colors_chart_records_are_assigned_before_daily_records():
-    # Named test for the documented 2026-08-10 regression (line 730-748):
-    # chart_records must be concatenated FIRST so its colour assignments
-    # never shift when daily_chart_records also contains those paths.
-    chart_records = [{"project_path": "/a"}, {"project_path": "/b"}]
-    daily_chart_records = [{"project_path": "/b"}, {"project_path": "/c"}]
-    colors = dashboard_html.build_group_colors(chart_records, daily_chart_records)
-    assert colors == {
-        "/a": "group-color-1",
-        "/b": "group-color-2",
-        "/c": "group-color-3",
-    }
+def test_build_group_colors_ranks_by_the_daily_feed_the_chart_draws():
+    # 2026-10-05: the eight colour slots go to the biggest spenders, measured
+    # on the feed the trend chart actually draws. Snapshots re-count the
+    # same tokens, so they colour paths but do not rank them.
+    now = datetime(2026, 10, 5, 12, 0, tzinfo=timezone.utc)
+    recent = "2026-10-01T10:00:00+00:00"
+    chart_records = [
+        {"project_path": "/a", "timestamp_start": recent, "input_tokens": 1_000_000},
+        {"project_path": "/b", "timestamp_start": recent, "input_tokens": 1},
+    ]
+    daily_chart_records = [
+        {"project_path": "/a", "timestamp_start": recent, "input_tokens": 10},
+        {"project_path": "/b", "timestamp_start": recent, "input_tokens": 20},
+    ]
+    colors = dashboard_html.build_group_colors(chart_records, daily_chart_records, now=now)
+    assert colors == {"/a": "group-color-2", "/b": "group-color-1"}
 
 
 def test_build_group_colors_project_reachable_only_via_daily_feed_still_gets_a_color():
-    # This is the actual regression scenario: a project_path that never
-    # appears in chart_records (a worktree/subagent path visible only in
-    # the raw per-day feed) must still receive a real colour, not fall
-    # back to "group-color-none".
+    # The 2026-08-10 regression scenario: a project_path that never appears
+    # in chart_records (a worktree/subagent path visible only in the raw
+    # per-day feed) must still receive a real colour, not fall back to
+    # "group-color-none".
     chart_records = [{"project_path": "/a"}]
     daily_chart_records = [{"project_path": "/a"}, {"project_path": "/only-in-daily"}]
     colors = dashboard_html.build_group_colors(chart_records, daily_chart_records)

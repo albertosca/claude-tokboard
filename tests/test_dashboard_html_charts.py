@@ -1324,3 +1324,42 @@ def test_render_trend_chart_y_axis_reads_round_values_and_scales_bars_to_the_top
         ]
         tallest = max(bar["height"] for bar in bars)
         assert tallest == pytest.approx(PLOT_HEIGHT * 8.1 / 10, abs=0.1)
+
+
+# --- "outros": projects without a colour slot (2026-10-05 review, item 4) ---
+
+
+def _ten_projects_on_two_days() -> tuple[list[dict[str, Any]], dict[str | None, str]]:
+    records = []
+    for day in ("2026-08-01", "2026-08-02"):
+        for index in range(10):
+            records.append(
+                _day_record(day, index=index, input_tokens=100 + index, project=f"/proj/p{index}")
+            )
+    group_colors: dict[str | None, str] = {
+        f"/proj/p{index}": f"group-color-{10 - index}" for index in range(2, 10)
+    }
+    group_colors["/proj/p0"] = group_colors["/proj/p1"] = "group-color-other"
+    return records, group_colors
+
+
+def test_pane_chart_draws_projects_without_a_slot_as_one_others_segment_per_day():
+    records, group_colors = _ten_projects_on_two_days()
+    out = dashboard_html.render_trend_chart(records, group_colors, "p1", lang="pt")
+    pane_svg = _svg_block(out, "chart-pane-")
+    other_rects = re.findall(
+        r'<rect [^>]*class="chart-bar group-color-other"[^>]*>(.*?)</rect>', pane_svg
+    )
+    assert len(other_rects) == 2
+    # One segment carrying both projects' tokens, named "outros".
+    assert all("outros" in title and "201 tokens" in title for title in other_rects)
+
+
+def test_pane_legend_lists_the_slotted_projects_then_one_others_chip():
+    records, group_colors = _ten_projects_on_two_days()
+    out = dashboard_html.render_trend_chart(records, group_colors, "p1", lang="en")
+    legend_html = out[out.index("project-chart-legend") :]
+    legend_html = legend_html[: legend_html.index("</div>")]
+    swatches = re.findall(r'legend-swatch (group-color-[\w-]+)"', legend_html)
+    assert swatches == [*[f"group-color-{slot}" for slot in range(1, 9)], "group-color-other"]
+    assert legend_html.rstrip().endswith("others</span>")

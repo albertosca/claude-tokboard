@@ -99,7 +99,9 @@ from .paths import (
 )
 from .periods import DEFAULT_PERIOD_ID, PERIODS, Period, period_label, resolve_period
 from .projects import (
+    PROJECT_COLOR_SLOTS,
     assign_group_colors,
+    assign_project_slots,
     build_project_groups,
     color_group_key,
     compute_project_first_seen,
@@ -145,6 +147,7 @@ __all__ = [
     "MESSAGES",
     "METRICS_FILE",
     "PERIODS",
+    "PROJECT_COLOR_SLOTS",
     "RAW",
     "REBUILT_MAPS_FIELD",
     "SUBAGENTS_FILE",
@@ -169,6 +172,7 @@ __all__ = [
     "as_of",
     "assign_group_colors",
     "assign_model_slots",
+    "assign_project_slots",
     "at_cut",
     "build_file_order_sums",
     "build_prefix_sums",

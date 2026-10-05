@@ -363,6 +363,9 @@ def render_detail_panel(
     )
 
 
+# The class of every project without one of the eight colour slots
+# (metrics_core.assign_group_colors); drawn as one "others" segment.
+OTHERS_CLASS = "group-color-other"
 # The group-color-N classes the stylesheet defines (dashboard_html_assets.py).
 MODEL_COLOR_SLOTS = 30
 
@@ -558,15 +561,24 @@ def render_trend_chart(
             f'class="chart-bar-partial" fill="url(#{hatch_id})" pointer-events="none" />'
         )
 
+    def pane_bucket(project: str | None) -> str | None:
+        """The segment a project's tokens go to: its own path, or the one
+        "others" bucket. The bucket's key is the class name, which no real
+        project path can collide with - paths are absolute."""
+        return OTHERS_CLASS if group_colors.get(project) == OTHERS_CLASS else project
+
     def bars_for_pane() -> str:
         bars = []
         hatch_id = f"chart-hatch-pane-{period_id}"
         for day_index, day in enumerate(days):
             bar_left = padding_left + day_index * step + (step - bar_width) / 2
+            # Projects without a colour slot share one "others" segment:
+            # drawn apart, each would be a gray block nobody can tell from
+            # its neighbour (2026-10-05 review).
             by_project: dict[str | None, int] = {}
             project_order: list[str | None] = []
             for record in day["records"]:
-                project = record.get("project_path")
+                project = pane_bucket(record.get("project_path"))
                 if project not in by_project:
                     by_project[project] = 0
                     project_order.append(project)
@@ -579,7 +591,11 @@ def render_trend_chart(
                 seg_height = (value / maximum_pane) * plot_height if maximum_pane else 0
                 vertical_cursor -= seg_height
                 group_class = group_colors.get(project, "group-color-none")
-                project_label = metrics_core_module.project_display_label(project, lang=lang)
+                if project == OTHERS_CLASS:
+                    group_class = OTHERS_CLASS
+                    project_label = metrics_core_module.t("others", lang)
+                else:
+                    project_label = metrics_core_module.project_display_label(project, lang=lang)
                 note = partial_note if day_index == day_count - 1 else ""
                 bars.append(
                     f'<rect x="{bar_left:.1f}" y="{vertical_cursor:.1f}" '
@@ -797,9 +813,13 @@ def render_trend_chart(
     # links to, exactly as before.
     pane_totals: dict[str | None, int] = {}
     pane_first_path: dict[str | None, Any] = {}
+    has_others = False
     for day in days:
         for record in day["records"]:
             project = record.get("project_path")
+            if pane_bucket(project) == OTHERS_CLASS:
+                has_others = has_others or metrics_core_module.record_token_total(record) > 0
+                continue
             key = metrics_core_module.color_group_key(project)
             pane_totals[key] = pane_totals.get(key, 0) + metrics_core_module.record_token_total(
                 record
@@ -829,6 +849,15 @@ def render_trend_chart(
             f'<span class="legend-chip" '
             f"onclick=\"highlightProject('{group_class}', event)\">"
             f'<span class="legend-swatch {group_class}"></span>{chip_text}</span>'
+        )
+    # "Others" is listed last whatever its size: it is the remainder of the
+    # legend, not a project competing for a place in it.
+    if has_others:
+        pane_legend_chips.append(
+            f'<span class="legend-chip" '
+            f"onclick=\"highlightProject('{OTHERS_CLASS}', event)\">"
+            f'<span class="legend-swatch {OTHERS_CLASS}"></span>'
+            f"{metrics_core_module.t('others', lang)}</span>"
         )
     pane_legend = "".join(pane_legend_chips)
     pane_legend_html = f'<div class="project-chart-legend">{pane_legend}</div>'
@@ -1078,7 +1107,9 @@ def render_project_totals_chart(
 
 
 def build_group_colors(
-    chart_records: list[dict[str, Any]], daily_chart_records: list[dict[str, Any]]
+    chart_records: list[dict[str, Any]],
+    daily_chart_records: list[dict[str, Any]],
+    now: datetime | None = None,
 ) -> dict[str | None, str]:
     # The trend chart renders daily_chart_records (raw, pre-dedup snapshots
     # expanded into per-day deltas) while colours and the legend are built
@@ -1090,12 +1121,17 @@ def build_group_colors(
     # nothing in the legend (regression introduced by bd2e899; found
     # 2026-08-10 with over half of the rendered paths uncoloured).
     #
-    # chart_records goes FIRST so every colour slot already assigned keeps
-    # the exact number it had - assign_group_colors skips a project_path it
-    # has seen, so appending the daily feed can only ever ADD the missing
-    # ones. Worktrees still collapse onto their parent's colour, because
-    # the slot is chosen by color_group_key rather than the raw path.
-    return metrics_core_module.assign_group_colors(list(chart_records) + list(daily_chart_records))
+    # Both feeds are coloured, so a path reachable only through the deltas
+    # still gets its class. Worktrees collapse onto their parent's colour,
+    # because the slot is chosen by color_group_key rather than the raw path.
+    # Spend is ranked over daily_chart_records alone, the feed the trend
+    # chart draws: ranking both feeds would count every token twice, and a
+    # path seen only in the deltas would rank at half its weight.
+    return metrics_core_module.assign_group_colors(
+        list(chart_records) + list(daily_chart_records),
+        now=now,
+        ranking_records=daily_chart_records,
+    )
 
 
 def render_backfill_note(*, lang: str) -> str:
@@ -1130,7 +1166,7 @@ def render_html(
     *,
     lang: str,
 ) -> str:
-    group_colors = build_group_colors(chart_records, daily_chart_records)
+    group_colors = build_group_colors(chart_records, daily_chart_records, now=now)
     # Over the whole history, not per period, so a model keeps its colour
     # in every period's chart - see metrics_core_module.assign_model_slots.
     # Ordered by first appearance, not compute_model_totals' dict order (not

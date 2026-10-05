@@ -26,14 +26,19 @@ STYLE = """
         --series-2: #1baf7a;
         --series-3: #eda100;
         --series-4: #008300;
+        /* Slots 1-8 are the projects' colours (metrics_core.assign_project_slots):
+           this order passed the dataviz palette validator in both themes on
+           2026-10-05 - no adjacent pair under the normal-vision floor of 15.
+           Slots 9-30 remain for the model chart only. --group-other is the
+           "others" bucket, kept a clear step away from --group-none's gray. */
         --group-1: #2a78d6; --group-1-tint: rgba(42,120,214,0.08);
-        --group-2: #1baf7a; --group-2-tint: rgba(27,175,122,0.08);
-        --group-3: #eda100; --group-3-tint: rgba(237,161,0,0.08);
-        --group-4: #008300; --group-4-tint: rgba(0,131,0,0.08);
-        --group-5: #4a3aa7; --group-5-tint: rgba(74,58,167,0.08);
-        --group-6: #e34948; --group-6-tint: rgba(227,73,72,0.08);
-        --group-7: #e87ba4; --group-7-tint: rgba(232,123,164,0.08);
-        --group-8: #eb6834; --group-8-tint: rgba(235,104,52,0.08);
+        --group-2: #eb6834; --group-2-tint: rgba(235,104,52,0.08);
+        --group-3: #1baf7a; --group-3-tint: rgba(27,175,122,0.08);
+        --group-4: #4a3aa7; --group-4-tint: rgba(74,58,167,0.08);
+        --group-5: #eda100; --group-5-tint: rgba(237,161,0,0.08);
+        --group-6: #e87ba4; --group-6-tint: rgba(232,123,164,0.08);
+        --group-7: #008300; --group-7-tint: rgba(0,131,0,0.08);
+        --group-8: #e34948; --group-8-tint: rgba(227,73,72,0.08);
         --group-9: #6bc62f; --group-9-tint: rgba(107,198,47,0.08);
         --group-10: #4dc62f; --group-10-tint: rgba(77,198,47,0.08);
         --group-11: #2fc62f; --group-11-tint: rgba(47,198,47,0.08);
@@ -57,6 +62,7 @@ STYLE = """
         --group-29: #c62f6b; --group-29-tint: rgba(198,47,107,0.08);
         --group-30: #c62f4d; --group-30-tint: rgba(198,47,77,0.08);
         --group-none: #898781; --group-none-tint: transparent;
+        --group-other: #4a4945;
       }
       @media (prefers-color-scheme: dark) {
         :root {
@@ -70,13 +76,13 @@ STYLE = """
           --series-3: #c98500;
           --series-4: #008300;
           --group-1: #3987e5; --group-1-tint: rgba(57,135,229,0.12);
-          --group-2: #199e70; --group-2-tint: rgba(25,158,112,0.12);
-          --group-3: #c98500; --group-3-tint: rgba(201,133,0,0.12);
-          --group-4: #008300; --group-4-tint: rgba(0,131,0,0.12);
-          --group-5: #9085e9; --group-5-tint: rgba(144,133,233,0.12);
-          --group-6: #e66767; --group-6-tint: rgba(230,103,103,0.12);
-          --group-7: #d55181; --group-7-tint: rgba(213,81,129,0.12);
-          --group-8: #d95926; --group-8-tint: rgba(217,89,38,0.12);
+          --group-2: #d95926; --group-2-tint: rgba(217,89,38,0.12);
+          --group-3: #199e70; --group-3-tint: rgba(25,158,112,0.12);
+          --group-4: #9085e9; --group-4-tint: rgba(144,133,233,0.12);
+          --group-5: #c98500; --group-5-tint: rgba(201,133,0,0.12);
+          --group-6: #d55181; --group-6-tint: rgba(213,81,129,0.12);
+          --group-7: #008300; --group-7-tint: rgba(0,131,0,0.12);
+          --group-8: #e66767; --group-8-tint: rgba(230,103,103,0.12);
           --group-9: #8cdc56; --group-9-tint: rgba(140,220,86,0.12);
           --group-10: #71dc56; --group-10-tint: rgba(113,220,86,0.12);
           --group-11: #56dc56; --group-11-tint: rgba(86,220,86,0.12);
@@ -100,6 +106,7 @@ STYLE = """
           --group-29: #dc568c; --group-29-tint: rgba(220,86,140,0.12);
           --group-30: #dc5671; --group-30-tint: rgba(220,86,113,0.12);
           --group-none: #898781; --group-none-tint: transparent;
+          --group-other: #c4c2bb;
         }
       }
       .trend-container {
@@ -1260,6 +1267,23 @@ STYLE = """
       .group-header.group-color-29 { border-left: 3px solid var(--group-29); }
       .group-header.group-color-30 { border-left: 3px solid var(--group-30); }
       .group-header.group-color-none { border-left: 3px solid var(--group-none); }
+      /* The "others" bucket's own rules, standalone rather than appended to
+         the long comma lists: jsdom silently stops matching selectors in a
+         long enough list (see the model-overflow-N notes below). */
+      .chart-bar.group-color-other { fill: var(--group-other); }
+      .legend-swatch.group-color-other { background: var(--group-other); }
+      body[data-highlight] .chart-bar.group-color-other { opacity: 0.25; }
+      body[data-highlight~="group-color-other"] .chart-bar.group-color-other {
+        opacity: 1;
+        stroke: var(--group-other);
+        stroke-width: 1.5px;
+      }
+      body[data-highlight~="group-color-other"] .legend-chip:has(.legend-swatch.group-color-other) {
+        opacity: 1;
+        font-weight: 700;
+      }
+      .session-row.group-color-other { border-left: 3px solid var(--group-other); }
+      .group-header.group-color-other { border-left: 3px solid var(--group-other); }
       .group-icon { width: 10px; display: inline-block; }
       .detail-container { flex: 1; }
       .detail-panel { display: none; padding: 16px; font-family: monospace; }

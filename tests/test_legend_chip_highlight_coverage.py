@@ -16,8 +16,8 @@ import re
 
 from dashboard_html_assets import STYLE
 
-SWATCH_RE = re.compile(r"\.session-row\.(group-color-\d+)\s*\{")
-CHIP_RE = re.compile(r"legend-chip:has\(\.legend-swatch\.(group-color-\d+)\)")
+SWATCH_RE = re.compile(r"\.session-row\.(group-color-(?:\d+|other))\s*\{")
+CHIP_RE = re.compile(r"legend-chip:has\(\.legend-swatch\.(group-color-(?:\d+|other))\)")
 
 
 def test_every_group_color_swatch_has_a_legend_chip_highlight_rule() -> None:
@@ -31,3 +31,12 @@ def test_every_group_color_swatch_has_a_legend_chip_highlight_rule() -> None:
         "legend-chip:has(.legend-swatch.group-color-N) highlight rule - "
         "clicking their legend chip would do nothing"
     )
+
+
+def test_the_others_bucket_has_its_swatch_and_chip_rules() -> None:
+    # 2026-10-05: projects without a colour slot share group-color-other.
+    # Without its own rules the bucket would render unfilled and its legend
+    # chip would never bold when clicked.
+    assert "group-color-other" in SWATCH_RE.findall(STYLE)
+    assert "group-color-other" in CHIP_RE.findall(STYLE)
+    assert ".chart-bar.group-color-other { fill: var(--group-other); }" in STYLE
