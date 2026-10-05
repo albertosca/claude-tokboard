@@ -1385,6 +1385,17 @@ STYLE = """
       .session-row.collapsed { display: none; }
       .session-row.period-hidden { display: none; }
       .group-header.period-hidden { display: none; }
+      /* Phones (2026-10-05): with the viewport meta the page lays out at the
+         device's real width, so the two panes stack instead of squeezing the
+         detail pane to ~140px. The period chips scroll sideways rather than
+         wrap: the filter's pinned height is what the trend chart's sticky
+         offset is computed from. */
+      @media (max-width: 700px) {
+        .main-row { flex-direction: column; }
+        .session-list { width: 100%; border-right: none; }
+        .comp-legend { flex-wrap: wrap; }
+        .period-filter { overflow-x: auto; }
+      }
     </style>
     """
 

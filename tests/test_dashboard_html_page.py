@@ -1008,3 +1008,21 @@ def test_legend_chips_are_at_least_a_24px_target() -> None:
     assert ".legend-chip { display: inline-flex; align-items: center; min-height: 24px; }" in (
         dashboard_html_assets.STYLE
     )
+
+
+def test_a_narrow_screen_stacks_the_detail_pane_under_the_list() -> None:
+    # 2026-10-05: once the viewport meta made phones lay the page out at
+    # their real width, the 62%/38% split left a 140px detail pane and the
+    # period chips ran 20px off screen. Under 700px the panes stack, the
+    # legend wraps, and the period chips scroll sideways - the filter keeps
+    # its pinned height, which the trend chart's sticky offset relies on.
+    style = dashboard_html_assets.STYLE
+    block = style[style.index("@media (max-width: 700px)") :]
+    block = block[: block.index("\n      }\n") + 8]
+    for rule in (
+        ".main-row { flex-direction: column; }",
+        ".session-list { width: 100%; border-right: none; }",
+        ".comp-legend { flex-wrap: wrap; }",
+        ".period-filter { overflow-x: auto; }",
+    ):
+        assert rule in block, rule
