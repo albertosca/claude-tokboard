@@ -32,7 +32,9 @@ STYLE = """
            this order passed the dataviz palette validator in both themes on
            2026-10-05 - no adjacent pair under the normal-vision floor of 15.
            Slots 9-30 remain for the model chart only. --group-other is the
-           "others" bucket, kept a clear step away from --group-none's gray. */
+           "others" bucket: a gray close to the surface, so the filler recedes
+           behind the coloured projects, yet OKLab delta E 19-22 away from
+           --group-none's gray. */
         --group-1: #2a78d6; --group-1-tint: rgba(42,120,214,0.08);
         --group-2: #eb6834; --group-2-tint: rgba(235,104,52,0.08);
         --group-3: #1baf7a; --group-3-tint: rgba(27,175,122,0.08);
@@ -64,7 +66,7 @@ STYLE = """
         --group-29: #c62f6b; --group-29-tint: rgba(198,47,107,0.08);
         --group-30: #c62f4d; --group-30-tint: rgba(198,47,77,0.08);
         --group-none: #898781; --group-none-tint: transparent;
-        --group-other: #4a4945;
+        --group-other: #c4c2bb;
       }
       @media (prefers-color-scheme: dark) {
         :root {
@@ -108,7 +110,7 @@ STYLE = """
           --group-29: #dc568c; --group-29-tint: rgba(220,86,140,0.12);
           --group-30: #dc5671; --group-30-tint: rgba(220,86,113,0.12);
           --group-none: #898781; --group-none-tint: transparent;
-          --group-other: #c4c2bb;
+          --group-other: #4a4945;
         }
       }
       .trend-container {

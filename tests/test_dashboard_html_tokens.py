@@ -49,3 +49,17 @@ def test_every_text_token_meets_small_text_contrast_on_its_surface(theme: str, t
     block = _theme_blocks()[theme]
     ratio = _contrast(_token(block, token), _token(block, "surface-1"))
     assert ratio >= 4.5, f"--{token} in {theme}: {ratio:.2f}:1"
+
+
+@pytest.mark.parametrize("theme", ["light", "dark"])
+def test_the_others_bucket_recedes_towards_the_surface(theme: str) -> None:
+    # "Others" is filler - everything outside the eight coloured projects -
+    # and on a real history it is most of every old bar. Measured in the
+    # browser (2026-10-05): a gray far from the surface drew the eye before
+    # the coloured projects did. It must sit closer to the surface than the
+    # "no project" gray, which it must still be told apart from.
+    block = _theme_blocks()[theme]
+    surface = _relative_luminance(_token(block, "surface-1"))
+    others = _relative_luminance(_token(block, "group-other"))
+    no_project = _relative_luminance(_token(block, "group-none"))
+    assert abs(others - surface) < abs(no_project - surface)
