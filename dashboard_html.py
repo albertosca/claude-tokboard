@@ -56,6 +56,14 @@ def format_summary(records: list[dict[str, Any]]) -> str:
     )
 
 
+def chip_attributes(highlight_key: str) -> str:
+    """What makes a clickable legend chip a keyboard control (2026-10-05
+    review): a button role, a place in the tab order, and the highlight key
+    the page's script reads to keep aria-pressed in step with the
+    selection (syncPressed in dashboard_html_assets.SCRIPT)."""
+    return f'role="button" tabindex="0" data-highlight-key="{highlight_key}" '
+
+
 SERIES_NAMES = {
     "series-1": "input",
     "series-2": "output",
@@ -68,7 +76,7 @@ def render_composition_legend(totals: dict[str, int], *, lang: str) -> str:
     chips = []
     for css_class, name in SERIES_NAMES.items():
         chips.append(
-            f'<span class="legend-chip" data-series="{css_class}" '
+            f'<span class="legend-chip" data-series="{css_class}" {chip_attributes(css_class)}'
             f"onclick=\"highlightTokenType('{css_class}', event)\">"
             f'<span class="legend-swatch {css_class}"></span>{name} · '
             f'<span class="legend-total" data-series="{css_class}">'
@@ -194,6 +202,7 @@ def render_session_row(
         f'<div class="session-row {group_class}{active_class} collapsed" id="row-{session_id}" '
         f'data-group="{group_index}" '
         f'data-periods="{" ".join(period_ids)}" '
+        f'role="button" tabindex="0" aria-controls="detail-{session_id}" '
         f"onclick=\"showSession('{session_id}')\">"
         f'<span class="sid">{session_id[:12]}</span>'
         f'<span class="date-col">{date_text}</span>'
@@ -253,6 +262,7 @@ def render_group_header(
         f'<div class="group-header collapsed {group["class"]}" '
         f'id="group-{group_index}"{title_attribute} '
         f'data-periods="{" ".join(member_periods)}" '
+        'role="button" tabindex="0" aria-expanded="false" '
         f'onclick="toggleGroup({group_index})">'
         '<span class="group-icon">▸</span>'
         f"<span>{html.escape(label)} {''.join(counts)}</span>"
@@ -766,6 +776,7 @@ def render_trend_chart(
     pane_svg = (
         f'<svg viewBox="0 0 {width} {height}" class="trend-svg" '
         f'id="chart-pane-{period_id}" preserveAspectRatio="none" '
+        f'role="img" aria-label="{html.escape(metrics_core_module.t("chart_title.pane", lang))}" '
         f'style="width:{width}px">'
         f"{hatch_defs(f'chart-hatch-pane-{period_id}')}"
         f"{highlight_html}{build_y_axis(maximum_pane)}{tick_labels_html}{bars_for_pane()}</svg>"
@@ -773,6 +784,7 @@ def render_trend_chart(
     tokens_svg = (
         f'<svg viewBox="0 0 {width} {height}" class="trend-svg" '
         f'id="chart-tokens-{period_id}" preserveAspectRatio="none" '
+        f'role="img" aria-label="{html.escape(metrics_core_module.t("chart_title.tokens", lang))}" '
         f'style="width:{width}px">'
         f"{hatch_defs(f'chart-hatch-tokens-{period_id}')}"
         f"{highlight_html}{build_y_axis(maximum_tokens)}{tick_labels_html}{bars_for_tokens()}</svg>"
@@ -780,6 +792,7 @@ def render_trend_chart(
     model_svg = (
         f'<svg viewBox="0 0 {width} {height}" class="trend-svg" '
         f'id="chart-model-{period_id}" preserveAspectRatio="none" '
+        f'role="img" aria-label="{html.escape(metrics_core_module.t("chart_title.model", lang))}" '
         f'style="width:{width}px">'
         f"{hatch_defs(f'chart-hatch-model-{period_id}')}"
         f"{highlight_html}{build_y_axis(maximum_pane)}{tick_labels_html}{bars_for_model()}</svg>"
@@ -849,7 +862,7 @@ def render_trend_chart(
         label = html.escape(metrics_core_module.project_display_label(parent, lang=lang))
         chip_text = raw_name if raw_name == label else f"{raw_name}:{label}"
         pane_legend_chips.append(
-            f'<span class="legend-chip" '
+            f'<span class="legend-chip" {chip_attributes(group_class)}'
             f"onclick=\"highlightProject('{group_class}', event)\">"
             f'<span class="legend-swatch {group_class}"></span>{chip_text}</span>'
         )
@@ -857,7 +870,7 @@ def render_trend_chart(
     # legend, not a project competing for a place in it.
     if has_others:
         pane_legend_chips.append(
-            f'<span class="legend-chip" '
+            f'<span class="legend-chip" {chip_attributes(OTHERS_CLASS)}'
             f"onclick=\"highlightProject('{OTHERS_CLASS}', event)\">"
             f'<span class="legend-swatch {OTHERS_CLASS}"></span>'
             f"{metrics_core_module.t('others', lang)}</span>"
@@ -867,13 +880,15 @@ def render_trend_chart(
     # Chip and band carry the same class and call the same function, so
     # clicking either one spotlights the same model.
     model_legend_chips = [
-        f'<span class="legend-chip" onclick="highlightModel(\'{model_class[model]}\', event)">'
+        f'<span class="legend-chip" {chip_attributes(model_class[model])}'
+        f"onclick=\"highlightModel('{model_class[model]}', event)\">"
         f'<span class="legend-swatch {model_class[model]}"></span>'
         f"{html.escape(metrics_core_module.model_display_label(model))}</span>"
         for model in model_order
     ]
     model_legend_chips.append(
-        f'<span class="legend-chip" onclick="highlightModel(\'{unattributed_class}\', event)">'
+        f'<span class="legend-chip" {chip_attributes(unattributed_class)}'
+        f"onclick=\"highlightModel('{unattributed_class}', event)\">"
         f'<span class="legend-swatch {unattributed_class}"></span>'
         f"{metrics_core_module.t('no_model', lang)}</span>"
     )
@@ -881,14 +896,17 @@ def render_trend_chart(
 
     return (
         '<div class="trend-container">'
-        '<div class="trend-mode-tabs">'
+        '<div class="trend-mode-tabs" role="tablist">'
         f'<span class="tab-btn active" id="trend-btn-pane-{period_id}" '
+        'role="tab" tabindex="0" aria-selected="true" '
         f"onclick=\"showTrendMode('pane', '{period_id}')\">"
         f"{metrics_core_module.t('mode.pane', lang)}</span>"
         f'<span class="tab-btn" id="trend-btn-tokens-{period_id}" '
+        'role="tab" tabindex="0" aria-selected="false" '
         f"onclick=\"showTrendMode('tokens', '{period_id}')\">"
         f"{metrics_core_module.t('mode.tokens', lang)}</span>"
         f'<span class="tab-btn" id="trend-btn-model-{period_id}" '
+        'role="tab" tabindex="0" aria-selected="false" '
         f"onclick=\"showTrendMode('model', '{period_id}')\">"
         f"{metrics_core_module.t('mode.model', lang)}</span>"
         "</div>"
@@ -1130,9 +1148,11 @@ def render_backfill_note(*, lang: str) -> str:
 def render_period_filter(*, lang: str) -> str:
     chips = []
     for period in metrics_core_module.PERIODS:
-        active = " active" if period.id == metrics_core_module.DEFAULT_PERIOD_ID else ""
+        is_default = period.id == metrics_core_module.DEFAULT_PERIOD_ID
+        active = " active" if is_default else ""
+        pressed = "true" if is_default else "false"
         chips.append(
-            f'<button type="button" class="period-chip{active}" '
+            f'<button type="button" class="period-chip{active}" aria-pressed="{pressed}" '
             f'data-period="{period.id}" onclick="selectPeriod(\'{period.id}\')">'
             f"{html.escape(metrics_core_module.period_label(period.id, lang=lang))}</button>"
         )
@@ -1320,10 +1340,12 @@ def render_html(
     legend_blocks_html = "".join(legend_blocks)
 
     tabs_html = (
-        '<div class="tab-bar">'
+        '<div class="tab-bar" role="tablist">'
         '<span class="tab-btn active" id="tab-btn-sessions" '
+        'role="tab" tabindex="0" aria-selected="true" '
         f"onclick=\"showTab('sessions')\">{metrics_core_module.t('tab.sessions', lang)}</span>"
         '<span class="tab-btn" id="tab-btn-panorama" '
+        'role="tab" tabindex="0" aria-selected="false" '
         f"onclick=\"showTab('panorama')\">{metrics_core_module.t('tab.panorama', lang)}</span>"
         "</div>"
     )
@@ -1350,15 +1372,30 @@ def render_html(
     )
     html_lang = "pt-BR" if lang == "pt" else "en"
     page_title = html.escape(metrics_core_module.t("page_title", lang))
+    # "{name}" stays a placeholder: the page's script fills in the period.
+    period_announcement = html.escape(
+        metrics_core_module.t("notify.period", lang, name="{name}"), quote=True
+    )
     return (
         f"<!DOCTYPE html><html lang=\"{html_lang}\"><head><meta charset='utf-8'>"
         f"<title>{page_title}</title>{STYLE}</head>"
         f'<body data-highlight="{default_highlight}">'
+        # A heading and a main region for screen readers, and a polite live
+        # region selectPeriod fills, so a period change is announced
+        # (2026-10-05 review). The period filter and the trend chart stay
+        # outside <main>: their sticky positioning is keyed on being
+        # children of <body> (see .period-block in the stylesheet).
+        f'<h1 class="visually-hidden">{page_title}</h1>'
+        f'<div class="visually-hidden" aria-live="polite" '
+        f'data-template="{period_announcement}">'
+        "</div>"
         f"{render_period_filter(lang=lang)}"
         f"{trend_blocks_html}"
+        "<main>"
         f"{tabs_html}"
         f"{sessions_tab_html}"
         f"{panorama_tab_html}"
+        "</main>"
         f"{SCRIPT}"
         "</body></html>"
     )

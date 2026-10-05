@@ -267,6 +267,18 @@ STYLE = """
         border-bottom-color: var(--series-1);
         font-weight: bold;
       }
+      /* Keyboard access (2026-10-05 review): every control is reachable by
+         Tab, so focus must be seen. :focus-visible keeps a mouse click from
+         drawing the ring. */
+      :focus-visible { outline: 2px solid var(--series-1); outline-offset: 2px; }
+      .visually-hidden {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        overflow: hidden;
+        clip: rect(0 0 0 0);
+        white-space: nowrap;
+      }
       .tab-pane { display: none; }
       .tab-pane.active { display: block; }
       .main-row { display: flex; }
@@ -1402,11 +1414,12 @@ SCRIPT = """
       // independent active state (showTrendMode below).
       document.querySelectorAll('.tab-bar .tab-btn').forEach(function(el) {
         el.classList.remove('active');
+        el.setAttribute('aria-selected', 'false');
       });
       var pane = document.getElementById('tab-' + name);
       var btn = document.getElementById('tab-btn-' + name);
       if (pane) { pane.classList.add('active'); }
-      if (btn) { btn.classList.add('active'); }
+      if (btn) { btn.classList.add('active'); btn.setAttribute('aria-selected', 'true'); }
     }
     function showTrendMode(name, periodId) {
       // ids are suffixed with periodId (render_trend_chart runs once per
@@ -1437,9 +1450,11 @@ SCRIPT = """
       });
       container.querySelectorAll('.trend-mode-tabs .tab-btn').forEach(function(el) {
         el.classList.remove('active');
+        el.setAttribute('aria-selected', 'false');
       });
       if (pane) { pane.classList.add('active'); }
-      if (btn) { btn.classList.add('active'); }
+      if (btn) { btn.classList.add('active'); btn.setAttribute('aria-selected', 'true'); }
+      syncPressed();
     }
     function toggleProjectsMore(periodId) {
       var svg = document.getElementById('project-chart-more-' + periodId);
@@ -1459,6 +1474,7 @@ SCRIPT = """
       // the two mechanisms never overwrite each other.
       rows.forEach(function(el) { el.classList.toggle('collapsed', !collapsed); });
       header.classList.toggle('collapsed');
+      header.setAttribute('aria-expanded', collapsed ? 'true' : 'false');
       var icon = header.querySelector('.group-icon');
       if (icon) { icon.textContent = collapsed ? '▾' : '▸'; }
     }
@@ -1494,6 +1510,18 @@ SCRIPT = """
       } else {
         body.setAttribute('data-highlight', currentSet.join(' '));
       }
+      syncPressed();
+    }
+    // A legend chip is "pressed" while its key is in the selection
+    // (2026-10-05 review): the visual spotlight alone told a screen reader
+    // nothing. Called after every change to data-highlight.
+    function syncPressed() {
+      var current = document.body.getAttribute('data-highlight');
+      var selected = current ? current.split(' ') : [];
+      document.querySelectorAll('.legend-chip[data-highlight-key]').forEach(function (chip) {
+        var key = chip.getAttribute('data-highlight-key');
+        chip.setAttribute('aria-pressed', selected.indexOf(key) !== -1 ? 'true' : 'false');
+      });
     }
     function highlightTokenType(type, event) {
       toggleHighlight(type, event);
@@ -1511,7 +1539,10 @@ SCRIPT = """
     }
     function selectPeriod(periodId) {
       document.querySelectorAll('.period-chip').forEach(function (chip) {
-        chip.classList.toggle('active', chip.dataset.period === periodId);
+        var isSelected = chip.dataset.period === periodId;
+        chip.classList.toggle('active', isSelected);
+        chip.setAttribute('aria-pressed', isSelected ? 'true' : 'false');
+        if (isSelected) { announcePeriod(chip.textContent.trim()); }
       });
       document.querySelectorAll('.period-block').forEach(function (block) {
         block.hidden = block.dataset.period !== periodId;
@@ -1545,6 +1576,23 @@ SCRIPT = """
       document.querySelectorAll('.period-block[data-period="' + periodId + '"] .trend-scroll')
         .forEach(function (el) { el.scrollLeft = el.scrollWidth; });
     }
+    function announcePeriod(name) {
+      var live = document.querySelector('[aria-live][data-template]');
+      if (live) { live.textContent = live.getAttribute('data-template').replace('{name}', name); }
+    }
+    // Enter and Space activate every role="button" / role="tab" element
+    // the way a click does (2026-10-05 review: none of them was reachable
+    // or operable by keyboard). preventDefault keeps Space from also
+    // scrolling the page. Real <button>s are left to the browser, which
+    // already does this for them.
+    document.addEventListener('keydown', function (event) {
+      if (event.key !== 'Enter' && event.key !== ' ') { return; }
+      var target = event.target;
+      if (!target || target.tagName === 'BUTTON' || !target.matches) { return; }
+      if (!target.matches('[role="button"], [role="tab"]')) { return; }
+      event.preventDefault();
+      target.click();
+    });
     var initialChip = document.querySelector('.period-chip.active');
     if (initialChip) { scrollTrendToNewest(initialChip.dataset.period); }
     // Clicking outside any legend chip / chart bar clears the selection
@@ -1561,6 +1609,8 @@ SCRIPT = """
       } else {
         document.body.removeAttribute('data-highlight');
       }
+      syncPressed();
     });
+    syncPressed();
     </script>
     """

@@ -1224,7 +1224,8 @@ def test_render_trend_chart_model_bands_and_chips_are_clickable_and_agree_on_cla
 
     pane_fragment = out.split('id="trend-pane-model-p1"')[1]
     chips = re.findall(
-        r'<span class="legend-chip" onclick="highlightModel\(\'([^\']*)\', event\)">'
+        r'<span class="legend-chip" role="button" tabindex="0" data-highlight-key="[^"]*" '
+        r'onclick="highlightModel\(\'([^\']*)\', event\)">'
         r'<span class="legend-swatch ([^"]*)"></span>([^<]*)</span>',
         pane_fragment,
     )
