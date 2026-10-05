@@ -287,28 +287,27 @@ def test_set_project_highlight_colors_the_highlighted_project_and_greys_the_rest
 def test_overflow_projects_beyond_pane_colors_get_the_other_color(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """9 distinct, distinctly-ranked projects: PANE_MAXIMUM_PROJECTS (7) go
-    into top_keys, the rest collapse into one "outros" bucket, so
-    series_keys has exactly 8 entries. PANE_COLORS has more than 8
-    colours since the model chart needed them (2026-09-29), so the 8th
-    entry (index 7) has a real colour at its index - the bucket must
-    still be gray, by its key."""
+    """10 distinct, distinctly-ranked projects: PROJECT_COLOR_SLOTS (8) get
+    a slot, the rest collapse into one "outros" bucket, so series_keys has
+    exactly 9 entries. PANE_COLORS has more than 9 colours since the model
+    chart needed them (2026-09-29), so the 9th entry (index 8) has a real
+    colour at its index - the bucket must still be gray, by its key."""
     records = [
-        _daily(f"/projects/p{index:02d}", day, (9 - index) * 10)
-        for index in range(9)
+        _daily(f"/projects/p{index:02d}", day, (10 - index) * 10)
+        for index in range(10)
         for day in (1, 2)
     ]
     chart = tui.TrendChart(mr, records, lang="pt")
     captured = _capture_stacked_bar_color(monkeypatch)
     chart.render_chart()
     color = captured["color"]
-    assert len(chart.pane_series_keys) == 8
+    assert len(chart.pane_series_keys) == mr.PROJECT_COLOR_SLOTS + 1 == 9
     assert chart.pane_series_keys[-1] == tui.PANE_OTHER_KEY
-    assert len(tui.PANE_COLORS) > tui.PANE_MAXIMUM_PROJECTS
-    assert color[:7] == tui.PANE_COLORS[:7], (
-        "the 7 real top projects must use the named palette in order"
+    assert len(tui.PANE_COLORS) > mr.PROJECT_COLOR_SLOTS + 1
+    assert color[:8] == tui.PANE_COLORS[:8], (
+        "the 8 real top projects must use the palette in slot order"
     )
-    assert color[7] == tui.PANE_OTHER_COLOR, (
+    assert color[8] == tui.PANE_OTHER_COLOR, (
         "the overflow ('outros') bucket must use PANE_OTHER_COLOR, not the "
         "palette colour that happens to sit at its index"
     )
@@ -597,10 +596,12 @@ def test_session_tree_group_header_formats_a_large_session_count():
 
 
 def _outros_named_project_on_top() -> list[dict[str, Any]]:
-    """9 projects, the heaviest one literally named "__outros__", so 7 go
-    into top_keys and the other 2 collapse into the bucket."""
-    names = ["__outros__", *(f"/projects/p{index:02d}" for index in range(1, 9))]
-    return [_daily(name, day, (9 - rank) * 10) for rank, name in enumerate(names) for day in (1, 2)]
+    """10 projects, the heaviest one literally named "__outros__", so 8 get
+    a slot and the other 2 collapse into the bucket."""
+    names = ["__outros__", *(f"/projects/p{index:02d}" for index in range(1, 10))]
+    return [
+        _daily(name, day, (10 - rank) * 10) for rank, name in enumerate(names) for day in (1, 2)
+    ]
 
 
 def test_a_project_named_like_the_others_bucket_is_its_own_series(
@@ -612,8 +613,8 @@ def test_a_project_named_like_the_others_bucket_is_its_own_series(
     chart.render_chart()
 
     keys = chart.pane_series_keys
-    assert len(keys) == 8
-    assert len({id(key) for key in keys}) == 8
+    assert len(keys) == 9
+    assert len({id(key) for key in keys}) == 9
     assert keys[0] == "__outros__"
     assert keys[-1] is tui.PANE_OTHER_KEY
     assert captured["color"][0] == tui.PANE_COLORS[0], "the real project keeps its colour"
@@ -628,3 +629,42 @@ def test_the_legend_labels_the_project_and_the_bucket_apart() -> None:
     assert chips[0] == mr.project_display_label("__outros__", lang="en")
     assert chips[-1] == mr.t("others", "en")
     assert tui.pane_series_label(mr, "__outros__", lang="en") != mr.t("others", "en")
+
+
+# ---------------------------------------------------------------------------
+# 2026-10-05 review, item 4: a project's colour follows the project, not its
+# rank in the period on screen (the dataviz rule "colour follows the
+# entity"). Both dashboards take the eight slots from
+# metrics_core.assign_project_slots.
+# ---------------------------------------------------------------------------
+
+
+def test_a_project_keeps_its_colour_when_another_outspends_it_in_a_period(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first_period = [_daily("/projects/alpha", 1, 100), _daily("/projects/beta", 2, 10)]
+    second_period = [_daily("/projects/alpha", 3, 10), _daily("/projects/beta", 4, 100)]
+    slots = {"/projects/alpha": 0, "/projects/beta": 1}
+    colours = []
+    for records in (first_period, second_period):
+        chart = tui.TrendChart(mr, records, lang="pt", project_slots=slots)
+        captured = _capture_stacked_bar_color(monkeypatch)
+        chart.render_chart()
+        colours.append(dict(zip(chart.pane_series_keys, captured["color"], strict=True)))
+    assert colours[0]["/projects/alpha"] == colours[1]["/projects/alpha"] == tui.PANE_COLORS[0]
+    assert colours[0]["/projects/beta"] == colours[1]["/projects/beta"] == tui.PANE_COLORS[1]
+    # The legend still lists the period's own order, by spend.
+    assert colours[1] and list(colours[1]) == ["/projects/beta", "/projects/alpha"]
+
+
+def test_a_project_without_a_slot_goes_to_the_gray_others_bucket(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    records = [_daily("/projects/alpha", 1, 100), _daily("/projects/unslotted", 2, 500)]
+    chart = tui.TrendChart(mr, records, lang="pt", project_slots={"/projects/alpha": 3})
+    captured = _capture_stacked_bar_color(monkeypatch)
+    chart.render_chart()
+    assert chart.pane_series_keys == ["/projects/alpha", tui.PANE_OTHER_KEY]
+    assert captured["color"] == [tui.PANE_COLORS[3], tui.PANE_OTHER_COLOR]
+    legend = tui.ProjectLegend(mr, records, lang="en", project_slots={"/projects/alpha": 3})
+    assert legend.render().split("   ")[-1] == mr.t("others", "en")

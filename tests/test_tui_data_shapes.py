@@ -50,7 +50,9 @@ invariant the branch exists to check:
   which means `top_keys` (`ordered[:PANE_MAXIMUM_PROJECTS]`) cannot be empty
   whenever `days` is non-trivial. Proven empirically: two records with
   `project_path: None` on two different days still produce
-  `top_keys == [None]`, not `[]`.
+  `top_keys == [None]`, not `[]`. (Superseded 2026-10-05: compute_pane_projects
+  now takes the run's colour slots and leaves out zero-token and slotless
+  projects, which go to the "outros" bucket instead.)
 
 No pragma is added for any of the three - this is disclosure for the
 controller to rule on, per the phase's Global Constraints, not a unilateral

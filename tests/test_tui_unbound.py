@@ -22,8 +22,8 @@ nothing in the suite ever ran the module as a script:
   ProjectLegend "Sem dados" and   both gated on an empty chart_records
   its on_click no-op              list, which the committed 7-project
                                    fixture never produces.
-  ProjectRankingList's "hidden"   gated on more than PANE_MAXIMUM_PROJECTS-
-  branch (684-686)                sized... no, more than 10 projects
+  ProjectRankingList's "hidden"   gated on more than 10 projects
+  branch (684-686)
                                    with tokens - the committed fixture has
                                    7.
   build_session_tree's            a project group whose every session is

@@ -284,6 +284,13 @@ def load_base_data(
         len(PANE_COLORS),
     )
 
+    # The same eight project colour slots the HTML dashboard uses, ranked
+    # over the feed the chart draws and fixed for the whole run, so a
+    # project keeps its colour whichever period is on screen (2026-10-05).
+    project_slots = metrics_core_module.assign_project_slots(
+        daily_chart_records, datetime.now().astimezone()
+    )
+
     return {
         "records": records,
         "chart_records": chart_records,
@@ -293,6 +300,7 @@ def load_base_data(
         "project_last_seen": project_last_seen,
         "open_projects": open_projects,
         "model_slots": model_slots,
+        "project_slots": project_slots,
         "lang": lang,
     }
 
@@ -336,6 +344,7 @@ def apply_period(
         "project_last_seen": base["project_last_seen"],
         "open_projects": base["open_projects"],
         "model_slots": base["model_slots"],
+        "project_slots": base["project_slots"],
         "lang": base["lang"],
         "period_id": period_id,
         # The period-independent source this view was derived from, carried
@@ -592,7 +601,6 @@ class CompositionLegend(Static):
         self.post_message(self.Highlight(self.highlighted))
 
 
-PANE_MAXIMUM_PROJECTS = 7
 # A plotext colour: a name, or an (r, g, b) tuple drawn as-is.
 PlotColor = str | tuple[int, int, int]
 # Five names and two RGB tuples, not seven names (2026-09-23). plotext
@@ -609,7 +617,7 @@ PlotColor = str | tuple[int, int, int]
 # hot magenta, deep blue, forest green, red) were picked greedily to
 # keep the closest pair of the whole palette, gray included, as far
 # apart as possible: 48.2 CIE76 delta E, against the test's floor of 20.
-# The project pane still uses only the first PANE_MAXIMUM_PROJECTS.
+# The project pane uses the first PROJECT_COLOR_SLOTS (eight), by slot.
 PANE_COLORS: list[PlotColor] = [
     "green",
     "blue",
@@ -647,23 +655,34 @@ PaneKey = str | None | OthersBucket
 
 
 def compute_pane_projects(
-    metrics_core_module: ModuleType, chart_records: list[dict[str, Any]]
-) -> tuple[list[str | None], bool]:
-    """Rank projects by total tokens in chart_records, grouped by color_group_key.
+    metrics_core_module: ModuleType,
+    chart_records: list[dict[str, Any]],
+    project_slots: dict[str, int],
+) -> tuple[list[str], bool]:
+    """The projects that get their own band in this window, and whether an
+    "outros" bucket is needed.
 
-    Returns (top_keys, has_other): top_keys is the ordered list of the
-    PANE_MAXIMUM_PROJECTS highest-token project keys; has_other is True when
-    there are more distinct projects than that, meaning callers should
-    add one more "outros" bucket for everything not in top_keys.
+    Returns (keys, has_other): keys are the color_group_keys holding one
+    of the colour slots that have tokens in chart_records, ordered by
+    their spend here (the legend reads busiest first); has_other is True
+    when any project without a slot has tokens here. The slots themselves
+    are fixed for the run (metrics_core.assign_project_slots), so a
+    project's colour does not change with the period on screen.
     """
-    totals: dict[str | None, int] = {}
+    totals: dict[str, int] = {}
+    has_other = False
     for record in chart_records:
         key = metrics_core_module.color_group_key(record.get("project_path"))
-        totals[key] = totals.get(key, 0) + metrics_core_module.record_token_total(record)
-    ordered = sorted(totals.keys(), key=lambda sort_key: totals[sort_key], reverse=True)
-    top_keys = ordered[:PANE_MAXIMUM_PROJECTS]
-    has_other = len(ordered) > PANE_MAXIMUM_PROJECTS
-    return top_keys, has_other
+        tokens = metrics_core_module.record_token_total(record)
+        if key is None or key not in project_slots:
+            has_other = has_other or tokens > 0
+            continue
+        totals[key] = totals.get(key, 0) + tokens
+    keys = sorted(
+        (key for key in totals if totals[key] > 0),
+        key=lambda sort_key: (-totals[sort_key], sort_key),
+    )
+    return keys, has_other
 
 
 def pane_series_label(metrics_core_module: ModuleType, key: PaneKey, *, lang: str) -> str:
@@ -862,6 +881,7 @@ class TrendChart(PlotextPlot):
         *,
         lang: str,
         model_slots: dict[str, metrics_core.ModelColorSlot] | None = None,
+        project_slots: dict[str, int] | None = None,
         **keyword_arguments: Any,
     ) -> None:
         super().__init__(**keyword_arguments)
@@ -869,6 +889,16 @@ class TrendChart(PlotextPlot):
         self.chart_records = chart_records
         self.mode = mode
         self.lang = lang
+        # Each project's colour slot, settled once per run by
+        # load_base_data. None - a chart built on its own - settles them
+        # over this chart's records instead, like model_slots below.
+        self.project_slots = (
+            project_slots
+            if project_slots is not None
+            else metrics_core_module.assign_project_slots(
+                chart_records, datetime.now().astimezone()
+            )
+        )
         # Each model's colour slot, settled over the whole history by
         # load_base_data. None - a chart built on its own - settles them
         # over this chart's records instead.
@@ -960,7 +990,7 @@ class TrendChart(PlotextPlot):
         color: Sequence[PlotColor]
         if self.mode == "pane":
             top_keys, has_other = compute_pane_projects(
-                self.metrics_core_module, self.chart_records
+                self.metrics_core_module, self.chart_records, self.project_slots
             )
             series_keys: list[PaneKey] = [*top_keys, *([PANE_OTHER_KEY] if has_other else [])]
             self.pane_series_keys = series_keys
@@ -971,8 +1001,13 @@ class TrendChart(PlotextPlot):
                     record_key = self.metrics_core_module.color_group_key(
                         record.get("project_path")
                     )
+                    tokens = self.metrics_core_module.record_token_total(record)
+                    # A zero-token record names no band: compute_pane_projects
+                    # leaves its project out, and adding 0 changes nothing.
+                    if not tokens:
+                        continue
                     bucket: PaneKey = record_key if record_key in top_keys else PANE_OTHER_KEY
-                    day_totals[bucket] += self.metrics_core_module.record_token_total(record)
+                    day_totals[bucket] += tokens
                 for series_key in series_keys:
                     series_data[series_key].append(day_totals[series_key])
             series_lists = [series_data[series_key] for series_key in series_keys]
@@ -980,13 +1015,14 @@ class TrendChart(PlotextPlot):
                 pane_series_label(self.metrics_core_module, series_key, lang=self.lang)
                 for series_key in series_keys
             ]
-            # The "outros" bucket is gray by its key, not by running past the
-            # palette's end: PANE_COLORS outgrew PANE_MAXIMUM_PROJECTS when the
-            # model chart needed more colours, so the bucket's index is now a
-            # real colour.
+            # Each project by its own slot, never by its rank in this window,
+            # so its colour survives a period change (2026-10-05); the
+            # "outros" bucket is gray by its key.
             palette = [
-                PANE_OTHER_COLOR if series_key is PANE_OTHER_KEY else PANE_COLORS[palette_index]
-                for palette_index, series_key in enumerate(series_keys)
+                PANE_OTHER_COLOR
+                if isinstance(series_key, OthersBucket) or series_key is None
+                else PANE_COLORS[self.project_slots[series_key]]
+                for series_key in series_keys
             ]
             if self.project_highlighted:
                 color = [
@@ -1140,15 +1176,27 @@ class ProjectLegend(Static):
         chart_records: list[dict[str, Any]],
         *,
         lang: str,
+        project_slots: dict[str, int] | None = None,
         **keyword_arguments: Any,
     ) -> None:
         super().__init__(**keyword_arguments)
         self.metrics_core_module = metrics_core_module
         self.chart_records = chart_records
         self.lang = lang
+        # The chart's own slots (TrendChart.project_slots): the legend must
+        # list exactly the bands the chart draws.
+        self.project_slots = (
+            project_slots
+            if project_slots is not None
+            else metrics_core_module.assign_project_slots(
+                chart_records, datetime.now().astimezone()
+            )
+        )
 
     def _series_keys(self) -> list[PaneKey]:
-        top_keys, has_other = compute_pane_projects(self.metrics_core_module, self.chart_records)
+        top_keys, has_other = compute_pane_projects(
+            self.metrics_core_module, self.chart_records, self.project_slots
+        )
         return [*top_keys, *([PANE_OTHER_KEY] if has_other else [])]
 
     def render(self) -> str:
@@ -1418,7 +1466,10 @@ class MetricsTUIApp(App[None]):
                 composition.display = shown["composition"]
                 yield composition
                 projects = ProjectLegend(
-                    self.metrics_core_module, self.data["chart_records"], lang=lang
+                    self.metrics_core_module,
+                    self.data["chart_records"],
+                    lang=lang,
+                    project_slots=self.data["project_slots"],
                 )
                 projects.display = shown["projects"]
                 yield projects
@@ -1431,6 +1482,7 @@ class MetricsTUIApp(App[None]):
                     mode=self.chart_mode,
                     lang=lang,
                     model_slots=self.data["model_slots"],
+                    project_slots=self.data["project_slots"],
                 )
                 yield ProjectRankingList(
                     self.metrics_core_module,
