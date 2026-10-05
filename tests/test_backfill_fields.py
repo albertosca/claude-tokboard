@@ -450,70 +450,49 @@ def test_write_field_state_over_an_old_entry_that_corrected_nothing_knows_the_to
     assert entry["corrected_rows"] == 1
 
 
-# --- a hand-edited state never breaks a write ---------------------------------
-# write_field_state runs AFTER the metrics file was replaced, so a state it
-# cannot read must not raise: that turned a successful apply into a
-# traceback. Values it cannot use are recorded as unknown (null) and the
-# rest is kept.
+# --- a hand-edited state: malformed leaves refused, null counts kept -------
+# write_field_state runs AFTER the metrics file was replaced, so the
+# scripts check the state before anything is written
+# (unreadable_state_notice), and the writer raises rather than fold a
+# malformed count or name into what it records. A null count is not
+# malformed: it is the writers' own "unknown for good", and stays so.
+
+
+def _state_with_tool_calls_entry(path: Path, entry: dict[str, Any]) -> bytes:
+    other = {"cutoff": "c", "applied_at": "t0", "corrected_rows": 9}
+    path.write_text(
+        json.dumps({"fields": {"sessions.tool_calls": entry, "subagents.tool_calls": other}})
+    )
+    return path.read_bytes()
 
 
 @pytest.mark.parametrize("count", ["2000", 3.5, True, -1, [1]], ids=repr)
-def test_write_field_state_records_an_unusable_old_count_as_unknown(tmp_path, count):
+def test_write_field_state_refuses_an_unusable_old_count(tmp_path, count):
     path = tmp_path / "state.json"
-    other = {"cutoff": "c", "applied_at": "t0", "corrected_rows": 9}
-    path.write_text(
-        json.dumps(
-            {
-                "fields": {
-                    "sessions.tool_calls": {
-                        "cutoff": "c",
-                        "applied_at": "t0",
-                        "corrected_rows": count,
-                    },
-                    "subagents.tool_calls": other,
-                }
-            }
-        )
+    before = _state_with_tool_calls_entry(
+        path, {"cutoff": "c", "applied_at": "t0", "corrected_rows": count}
     )
     identities = mr.row_identities(identified_rows("e1"), [0], "session_id")
 
-    state = mr.write_field_state("sessions", "tool_calls", "c", "t", identities, path=str(path))
+    with pytest.raises(mr.UnreadableStateError, match='"corrected_rows"'):
+        mr.write_field_state("sessions", "tool_calls", "c", "t", identities, path=str(path))
 
-    entry = state["fields"]["sessions.tool_calls"]
-    assert entry["corrected_rows"] is None
-    assert entry["unidentified_earlier_rows"] is None
-    assert entry["rows_changed_this_run"] == 1
-    assert entry["corrected_row_ids"] == identities
-    assert state["fields"]["subagents.tool_calls"] == other
+    assert path.read_bytes() == before
 
 
-def test_write_field_state_keeps_the_usable_names_of_a_mixed_list(tmp_path):
+def test_write_field_state_refuses_a_name_list_holding_a_non_name(tmp_path):
     path = tmp_path / "state.json"
-    path.write_text(
-        json.dumps(
-            {
-                "fields": {
-                    "sessions.tool_calls": {
-                        "corrected_rows": 3,
-                        "corrected_row_ids": [1, "abc", None],
-                    }
-                }
-            }
-        )
+    before = _state_with_tool_calls_entry(
+        path, {"corrected_rows": 3, "corrected_row_ids": ["abc", None]}
     )
 
-    state = mr.write_field_state("sessions", "tool_calls", "c", "t", ["def"], path=str(path))
+    with pytest.raises(mr.UnreadableStateError, match='"corrected_row_ids"'):
+        mr.write_field_state("sessions", "tool_calls", "c", "t", ["def"], path=str(path))
 
-    entry = state["fields"]["sessions.tool_calls"]
-    # The two entries that are not names are rows nobody can name: they
-    # are carried as unidentified, like an old-shape count.
-    assert entry["corrected_row_ids"] == ["abc", "def"]
-    assert entry["unidentified_earlier_rows"] == 2
-    assert entry["corrected_rows"] == 4
+    assert path.read_bytes() == before
 
 
-@pytest.mark.parametrize("carried", [None, "x", -3], ids=repr)
-def test_an_unknown_count_stays_unknown_on_later_runs(tmp_path, carried):
+def test_an_unknown_count_stays_unknown_on_later_runs(tmp_path):
     path = tmp_path / "state.json"
     path.write_text(
         json.dumps(
@@ -522,7 +501,7 @@ def test_an_unknown_count_stays_unknown_on_later_runs(tmp_path, carried):
                     "sessions.tool_calls": {
                         "corrected_rows": None,
                         "corrected_row_ids": ["abc"],
-                        "unidentified_earlier_rows": carried,
+                        "unidentified_earlier_rows": None,
                     }
                 }
             }
@@ -537,12 +516,13 @@ def test_an_unknown_count_stays_unknown_on_later_runs(tmp_path, carried):
     assert entry["corrected_row_ids"] == ["abc", "def"]
 
 
-def test_the_token_entry_tolerates_an_unusable_old_count_too(tmp_path):
+def test_the_token_entry_refuses_an_unusable_old_count_too(tmp_path):
     path = tmp_path / "state.json"
     path.write_text(json.dumps({"cutoff": "c", "applied_at": "t0", "corrected_rows": "many"}))
-    state = mr.write_backfill_state("c", "2026-09-29T10:00", ["e1"], path=str(path))
-    assert state["corrected_rows"] is None
-    assert state["rows_changed_this_run"] == 1
+    before = path.read_bytes()
+    with pytest.raises(mr.UnreadableStateError, match='"corrected_rows"'):
+        mr.write_backfill_state("c", "2026-09-29T10:00", ["e1"], path=str(path))
+    assert path.read_bytes() == before
 
 
 # --- the script: --fields ----------------------------------------------------
@@ -745,7 +725,7 @@ def test_a_token_run_never_touches_tool_call_count(tmp_path, script, monkeypatch
     assert paths["metrics"].read_bytes() == before
 
 
-def test_an_apply_over_a_hand_edited_state_records_it_and_succeeds(
+def test_an_apply_over_a_hand_edited_state_refuses_before_writing(
     tmp_path, script, monkeypatch, capsys
 ):
     paths = fixture(tmp_path)
@@ -761,13 +741,15 @@ def test_an_apply_over_a_hand_edited_state_records_it_and_succeeds(
             }
         )
     )
+    state_before = paths["state"].read_bytes()
+    metrics_before = paths["metrics"].read_bytes()
     monkeypatch.setattr("sys.argv", argv(paths, "--fields", "tool_calls", "--apply"))
 
-    assert script.main() == 0
+    assert script.main() == 1
 
-    entry = json.loads(paths["state"].read_text())["fields"]["sessions.tool_calls"]
-    assert entry["rows_changed_this_run"] == 1
-    assert "abc" in entry["corrected_row_ids"]
+    assert "refusing to apply" in capsys.readouterr().err
+    assert paths["state"].read_bytes() == state_before
+    assert paths["metrics"].read_bytes() == metrics_before
 
 
 def test_a_state_write_that_fails_after_the_rewrite_warns_instead_of_raising(

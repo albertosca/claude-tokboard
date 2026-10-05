@@ -1543,6 +1543,164 @@ def test_read_state_for_update_returns_a_readable_state(tmp_path):
     assert mr.read_state_for_update(str(path)) == state
 
 
+# Every leaf shape a writer in this repository's history has produced, in
+# every place it can sit. A valid state is never refused: the nulls are
+# the writers' own ("unknown for good" counts, a by-model cutoff, no
+# retention boundary), and so is total_distinct_rows, which entries
+# written on 2026-09-29 carry (an int, or null) and later writers left in
+# place. Keys this version does not know are kept, for a newer one.
+FULL_VALID_STATE: dict[str, Any] = {
+    # The flat sessions entry, as written before row names existed.
+    "cutoff": "2026-08-21",
+    "applied_at": "2026-09-01T10:00:00",
+    "corrected_rows": 0,
+    "uncorrectable_rows": 0,
+    "earliest_corrected": None,
+    "a key from a newer version": {"anything": [1, None]},
+    "subagents": {
+        "cutoff": "2026-08-21",
+        "applied_at": "2026-09-02T10:00:00",
+        "corrected_rows": None,
+        "rows_changed_this_run": 0,
+        "corrected_row_ids": [],
+        "unidentified_earlier_rows": None,
+        "uncorrectable_rows": 4,
+        "earliest_corrected": "2026-07-01T09:00:00",
+    },
+    "fields": {
+        "sessions.tool_calls": {
+            "cutoff": "2026-08-21",
+            "applied_at": "2026-09-03T10:00:00",
+            "corrected_rows": 7,
+            "rows_changed_this_run": 1,
+            "corrected_row_ids": ["0123456789abcdef", "row-c"],
+            "unidentified_earlier_rows": 6,
+        },
+        "subagents.tool_calls": {
+            "cutoff": "2026-08-21",
+            "applied_at": "2026-09-04T10:00:00",
+            "corrected_rows": None,
+        },
+        "sessions.incomplete_usage": {
+            "cutoff": "2026-08-21",
+            "applied_at": "2026-09-05T10:00:00",
+            "corrected_rows": 2,
+            "total_distinct_rows": 2,
+            "corrected_row_ids": ["row-d", "row-e"],
+        },
+        "subagents.incomplete_usage": {
+            "cutoff": "2026-08-21",
+            "applied_at": "2026-09-05T10:00:00",
+            "corrected_rows": 3,
+            "total_distinct_rows": None,
+            "corrected_row_ids": ["row-f"],
+            "unidentified_earlier_rows": 0,
+        },
+        "sessions.tokens_by_model": {
+            "cutoff": None,
+            "applied_at": "2026-09-06T10:00:00",
+            "corrected_rows": 1,
+            "rows_changed_this_run": 1,
+            "corrected_row_ids": ["row-g"],
+            "a key from a newer version": "kept",
+        },
+        "sessions.a pass from a newer version": {},
+    },
+}
+
+
+def test_a_full_valid_state_is_read_for_an_update_as_it_is(tmp_path):
+    path = tmp_path / "state.json"
+    path.write_text(json.dumps(FULL_VALID_STATE))
+    assert mr.read_state_for_update(str(path)) == FULL_VALID_STATE
+    for apply in (True, False):
+        assert mr.unreadable_state_notice(str(path), apply=apply, dry_run_effect="") is None
+
+
+@pytest.mark.parametrize("kind", ["sessions", "subagents"])
+def test_both_writers_merge_into_a_full_valid_state(tmp_path, kind):
+    path = tmp_path / "state.json"
+    path.write_text(json.dumps(FULL_VALID_STATE))
+    written = mr.write_backfill_state("2026-09-23", "b", _names(1), path=str(path), kind=kind)
+    assert json.loads(path.read_text()) == written
+    written = mr.write_field_state(kind, "tool_calls", None, "c", _names(1), path=str(path))
+    assert json.loads(path.read_text()) == written
+    assert written["a key from a newer version"] == {"anything": [1, None]}
+    assert written["fields"]["sessions.a pass from a newer version"] == {}
+    # The null counts are "unknown for good": a later run keeps them so.
+    assert written["subagents"]["corrected_rows"] is None
+    # A null count on a count-only entry is one that reported no rows.
+    expected = {"sessions": 6 + 2 + 1, "subagents": 0 + 1}[kind]
+    assert written["fields"][f"{kind}.tool_calls"]["corrected_rows"] == expected
+
+
+SESSIONS = "top-level sessions entry"
+SUBAGENTS = '"subagents" entry'
+TOOL_CALLS = '"fields" entry "sessions.tool_calls"'
+COUNT_OR_NULL = "not a non-negative integer or null"
+
+
+@pytest.mark.parametrize(
+    ("shape", "place", "key", "problem"),
+    [
+        (
+            "the sessions cutoff is a number",
+            SESSIONS,
+            "cutoff",
+            "is a JSON number, not a string or null",
+        ),
+        ("the sessions applied_at is null", SESSIONS, "applied_at", "is a JSON null, not a string"),
+        (
+            "the subagents corrected_rows is a boolean",
+            SUBAGENTS,
+            "corrected_rows",
+            f"is a JSON boolean, {COUNT_OR_NULL}",
+        ),
+        (
+            "the subagents uncorrectable_rows is null",
+            SUBAGENTS,
+            "uncorrectable_rows",
+            "is a JSON null, not a non-negative integer",
+        ),
+        (
+            "the sessions corrected_rows is negative",
+            SESSIONS,
+            "corrected_rows",
+            f"is a negative number, {COUNT_OR_NULL}",
+        ),
+        (
+            "a fields entry's corrected_rows is a decimal",
+            TOOL_CALLS,
+            "corrected_rows",
+            f"is a decimal number, {COUNT_OR_NULL}",
+        ),
+        (
+            "a fields entry's corrected_row_ids is a string",
+            TOOL_CALLS,
+            "corrected_row_ids",
+            "is a JSON string, not a list of non-empty strings",
+        ),
+        (
+            "a fields entry's corrected_row_ids holds a number",
+            TOOL_CALLS,
+            "corrected_row_ids",
+            "holds a JSON number, not a non-empty string",
+        ),
+        (
+            "the sessions corrected_row_ids holds an empty name",
+            SESSIONS,
+            "corrected_row_ids",
+            "holds an empty string, not a non-empty string",
+        ),
+    ],
+)
+def test_the_refusal_names_the_malformed_leaf(tmp_path, shape, place, key, problem):
+    path = _unreadable_state(tmp_path, shape)
+    reason = f'the "{key}" of its {place} {problem}'
+    with pytest.raises(mr.UnreadableStateError, match=re.escape(reason)):
+        mr.read_state_for_update(str(path))
+
+
 @pytest.mark.parametrize("shape", SHAPE_NAMES)
 def test_the_notice_refuses_an_apply_and_warns_a_dry_run(tmp_path, shape):
     path = _unreadable_state(tmp_path, shape)

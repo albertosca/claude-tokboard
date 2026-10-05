@@ -1150,31 +1150,22 @@ def cumulative_rows(previous: Any, identities: list[str]) -> dict[str, Any]:
     of them twice. An old entry that reported
     no rows (0 or no count, or a null one) leaves nothing unidentified.
 
-    Never raises on what an earlier entry holds: the callers write the
-    state AFTER the metrics file was replaced, and a hand-edited state
-    once turned a successful apply into a TypeError there. An earlier
-    count that is not a non-negative integer is UNKNOWN, and so are both
-    `corrected_rows` and `unidentified_earlier_rows` (null) from then on
-    - the same "unknown for good" rule `earliest_corrected` follows. An
-    earlier name that is not a string names no row: it is carried as one
-    unidentified row. Every usable name is kept.
+    `previous` is an entry read_state_for_update accepted: the writers
+    refuse a state whose counts or names are malformed before anything is
+    written, so none reaches here. A null count is a valid one, meaning
+    UNKNOWN: an entry written while malformed counts were still read
+    leniently records them that way, and `corrected_rows` and
+    `unidentified_earlier_rows` stay null from then on - the same
+    "unknown for good" rule `earliest_corrected` follows.
     """
     names = set(identities)
     unidentified: int | None = 0
     if isinstance(previous, dict):
-        earlier = previous.get("corrected_row_ids")
-        if isinstance(earlier, list):
-            names.update(name for name in earlier if isinstance(name, str))
-            unnamed = sum(1 for name in earlier if not isinstance(name, str))
-            carried = (
-                _usable_count(previous["unidentified_earlier_rows"])
-                if "unidentified_earlier_rows" in previous
-                else 0
-            )
-            unidentified = None if carried is None else carried + unnamed
+        if "corrected_row_ids" in previous:
+            names.update(previous["corrected_row_ids"])
+            unidentified = previous.get("unidentified_earlier_rows", 0)
         else:
-            count = previous.get("corrected_rows")
-            unidentified = 0 if count is None else _usable_count(count)
+            unidentified = previous.get("corrected_rows") or 0
     entry: dict[str, Any] = {
         "corrected_rows": None if unidentified is None else unidentified + len(names),
         "rows_changed_this_run": len(identities),
@@ -1183,13 +1174,6 @@ def cumulative_rows(previous: Any, identities: list[str]) -> dict[str, Any]:
     if unidentified != 0:
         entry["unidentified_earlier_rows"] = unidentified
     return entry
-
-
-def _usable_count(value: Any) -> int | None:
-    """`value` as a row count, or None when it cannot be one."""
-    if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
-        return value
-    return None
 
 
 # The "fields" entry a token pass records the rows whose tokens_by_model it
@@ -1480,8 +1464,7 @@ def _container_problem(state: dict[str, Any]) -> str | None:
     "subagents" holds the subagents entry, "fields" holds one entry per
     field pass, and each of those entries is merged into by name. A
     writer finding any of them not an object would replace it, and lose
-    what it held; the leaves inside an entry (counts, names) are read
-    leniently by cumulative_rows instead.
+    what it held.
     """
     for key in ("subagents", "fields"):
         if key in state and not isinstance(state[key], dict):
@@ -1492,18 +1475,94 @@ def _container_problem(state: dict[str, Any]) -> str | None:
     return None
 
 
+# The leaves an entry holds, by what each must be. These are every shape a
+# writer in this repository's history produced; a key not named here is
+# kept as it is, for a newer version that knows it.
+_STRING_LEAVES = ("applied_at",)
+_STRING_OR_NULL_LEAVES = ("cutoff", "earliest_corrected")
+_COUNT_LEAVES = ("rows_changed_this_run", "uncorrectable_rows")
+# Null is the writers' own "unknown for good" (see cumulative_rows).
+_COUNT_OR_NULL_LEAVES = ("corrected_rows", "unidentified_earlier_rows")
+_NAMES_LEAF = "corrected_row_ids"
+
+
+def _count_problem(value: Any, *, nullable: bool) -> str | None:
+    """What keeps `value` from being a row count, or None."""
+    expected = "not a non-negative integer or null" if nullable else "not a non-negative integer"
+    if value is None and nullable:
+        return None
+    if isinstance(value, float):
+        return f"is a decimal number, {expected}"
+    if isinstance(value, bool) or not isinstance(value, int):
+        return f"is a JSON {_json_type(value)}, {expected}"
+    if value < 0:
+        return f"is a negative number, {expected}"
+    return None
+
+
+def _names_problem(value: Any) -> str | None:
+    """What keeps `value` from being a list of row names, or None."""
+    if not isinstance(value, list):
+        return f"is a JSON {_json_type(value)}, not a list of non-empty strings"
+    for name in value:
+        if not isinstance(name, str):
+            return f"holds a JSON {_json_type(name)}, not a non-empty string"
+        if not name:
+            return "holds an empty string, not a non-empty string"
+    return None
+
+
+def _leaf_value_problem(key: str, value: Any) -> str | None:
+    """What is wrong with the leaf `key` of an entry, or None."""
+    if key in _STRING_LEAVES and not isinstance(value, str):
+        return f"is a JSON {_json_type(value)}, not a string"
+    if key in _STRING_OR_NULL_LEAVES and not (value is None or isinstance(value, str)):
+        return f"is a JSON {_json_type(value)}, not a string or null"
+    if key in _COUNT_LEAVES:
+        return _count_problem(value, nullable=False)
+    if key in _COUNT_OR_NULL_LEAVES:
+        return _count_problem(value, nullable=True)
+    if key == _NAMES_LEAF:
+        return _names_problem(value)
+    return None
+
+
+def _leaf_problem(state: dict[str, Any]) -> str | None:
+    """What is wrong with a leaf inside an entry, or None.
+
+    Called once the containers are known to be objects. The entries are
+    the flat sessions entry at the top level, the "subagents" entry and
+    each "fields" entry. A writer carries what an earlier entry holds
+    into what it writes - a count is added to, the names are merged - so
+    a malformed one would be folded in or carried on, and is refused like
+    a malformed container.
+    """
+    entries = [("top-level sessions entry", state)]
+    if "subagents" in state:
+        entries.append(('"subagents" entry', state["subagents"]))
+    for name, entry in state.get("fields", {}).items():
+        entries.append((f'"fields" entry "{name}"', entry))
+    for place, entry in entries:
+        for key, value in entry.items():
+            problem = _leaf_value_problem(key, value)
+            if problem:
+                return f'the "{key}" of its {place} {problem}'
+    return None
+
+
 def read_state_for_update(path: str) -> dict[str, Any]:
     """The backfill state at `path`, for a writer about to merge into it.
 
     A missing file is a first run, and reads as an empty state. Anything
     else that cannot be read safely raises UnreadableStateError instead:
     an empty file, bytes that are not UTF-8, malformed JSON, another
-    top-level type, a file this process may not open, or a readable
-    object whose "subagents" or "fields" container (or one "fields"
-    entry) is not an object. A writer that took any of these for an
-    empty state would replace every recorded boundary and row name with
-    its own entry alone. load_backfill_state, which the dashboards read
-    through, stays lenient.
+    top-level type, a file this process may not open, a readable object
+    whose "subagents" or "fields" container (or one "fields" entry) is
+    not an object, or one whose entries hold a malformed leaf (see
+    _leaf_problem). A writer that took any of these for an empty state
+    would replace every recorded boundary and row name with its own entry
+    alone. load_backfill_state, which the dashboards read through, stays
+    lenient.
     """
     try:
         raw = Path(path).read_bytes()
@@ -1519,9 +1578,9 @@ def read_state_for_update(path: str) -> dict[str, Any]:
         raise UnreadableStateError(path, f"{type(problem).__name__}: {problem}") from problem
     if not isinstance(state, dict):
         raise UnreadableStateError(path, f"it holds a JSON {_json_type(state)}, not an object")
-    container_problem = _container_problem(state)
-    if container_problem:
-        raise UnreadableStateError(path, container_problem)
+    shape_problem = _container_problem(state) or _leaf_problem(state)
+    if shape_problem:
+        raise UnreadableStateError(path, shape_problem)
     return state
 
 

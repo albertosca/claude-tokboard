@@ -9,6 +9,13 @@ refuses them all; the dashboards read them leniently and still render.
 The container shapes are readable JSON objects with a malformed interior:
 a "fields" or "subagents" value, or one "fields" entry, that is not an
 object. Those are the containers the writers merge into.
+
+The leaf shapes are readable containers with one malformed value inside
+an entry - the flat sessions entry at the top level, the "subagents"
+entry, or a "fields" entry: a count that is not a non-negative integer,
+a date or time that is not a string, a row-name list that is not a list
+of non-empty strings. A writer would carry such a value on, or fold it
+into what it writes, so it is refused like a malformed container.
 """
 
 from __future__ import annotations
@@ -36,6 +43,49 @@ def _container_shapes() -> dict[str, bytes]:
     return shapes
 
 
+def _in_sessions(key: str, value: object) -> bytes:
+    return _dumped({"cutoff": "c", "applied_at": "a", key: value})
+
+
+def _in_subagents(key: str, value: object) -> bytes:
+    return _dumped({"subagents": {"cutoff": "c", "applied_at": "a", key: value}})
+
+
+def _in_fields(key: str, value: object) -> bytes:
+    return _dumped(
+        {"fields": {"sessions.tool_calls": {"cutoff": "c", "applied_at": "a", key: value}}}
+    )
+
+
+def _leaf_shapes() -> dict[str, bytes]:
+    return {
+        "the sessions cutoff is a number": _dumped({"cutoff": 7, "applied_at": "a"}),
+        "the sessions applied_at is null": _dumped({"cutoff": "c", "applied_at": None}),
+        "the sessions earliest_corrected is a number": _in_sessions("earliest_corrected", 7),
+        "the sessions corrected_rows is negative": _in_sessions("corrected_rows", -1),
+        "the sessions corrected_row_ids holds an empty name": _in_sessions(
+            "corrected_row_ids", [""]
+        ),
+        "the subagents applied_at is a number": _in_subagents("applied_at", 7),
+        "the subagents corrected_rows is a boolean": _in_subagents("corrected_rows", True),
+        "the subagents uncorrectable_rows is null": _in_subagents("uncorrectable_rows", None),
+        "the subagents unidentified_earlier_rows is negative": _in_subagents(
+            "unidentified_earlier_rows", -3
+        ),
+        "a fields entry's cutoff is a list": _in_fields("cutoff", ["c"]),
+        "a fields entry's corrected_rows is a string": _in_fields("corrected_rows", "2000"),
+        "a fields entry's corrected_rows is a decimal": _in_fields("corrected_rows", 3.5),
+        "a fields entry's rows_changed_this_run is null": _in_fields("rows_changed_this_run", None),
+        "a fields entry's unidentified_earlier_rows is a string": _in_fields(
+            "unidentified_earlier_rows", "x"
+        ),
+        "a fields entry's corrected_row_ids is a string": _in_fields("corrected_row_ids", "abc"),
+        "a fields entry's corrected_row_ids holds a number": _in_fields(
+            "corrected_row_ids", [1, "abc"]
+        ),
+    }
+
+
 UNREADABLE_STATES: dict[str, bytes] = {
     "malformed JSON": b"{not json",
     "a list at the top level": b"[1, 2]",
@@ -44,6 +94,7 @@ UNREADABLE_STATES: dict[str, bytes] = {
     "empty": b"",
     UNREADABLE_SHAPE: b'{"cutoff": "2026-08-21", "applied_at": "a"}',
     **_container_shapes(),
+    **_leaf_shapes(),
 }
 
 SHAPE_NAMES = sorted(UNREADABLE_STATES)
