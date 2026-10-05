@@ -107,3 +107,26 @@ def test_detail_panel_floor_note_thousands_formats_the_message_count() -> None:
     note = lines[-1]
     assert mr.format_tokens(2500) in note
     assert "2500" not in note
+
+
+# --- durations read like the HTML dashboard's (2026-10-05 review, item 5) ---
+
+
+def test_tree_row_formats_a_long_duration_in_hours_and_minutes() -> None:
+    # The review's real row: "333874s" overflowed its column and read as noise.
+    row = _row(_record(duration_seconds=333874))
+    assert row.rstrip().endswith("92h44min")
+    assert "333874" not in row
+
+
+def test_tree_row_keeps_its_width_for_the_longest_formatted_duration() -> None:
+    short = _row(_record(duration_seconds=5))
+    long = _row(_record(duration_seconds=999 * 3600 + 59 * 60))
+    assert long.rstrip().endswith("999h59min")
+    assert len(long) == len(short)
+
+
+def test_detail_panel_formats_a_subagent_duration_in_minutes() -> None:
+    text = "\n".join(_panel_lines([_subagent(duration_seconds=75)], "en"))
+    assert "1min" in text
+    assert "75s" not in text

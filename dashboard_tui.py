@@ -425,8 +425,9 @@ def build_session_tree(
             # detail panel carries the note that says why.
             if metrics_core_module.incomplete_usage_messages(record):
                 tokens = "≥" + tokens
-            duration = record.get("duration_seconds")
-            duration_text = f"{duration:.0f}s" if duration is not None else "-"
+            # format_duration, like the HTML table: raw seconds printed
+            # "333874s" for a long session (2026-10-05 review).
+            duration_text = metrics_core_module.format_duration(record.get("duration_seconds"))
             # Subagent count badge (2026-07-21, ported from
             # dashboard_html.py's render_session_row/subagent_badge) - lets
             # you tell which sessions dispatched subagents right in the
@@ -442,7 +443,7 @@ def build_session_tree(
             subagent_badge = f" 🤖{visible_subagent_count}" if visible_subagent_count else ""
             row = (
                 f"{session_id[:12]:<14}{date_text:<14}{task_label[:28]:<30}"
-                f"{tokens:>8}   {duration_text:>7}{subagent_badge}"
+                f"{tokens:>8}   {duration_text:>9}{subagent_badge}"
             )
             group_node.add_leaf(row, data={"session_id": session_id})
     return tree
@@ -494,8 +495,9 @@ class SessionDetailPanel(VerticalScroll):
                 )
                 if self.metrics_core_module.incomplete_usage_messages(subagent):
                     output_tokens_text = "≥" + output_tokens_text
-                duration = subagent.get("duration_seconds")
-                duration_text = f"{duration:.0f}s" if duration is not None else "-"
+                duration_text = self.metrics_core_module.format_duration(
+                    subagent.get("duration_seconds")
+                )
                 task = f"{agent_type} — {agent_label}"[:38]
                 style = "on #202020" if row_index % 2 == 1 else ""
                 row = (
