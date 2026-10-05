@@ -1247,11 +1247,10 @@ def composition_bar_markup(
     """A bar of `bar_length` cells split by token type, one coloured run per
     series. Cells are shared out by largest remainder, so the runs always
     add up to exactly `bar_length` - never a cell gained or lost to
-    rounding."""
+    rounding. The ranking only lists projects with tokens, so the total is
+    always positive here; a 0-cell bar comes out as an empty string."""
     values = [series_totals.get(f"series-{index + 1}", 0) for index in range(4)]
     total = sum(values)
-    if bar_length <= 0 or total <= 0:
-        return ""
     exact = [value / total * bar_length for value in values]
     cells = [int(share) for share in exact]
     by_remainder = sorted(range(4), key=lambda index: exact[index] - cells[index], reverse=True)

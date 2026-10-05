@@ -739,3 +739,14 @@ def test_project_ranking_ends_with_a_colour_key_for_the_token_types() -> None:
     for series_index, name in enumerate(("input", "output", "cache read", "cache creation")):
         colour = tui.SERIES_MARKUP_COLORS[series_index]
         assert f"[{colour}]█[/{colour}] {name}" in markup
+
+
+def test_project_ranking_row_of_a_tiny_project_has_no_bar_and_keeps_its_columns() -> None:
+    # 1/100 of the biggest project rounds to a 0-cell bar: no coloured run
+    # at all, and the total still starts at its fixed offset.
+    records = [_daily("/projects/big", 1, 10_000), _daily("/projects/tiny", 1, 100)]
+    panel = tui.ProjectRankingList(mr, records, {}, {}, set(), lang="pt")
+    markup_row = next(line for line in panel.render().split("\n") if line.startswith("tiny"))
+    assert "[ansi_" not in markup_row
+    plain_row = next(line for line in _ranking_plain(panel) if line.startswith("tiny"))
+    assert plain_row[58 : 58 + len(mr.format_tokens(100))] == mr.format_tokens(100)
