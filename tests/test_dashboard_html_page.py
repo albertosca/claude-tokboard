@@ -1026,3 +1026,17 @@ def test_a_narrow_screen_stacks_the_detail_pane_under_the_list() -> None:
         ".period-filter { overflow-x: auto; }",
     ):
         assert rule in block, rule
+
+
+def test_the_session_header_boxes_match_the_row_boxes() -> None:
+    # Whole-branch review (2026-10-05), measured in the browser: rows carry
+    # a 3px group-colour border the header lacked (every header column sat
+    # 3px left), and the header's composition cell is a <span> - padded and
+    # bordered like a column - where the row's is an unpadded <div>, so every
+    # column after it sat 6px right of its values.
+    style = dashboard_html_assets.STYLE
+    assert ".session-header { border-left: 3px solid transparent; }" in style
+    assert (
+        ".session-row.session-header > span.comp-header { padding-right: 0; border-right: none; }"
+        in (style)
+    )

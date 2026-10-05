@@ -353,6 +353,11 @@ STYLE = """
         border-bottom: 2px solid var(--border);
       }
       .session-header:hover { background: var(--surface-1); }
+      /* The header's boxes match the row's (measured 2026-10-05): rows carry a
+         3px group border, and the row's composition cell is an unpadded
+         <div> where the header's is a padded, bordered <span>. */
+      .session-header { border-left: 3px solid transparent; }
+      .session-row.session-header > span.comp-header { padding-right: 0; border-right: none; }
       .session-row .date-col { width: 65px; flex-shrink: 0; }
       .session-row .label-col {
         width: 300px;
