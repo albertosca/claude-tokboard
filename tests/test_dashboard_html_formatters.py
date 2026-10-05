@@ -272,14 +272,16 @@ def test_render_session_header_columns_appear_in_a_pinned_order():
     # pins the column sequence directly.
     out = dashboard_html.render_session_header(show_tmux=True, lang="pt")
     columns = re.findall(r'class="([a-z-]+col|sid)"', out)
+    # Numbers before free text since 2026-10-05 (tests/test_dashboard_html_rows.py
+    # pins the full order, row and header alike).
     assert columns == [
         "sid",
-        "subagent-col",
         "date-col",
+        "duration-col",
+        "subagent-col",
         "label-col",
         "tag-col",
         "branch-col",
-        "duration-col",
     ]
 
 

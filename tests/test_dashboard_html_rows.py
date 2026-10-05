@@ -690,3 +690,63 @@ def test_floor_total_css_class_has_a_style_rule():
     # matching rule in STYLE silently renders unstyled, indistinguishable
     # from a typo in the class name.
     assert re.search(r"\.floor-total\s*\{", dashboard_html_assets.STYLE)
+
+
+# --- column order (2026-10-05 review, item 3) --------------------------------
+# At 1440px the list is 893px wide and a row 1130px: tokens, composition and
+# duration started at x=895, behind a horizontal scroll. The numbers now come
+# right after the date, before the free-text columns.
+
+EXPECTED_COLUMN_ORDER = [
+    "sid",
+    "date-col",
+    "tokens-total",
+    "comp-bar",
+    "duration-col",
+    "subagent-col",
+    "tmux-window",
+    "label-col",
+    "tag-col",
+    "branch-col",
+]
+
+
+def _child_classes(html_out: str) -> list[str]:
+    """First class of every direct child of the outermost element."""
+    from html.parser import HTMLParser
+
+    children: list[str] = []
+
+    class Walker(HTMLParser):
+        depth = 0
+
+        def handle_starttag(self, tag: str, attributes: list[tuple[str, str | None]]) -> None:
+            self.depth += 1
+            if self.depth == 2:
+                classes = (dict(attributes).get("class") or "").split()
+                children.append(classes[0] if classes else "")
+
+        def handle_endtag(self, tag: str) -> None:
+            self.depth -= 1
+
+    Walker().feed(html_out)
+    return children
+
+
+def test_session_row_puts_the_numbers_before_the_free_text_columns():
+    out = dashboard_html.render_session_row(
+        _base_record(),
+        is_active=False,
+        group_colors={"/proj/a": "group-color-3"},
+        group_index=0,
+        subagent_count=2,
+        show_tmux=True,
+        lang="pt",
+    )
+    assert _child_classes(out) == EXPECTED_COLUMN_ORDER
+
+
+def test_session_header_columns_line_up_with_the_row_columns():
+    header = dashboard_html.render_session_header(True, lang="pt")
+    expected = ["comp-header" if name == "comp-bar" else name for name in EXPECTED_COLUMN_ORDER]
+    assert _child_classes(header) == expected

@@ -196,15 +196,18 @@ def render_session_row(
         f'data-periods="{" ".join(period_ids)}" '
         f"onclick=\"showSession('{session_id}')\">"
         f'<span class="sid">{session_id[:12]}</span>'
-        f'<span class="subagent-col">{subagent_badge}</span>'
         f'<span class="date-col">{date_text}</span>'
+        # The numbers come before the free-text columns (2026-10-05 review):
+        # at 1440px the list is ~890px wide and a full row ~1130px, so the
+        # columns placed last started past the visible edge.
+        f"{render_floor_total(record, 'tokens-total', lang=lang)}"
+        f"{render_composition_bar(record)}"
+        f'<span class="duration-col">{duration_text}</span>'
+        f'<span class="subagent-col">{subagent_badge}</span>'
         f"{tmux_span}"
         f'<span class="label-col">{task_label}</span>'
         f'<span class="tag-col">{tag}</span>'
         f'<span class="branch-col" title="{branch}">{branch}</span>'
-        f"{render_floor_total(record, 'tokens-total', lang=lang)}"
-        f"{render_composition_bar(record)}"
-        f'<span class="duration-col">{duration_text}</span>'
         f"</div>"
     )
 
@@ -266,15 +269,15 @@ def render_session_header(show_tmux: bool = True, *, lang: str) -> str:
     return (
         '<div class="session-row session-header">'
         '<span class="sid">id</span>'
-        '<span class="subagent-col">🤖</span>'
         f'<span class="date-col">{metrics_core_module.t("col.date", lang)}</span>'
+        '<span class="tokens-total">tokens</span>'
+        f'<span class="comp-header">{metrics_core_module.t("col.composition", lang)}</span>'
+        f'<span class="duration-col">{metrics_core_module.t("col.duration", lang)}</span>'
+        '<span class="subagent-col">🤖</span>'
         f"{tmux_span}"
         f'<span class="label-col">{metrics_core_module.t("col.task", lang)}</span>'
         '<span class="tag-col">tag</span>'
         '<span class="branch-col">branch</span>'
-        '<span class="tokens-total">tokens</span>'
-        f'<span class="comp-header">{metrics_core_module.t("col.composition", lang)}</span>'
-        f'<span class="duration-col">{metrics_core_module.t("col.duration", lang)}</span>'
         "</div>"
     )
 
