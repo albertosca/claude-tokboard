@@ -186,7 +186,7 @@ def render_session_row(
     # showing "scratch" here). The icon plus the muted/italic styling from
     # the CSS both point at "this is terminal context", not identity.
     tmux_span = (
-        f'<span class="tmux-window" title="{tmux_window}">🗔 {tmux_window}</span>'
+        f'<span class="tmux-window" title="{tmux_window}">⧉ {tmux_window}</span>'
         if show_tmux
         else ""
     )

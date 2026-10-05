@@ -290,7 +290,10 @@ def test_render_session_row_tmux_window_carries_an_icon_and_a_title_tooltip():
     out = dashboard_html.render_session_row(
         record, is_active=False, group_colors={}, group_index=0, show_tmux=True, lang="pt"
     )
-    assert _extract_span(out, "tmux-window") == "🗔 1:zsh"
+    # U+29C9, not U+1F5D4: the first icon has no glyph in any font macOS
+    # ships and rendered as an empty box (measured in the browser,
+    # 2026-10-05 review, against an unassigned code point as the control).
+    assert _extract_span(out, "tmux-window") == "\u29c9 1:zsh"
     assert 'class="tmux-window" title="1:zsh"' in out
     assert 'class="branch-col" title="main"' in out
 
