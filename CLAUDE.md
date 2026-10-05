@@ -1,6 +1,11 @@
 # claude-tokboard
 
-Claude Code plugin: logs session and token metrics through hooks, and renders them as an HTML dashboard and a Textual TUI. `lib/metrics_core/` is the shared data layer; `dashboard_html.py` and `dashboard_tui.py` are two independent consumers of it.
+Claude Code plugin: logs session and token metrics through hooks, and renders them as an HTML dashboard and a Textual TUI.
+
+- `hooks/` - `hooks.json` runs `metrics-log.py` on `Stop` and `subagent-metrics-log.py` on `SubagentStop`; they append to `~/.claude/metrics/*.jsonl`.
+- `lib/metrics_core/` - the shared data layer (records, labels, periods, backfill, i18n). Not installed as a package: the entry points `sys.path.insert` `lib/`, and `mypy_path = "lib"` mirrors that.
+- `dashboard_html.py` (+ `dashboard_html_assets.py`, its CSS/JS as string constants) and `dashboard_tui.py` - two independent consumers of `metrics_core`.
+- `commands/` - the `/tokboard` and `/tokboard-tui` slash commands. `scripts/` - repair and maintenance tools run by hand (`scripts/README.md`). `tools/` - dev-only (demo assets).
 
 ## This repo is public
 
@@ -32,6 +37,8 @@ mypy --strict .
 
 For a subset: `pytest tests/test_x.py --no-cov` (see below for why `--no-cov`).
 
+To see a change: `python3 dashboard_html.py --html` (writes `~/.claude/metrics/dashboard.html` and prints its path), or `scripts/setup-tui-venv.sh && .venv/bin/python3 dashboard_tui.py` in a real terminal - the TUI is full-screen and cannot run inside a tool call.
+
 ## Gotchas
 
 - **`npm install` is not optional.** Without Node and jsdom the rendering tests FAIL rather than skip - deliberately, see `tests/js_runtime.py`.
@@ -44,7 +51,9 @@ For a subset: `pytest tests/test_x.py --no-cov` (see below for why `--no-cov`).
 - **`scripts/verify-detectors.py` rewrites real repo source files** and shells out to a full pytest run. Never call its `main()` from a test without replacing the module-level `DEFECTS` list.
 - **`requirements-tui.txt` and `requirements-dev.txt` overlap on purpose.** The first is what `scripts/setup-tui-venv.sh` provisions into `.venv` for END USERS; the second is what the tests need. Collapsing them is what once hid `dashboard_tui.py` from coverage entirely.
 - **The two dashboards duplicate logic.** A fix in one does not reach the other - every chart mode, for instance, is implemented twice. Change both, and test both.
-- **Code that runs only inside a `sys.addaudithook` callback is invisible to coverage.py**, even though it genuinely executes (confirmed with a throwaway counter-incrementing probe: the counter proved two real calls, `coverage report -m` showed 0% on every line inside the hook, with both the legacy CTracer and the default sys.monitoring core). `tests/conftest.py`'s whole `_audit_real_claude_dir_guard` dispatcher, and every helper only reachable through it, is exactly this shape. The fix isn't a pragma - it's calling the same private functions directly, with the same argument shapes `test_real_metrics_isolation.py`'s real, end-to-end tests already confirmed CPython produces (see `tests/test_conftest_guard_direct_dispatch.py`): a direct Python call runs in normal trace context and is measured, while a real `os.mkdir()`/`subprocess.Popen()`/etc. that reaches the guard through the actual audit hook never is. Keep both kinds of test: the behavioral ones prove CPython's real audit events have the assumed shape and the guard's net effect is correct; the direct-call ones are what makes `tests/conftest.py`'s 100% in the `--cov` set (`pyproject.toml`) mean anything.
+- **Code that runs only inside a `sys.addaudithook` callback is invisible to coverage.py** (measured: real calls, 0% reported, under both the CTracer and sys.monitoring cores). `tests/conftest.py`'s `_audit_real_claude_dir_guard` dispatcher, and every helper only reachable through it, is this shape. Don't pragma it: call the same private functions directly, with the argument shapes `test_real_metrics_isolation.py` proved CPython produces (`tests/test_conftest_guard_direct_dispatch.py`). Keep both kinds of test - the behavioral ones prove the real audit event shapes, the direct-call ones make conftest's 100% mean anything.
+- **The rendering tests run in jsdom, which performs no layout.** A green suite says nothing about sticky positioning, z-index or overlap. After touching those in `dashboard_html_assets.py`'s `STYLE`, run `scripts/layout-probe.js` (see `scripts/README.md`).
+- **The full suite takes ~30 s on an idle machine and 5+ minutes under load** (1940 tests, 315 s at load average 22). Give it a timeout well above the 120 s default, and check `uptime` before reading a timeout as a hang.
 - **A green 100% gate on macOS does not mean a green CI: CI runs on Linux.** Any `sys.platform` branch in measured code (including `tests/conftest.py`) needs a test that forces each platform with `monkeypatch.setattr(sys, "platform", ...)`, or the gate fails on the other one only. Reproduce locally in a Linux container as a NON-root user (`docker run --user 1000:1000 ...`): as root, the chmod-000 "unreadable state" tests fail because root can read anything. Mount a `git archive` copy under the gitignored `.superpowers/`, never under `/private/tmp`: Docker Desktop's VM does not share it, and the mount comes up empty with no error.
 - **`hooks/` and `lib/metrics_core/` must stay Python 3.9-compatible.** hooks.json runs each hook as `python3 ... 2>/dev/null || true`, and a stock macOS still ships 3.9.6 - an import failure there loses every session's metrics with no visible error. ruff's `py310` target and its `B905` rule will suggest `zip(..., strict=True)`; don't take that suggestion on this path (see `transcript_ingest.py`'s `usage_increment` for the one place this was already a live concern). `.github/workflows/ci.yml`'s `hooks-py39` job and `scripts/check-hooks-py39-compat.py` guard this in CI - the ordinary suite can't, because `tests/conftest.py` itself uses real 3.10+ runtime syntax and can't even be collected under 3.9.
 
