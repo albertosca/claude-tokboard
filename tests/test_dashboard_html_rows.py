@@ -753,3 +753,28 @@ def test_session_header_columns_line_up_with_the_row_columns():
     header = dashboard_html.render_session_header(True, lang="pt")
     expected = ["comp-header" if name == "comp-bar" else name for name in EXPECTED_COLUMN_ORDER]
     assert _child_classes(header) == expected
+
+
+def test_render_session_row_shows_the_terminal_glyph_only_next_to_a_window_name():
+    # Other rows in the table carry a tmux window, so the column exists; a
+    # row without one used to read "⧉ -", a terminal icon with nothing to
+    # point at (2026-10-05 backlog, residual 4). The cell stays, so the
+    # columns still line up, but holds a bare dash.
+    named = dashboard_html.render_session_row(
+        _base_record(tmux_window="scratch"),
+        is_active=False,
+        group_colors={},
+        group_index=0,
+        show_tmux=True,
+        lang="en",
+    )
+    unnamed = dashboard_html.render_session_row(
+        _base_record(tmux_window=None),
+        is_active=False,
+        group_colors={},
+        group_index=0,
+        show_tmux=True,
+        lang="en",
+    )
+    assert _extract_span(named, "tmux-window") == "⧉ scratch"
+    assert _extract_span(unnamed, "tmux-window") == "-"

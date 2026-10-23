@@ -182,12 +182,13 @@ def _started_on_or_after(record: dict[str, Any], cutoff: datetime) -> bool:
         return False
     try:
         started = datetime.fromisoformat(timestamp_start.replace("Z", "+00:00"))
-    except (ValueError, AttributeError, TypeError):
-        # A malformed row (a number, a list) is simply not recent - the same
-        # shapes session_date tolerates; it must not take the render down.
+        if started.tzinfo is None:
+            started = started.astimezone()
+    except (ValueError, OverflowError, AttributeError, TypeError):
+        # A malformed row (a number, a list, year 1 or 9999 that overflows
+        # the local-time conversion) is simply not recent - the same shapes
+        # session_date tolerates; it must not take the render down.
         return False
-    if started.tzinfo is None:
-        started = started.astimezone()
     return started >= cutoff
 
 
@@ -211,10 +212,12 @@ def assign_project_slots(
     all_time_totals: dict[str, int] = {}
     for record in records:
         key = color_group_key(record.get("project_path"))
+        if key is None:
+            continue
         tokens = record_token_total(record)
         # A project with no tokens never takes a slot: opened lately but
         # silent, it would outrank every all-time spender (2026-10-05 review).
-        if key is None or tokens <= 0:
+        if tokens <= 0:
             continue
         all_time_totals[key] = all_time_totals.get(key, 0) + tokens
         if _started_on_or_after(record, cutoff):

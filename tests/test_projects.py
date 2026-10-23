@@ -469,3 +469,19 @@ def test_assign_project_slots_survives_a_non_string_timestamp(timestamp: Any) ->
     records = [record("/a", None, input_tokens=5), record("/b", RECENT, input_tokens=1)]
     records[0]["timestamp_start"] = timestamp
     assert mr.assign_project_slots(records, SLOT_NOW, slot_count=1) == {"/b": 0}
+
+
+def test_assign_project_slots_survives_a_timestamp_outside_the_calendar():
+    # fromisoformat accepts year 1 and 9999; converting them to local time
+    # overflows. A corrupted row must not take the render down (2026-10-05
+    # review of the whole-branch residuals).
+    records = [
+        {"project_path": "/p/a", "input_tokens": 5, "timestamp_start": "0001-01-01T00:00:00"},
+        {"project_path": "/p/b", "input_tokens": 5, "timestamp_start": "9999-12-31T23:59:59"},
+    ]
+    assert set(mr.assign_project_slots(records, SLOT_NOW)) == {"/p/a", "/p/b"}
+
+
+def test_assign_project_slots_skips_a_no_project_row_before_reading_its_tokens():
+    records = [{"project_path": None, "input_tokens": "5"}]
+    assert mr.assign_project_slots(records, SLOT_NOW) == {}

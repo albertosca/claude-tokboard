@@ -185,8 +185,11 @@ def render_session_row(
     # being mistaken for a contradictory one (e.g. a "my-api" session
     # showing "scratch" here). The icon plus the muted/italic styling from
     # the CSS both point at "this is terminal context", not identity.
+    # The icon only points at something when there is a window name; a row
+    # without one keeps the cell (the columns still line up) with a bare dash.
+    tmux_glyph = "⧉ " if record.get("tmux_window") else ""
     tmux_span = (
-        f'<span class="tmux-window" title="{tmux_window}">⧉ {tmux_window}</span>'
+        f'<span class="tmux-window" title="{tmux_window}">{tmux_glyph}{tmux_window}</span>'
         if show_tmux
         else ""
     )
@@ -913,14 +916,17 @@ def render_trend_chart(
         '<div class="trend-mode-tabs" role="tablist">'
         f'<span class="tab-btn active" id="trend-btn-pane-{period_id}" '
         'role="tab" tabindex="0" aria-selected="true" '
+        f'aria-controls="trend-pane-pane-{period_id}" '
         f"onclick=\"showTrendMode('pane', '{period_id}')\">"
         f"{metrics_core_module.t('mode.pane', lang)}</span>"
         f'<span class="tab-btn" id="trend-btn-tokens-{period_id}" '
         'role="tab" tabindex="0" aria-selected="false" '
+        f'aria-controls="trend-pane-tokens-{period_id}" '
         f"onclick=\"showTrendMode('tokens', '{period_id}')\">"
         f"{metrics_core_module.t('mode.tokens', lang)}</span>"
         f'<span class="tab-btn" id="trend-btn-model-{period_id}" '
         'role="tab" tabindex="0" aria-selected="false" '
+        f'aria-controls="trend-pane-model-{period_id}" '
         f"onclick=\"showTrendMode('model', '{period_id}')\">"
         f"{metrics_core_module.t('mode.model', lang)}</span>"
         "</div>"
@@ -1357,10 +1363,10 @@ def render_html(
     tabs_html = (
         '<div class="tab-bar" role="tablist">'
         '<span class="tab-btn active" id="tab-btn-sessions" '
-        'role="tab" tabindex="0" aria-selected="true" '
+        'role="tab" tabindex="0" aria-selected="true" aria-controls="tab-sessions" '
         f"onclick=\"showTab('sessions')\">{metrics_core_module.t('tab.sessions', lang)}</span>"
         '<span class="tab-btn" id="tab-btn-panorama" '
-        'role="tab" tabindex="0" aria-selected="false" '
+        'role="tab" tabindex="0" aria-selected="false" aria-controls="tab-panorama" '
         f"onclick=\"showTab('panorama')\">{metrics_core_module.t('tab.panorama', lang)}</span>"
         "</div>"
     )

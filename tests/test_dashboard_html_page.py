@@ -1040,3 +1040,15 @@ def test_the_session_header_boxes_match_the_row_boxes() -> None:
         ".session-row.session-header > span.comp-header { padding-right: 0; border-right: none; }"
         in (style)
     )
+
+
+def test_period_chips_never_wrap_or_shrink_so_the_pinned_filter_can_scroll():
+    # At 375px the chips shrank to min-content and wrapped to two lines,
+    # clipped inside the 44px filter (found by the 2026-10-05 residual
+    # review in headless Chrome). jsdom does no layout, so the guard is the
+    # rule that prevents it.
+    style = dashboard_html_assets.STYLE
+    chip_rule = style[style.index(".period-chip {") :]
+    chip_rule = chip_rule[: chip_rule.index("}")]
+    assert "white-space: nowrap;" in chip_rule
+    assert "flex-shrink: 0;" in chip_rule

@@ -1373,6 +1373,8 @@ STYLE = """
         background: none;
         color: inherit;
         opacity: 0.55;
+        white-space: nowrap;
+        flex-shrink: 0;
       }
       .period-chip.active { opacity: 1; font-weight: 600; }
       .backfill-note {
@@ -1606,18 +1608,48 @@ SCRIPT = """
       var live = document.querySelector('[aria-live][data-template]');
       if (live) { live.textContent = live.getAttribute('data-template').replace('{name}', name); }
     }
+    // Arrow keys, Home and End walk the tabs of one tablist and select as
+    // they go (the tabs of a chart or of the page, never across lists).
+    // Returns whether the key was one of them.
+    var TAB_KEYS = { ArrowRight: 1, ArrowLeft: -1, Home: 'first', End: 'last' };
+    function moveAmongTabs(event, tab) {
+      if (!Object.prototype.hasOwnProperty.call(TAB_KEYS, event.key)) { return false; }
+      if (event.altKey || event.ctrlKey || event.metaKey) { return false; }
+      var list = tab.closest('[role="tablist"]');
+      if (!list) { return false; }
+      var tabs = Array.prototype.slice.call(list.querySelectorAll('[role="tab"]'));
+      var step = TAB_KEYS[event.key];
+      var index = tabs.indexOf(tab);
+      if (step === 'first') { index = 0; }
+      else if (step === 'last') { index = tabs.length - 1; }
+      else { index = (index + step + tabs.length) % tabs.length; }
+      event.preventDefault();
+      tabs[index].focus();
+      tabs[index].click();
+      return true;
+    }
     // Enter and Space activate every role="button" / role="tab" element
     // the way a click does (2026-10-05 review: none of them was reachable
     // or operable by keyboard). preventDefault keeps Space from also
-    // scrolling the page. Real <button>s are left to the browser, which
-    // already does this for them.
+    // scrolling the page, even on an auto-repeat; only the first press
+    // acts, so holding the key does not toggle again and again. The click
+    // is a real MouseEvent carrying the modifier keys, so Shift/Ctrl/Cmd
+    // multi-select works from the keyboard as it does with the mouse.
+    // Real <button>s are left to the browser, which already does this for
+    // them.
     document.addEventListener('keydown', function (event) {
-      if (event.key !== 'Enter' && event.key !== ' ') { return; }
       var target = event.target;
       if (!target || target.tagName === 'BUTTON' || !target.matches) { return; }
+      if (target.matches('[role="tab"]') && moveAmongTabs(event, target)) { return; }
+      if (event.key !== 'Enter' && event.key !== ' ') { return; }
       if (!target.matches('[role="button"], [role="tab"]')) { return; }
       event.preventDefault();
-      target.click();
+      if (event.repeat) { return; }
+      target.dispatchEvent(new MouseEvent('click', {
+        bubbles: true, cancelable: true,
+        shiftKey: event.shiftKey, ctrlKey: event.ctrlKey,
+        metaKey: event.metaKey, altKey: event.altKey
+      }));
     });
     var initialChip = document.querySelector('.period-chip.active');
     if (initialChip) { scrollTrendToNewest(initialChip.dataset.period); }

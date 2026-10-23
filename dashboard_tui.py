@@ -1205,9 +1205,8 @@ class ProjectLegend(Static):
         self.chart_records = chart_records
         self.lang = lang
         # The chart's own slots (TrendChart.project_slots), so a project
-        # wears one colour in both. The legend still reads chart_records
-        # (sessions) where the chart reads daily deltas - a pre-existing
-        # difference, recorded in the backlog (2026-10-05 review).
+        # wears one colour in both. Both read the same daily deltas, so a
+        # band never lacks its legend entry.
         self.project_slots = (
             project_slots
             if project_slots is not None
@@ -1535,7 +1534,7 @@ class MetricsTUIApp(App[None]):
                 yield composition
                 projects = ProjectLegend(
                     self.metrics_core_module,
-                    self.data["chart_records"],
+                    self.data["daily_chart_records"],
                     lang=lang,
                     project_slots=self.data["project_slots"],
                 )

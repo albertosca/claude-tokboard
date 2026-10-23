@@ -124,3 +124,48 @@ def test_the_empty_detail_pane_says_what_to_do_until_a_session_is_open(
     assert keyboard_report["hintDisplayBefore"] != "none"
     assert keyboard_report["hintDisplayAfterOpen"] == "none"
     assert keyboard_report["hintDisplayAfterClose"] != "none"
+
+
+def test_a_held_key_does_not_toggle_a_group_again(keyboard_report: dict[str, Any]) -> None:
+    # An auto-repeating Enter is still swallowed (no page scroll), but only
+    # the first press acts.
+    assert keyboard_report["repeatOnHeaderPrevented"] is True
+    assert keyboard_report["headerExpandedAfterRepeat"] == keyboard_report["headerExpandedAfter"]
+
+
+def test_shift_enter_on_a_legend_chip_adds_it_to_the_selection(
+    keyboard_report: dict[str, Any],
+) -> None:
+    assert keyboard_report["pressedChipsAfterShift"] == 2
+
+
+def test_every_tab_names_the_panel_it_controls(keyboard_report: dict[str, Any]) -> None:
+    assert keyboard_report["tabControls"]
+    for tab in keyboard_report["tabControls"]:
+        assert tab["resolves"], f"{tab['id']} has no resolvable aria-controls"
+
+
+def test_arrow_keys_walk_the_tabs_of_a_tablist_and_wrap(keyboard_report: dict[str, Any]) -> None:
+    # The chart-mode tablist has three tabs and starts on the second.
+    walked = [
+        (step["key"], step["selected"], step["focused"]) for step in keyboard_report["arrowTrail"]
+    ]
+    assert walked == [
+        ("ArrowRight", 2, 2),
+        ("ArrowRight", 0, 0),
+        ("ArrowLeft", 2, 2),
+        ("Home", 0, 0),
+        ("End", 2, 2),
+    ]
+    assert all(step["prevented"] for step in keyboard_report["arrowTrail"])
+
+
+@pytest.mark.parametrize("key", ["hiddenCollapsedRows", "hiddenPeriodRows", "hiddenPeriodHeaders"])
+def test_a_row_hidden_by_collapse_or_by_the_period_is_display_none(
+    keyboard_report: dict[str, Any], key: str
+) -> None:
+    # The premise first: a probe that found nothing to measure would pass
+    # on an empty list. Tab skips display:none (verified by hand in a real
+    # browser, 2026-10-05); jsdom can only prove the cause, not the order.
+    assert keyboard_report[key]["count"] > 0, f"{key}: nothing hidden to measure"
+    assert keyboard_report[key]["displays"] == ["none"]

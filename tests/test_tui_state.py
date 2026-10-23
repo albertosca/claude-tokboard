@@ -434,3 +434,33 @@ def test_the_chart_keeps_its_slicing_and_its_legend_across_a_period_change(
         composition,
         projects,
     )
+
+
+def test_the_project_legend_reads_the_same_records_as_the_chart_it_describes(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # The chart draws per-day deltas (daily_chart_records); the legend used
+    # to read sessions by start (chart_records), so a session that began
+    # before the window but was active inside it drew a band with no legend
+    # entry (2026-10-05 backlog, residual 3). The two sources are told
+    # apart by emptying the sessions one: the legend must still name what
+    # the chart draws.
+    seeded_tui_home(monkeypatch, tmp_path)
+    arguments = tui.build_arg_parser().parse_args(["--label-budget", "0"])
+    data = tui.load_data(arguments, metrics_core_module=mr)
+    assert data["daily_chart_records"], "premise: the fixture draws something"
+    data["chart_records"] = []
+
+    async def legend_keys() -> list[Any]:
+        async with tui.MetricsTUIApp(mr, data, arguments=arguments).run_test(
+            size=(140, 45)
+        ) as pilot:
+            await pilot.pause()
+            legend = pilot.app.query_one(tui.ProjectLegend)
+            chart = pilot.app.query_one(tui.TrendChart)
+            chart.render_chart()
+            return [legend._series_keys(), chart.pane_series_keys]
+
+    legend_series, chart_series = asyncio.run(legend_keys())
+    assert legend_series
+    assert legend_series == chart_series

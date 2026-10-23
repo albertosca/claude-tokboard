@@ -17,9 +17,14 @@ const dom = new JSDOM(fileSystem.readFileSync(HTML, "utf8"), { runScripts: "dang
 const { window } = dom;
 const { document } = window;
 
-function press(element, key) {
+function press(element, key, modifiers = {}) {
   element.focus();
-  const event = new window.KeyboardEvent("keydown", { key, bubbles: true, cancelable: true });
+  const event = new window.KeyboardEvent("keydown", {
+    key,
+    bubbles: true,
+    cancelable: true,
+    ...modifiers,
+  });
   element.dispatchEvent(event);
   return event.defaultPrevented;
 }
@@ -34,6 +39,10 @@ function attributesOf(selector) {
 const report = {};
 
 report.tabs = attributesOf(".tab-btn");
+report.tabControls = Array.from(document.querySelectorAll(".tab-btn")).map((tab) => {
+  const controls = tab.getAttribute("aria-controls");
+  return { id: tab.id, controls, resolves: Boolean(controls && document.getElementById(controls)) };
+});
 report.tablists = Array.from(document.querySelectorAll(".tab-bar, .trend-mode-tabs")).map(
   (element) => element.getAttribute("role"),
 );
@@ -53,6 +62,8 @@ const groupId = header.id.replace("group-", "");
 report.headerExpandedBefore = header.getAttribute("aria-expanded");
 report.enterOnHeaderPrevented = press(header, "Enter");
 report.headerExpandedAfter = header.getAttribute("aria-expanded");
+report.repeatOnHeaderPrevented = press(header, "Enter", { repeat: true });
+report.headerExpandedAfterRepeat = header.getAttribute("aria-expanded");
 report.rowsCollapsedAfterEnter = Array.from(
   document.querySelectorAll(`.session-row[data-group="${groupId}"]`),
 ).filter((row) => row.classList.contains("collapsed")).length;
@@ -96,6 +107,22 @@ report.selectedPeriodName = target.textContent.trim();
 const live = document.querySelector("[aria-live]");
 report.liveText = live ? live.textContent : null;
 
+// A hidden row cannot be reached by Tab. jsdom does no layout, so the
+// focus order itself cannot be run here; what a browser bases it on can:
+// every row hidden by collapse or by the period filter computes to
+// display:none (a display:none element is skipped by Tab and refuses
+// focus()). Measured in a real browser on 2026-10-05.
+function displayOf(selector) {
+  const elements = Array.from(document.querySelectorAll(selector));
+  return {
+    count: elements.length,
+    displays: Array.from(new Set(elements.map((element) => window.getComputedStyle(element).display))),
+  };
+}
+report.hiddenCollapsedRows = displayOf(".session-row.collapsed");
+report.hiddenPeriodRows = displayOf(".session-row.period-hidden");
+report.hiddenPeriodHeaders = displayOf(".group-header.period-hidden");
+
 // Legend chips (the by-project pane, open by default): pressing one marks
 // exactly that one pressed.
 const container = document.querySelector(".period-block:not([hidden]) .trend-container");
@@ -108,10 +135,34 @@ report.otherChipsPressed = Array.from(
   .filter((element) => element !== chip)
   .map((element) => element.getAttribute("aria-pressed"));
 
+// Shift+Enter on a second chip ADDS it to the selection (what shift+click
+// does), instead of replacing it.
+const otherChip = container.querySelector(".trend-pane.active .legend-chip[onclick]:not([aria-pressed='true'])");
+press(otherChip, "Enter", { shiftKey: true });
+report.pressedChipsAfterShift = Array.from(
+  container.querySelectorAll(".trend-pane.active .legend-chip[onclick]"),
+).filter((element) => element.getAttribute("aria-pressed") === "true").length;
+
 // Chart-mode tabs: the selected one says so, through the keyboard too.
 const modeTabs = Array.from(container.querySelectorAll(".trend-mode-tabs .tab-btn"));
 press(modeTabs[1], "Enter");
 report.modeTabsSelected = modeTabs.map((tab) => tab.getAttribute("aria-selected"));
+
+// Arrow keys walk the tabs of one tablist, wrapping, and select as they go.
+function selectedIndex(tabs) {
+  return tabs.findIndex((tab) => tab.getAttribute("aria-selected") === "true");
+}
+report.arrowTrail = [];
+for (const key of ["ArrowRight", "ArrowRight", "ArrowLeft", "Home", "End"]) {
+  const current = modeTabs[selectedIndex(modeTabs)];
+  const prevented = press(current, key);
+  report.arrowTrail.push({
+    key,
+    prevented,
+    selected: selectedIndex(modeTabs),
+    focused: modeTabs.indexOf(document.activeElement),
+  });
+}
 
 // The page tabs (Sessions / Overview).
 const pageTabs = Array.from(document.querySelectorAll(".tab-bar .tab-btn"));
