@@ -920,17 +920,18 @@ def render_trend_chart(
         f"onclick=\"showTrendMode('pane', '{period_id}')\">"
         f"{metrics_core_module.t('mode.pane', lang)}</span>"
         f'<span class="tab-btn" id="trend-btn-tokens-{period_id}" '
-        'role="tab" tabindex="0" aria-selected="false" '
+        'role="tab" tabindex="-1" aria-selected="false" '
         f'aria-controls="trend-pane-tokens-{period_id}" '
         f"onclick=\"showTrendMode('tokens', '{period_id}')\">"
         f"{metrics_core_module.t('mode.tokens', lang)}</span>"
         f'<span class="tab-btn" id="trend-btn-model-{period_id}" '
-        'role="tab" tabindex="0" aria-selected="false" '
+        'role="tab" tabindex="-1" aria-selected="false" '
         f'aria-controls="trend-pane-model-{period_id}" '
         f"onclick=\"showTrendMode('model', '{period_id}')\">"
         f"{metrics_core_module.t('mode.model', lang)}</span>"
         "</div>"
-        f'<div class="trend-pane active" id="trend-pane-pane-{period_id}">'
+        f'<div class="trend-pane active" id="trend-pane-pane-{period_id}" role="tabpanel" '
+        f'aria-labelledby="trend-btn-pane-{period_id}">'
         f'<div class="trend-scroll" data-floor-hit="{str(scrollable).lower()}">{pane_svg}</div>'
         # Fixed-height, internally-scrollable slot (2026-07-21) - "por
         # projeto" can have many legend chips wrapping to several lines
@@ -940,11 +941,13 @@ def render_trend_chart(
         # ("pulando") every time you switched.
         f'<div class="trend-legend-slot">{pane_legend_html}</div>'
         "</div>"
-        f'<div class="trend-pane" id="trend-pane-tokens-{period_id}">'
+        f'<div class="trend-pane" id="trend-pane-tokens-{period_id}" role="tabpanel" '
+        f'aria-labelledby="trend-btn-tokens-{period_id}">'
         f'<div class="trend-scroll" data-floor-hit="{str(scrollable).lower()}">{tokens_svg}</div>'
         '<div class="trend-legend-slot"></div>'
         "</div>"
-        f'<div class="trend-pane" id="trend-pane-model-{period_id}">'
+        f'<div class="trend-pane" id="trend-pane-model-{period_id}" role="tabpanel" '
+        f'aria-labelledby="trend-btn-model-{period_id}">'
         f'<div class="trend-scroll" data-floor-hit="{str(scrollable).lower()}">{model_svg}</div>'
         f'<div class="trend-legend-slot">{model_legend_html}</div>'
         "</div>"
@@ -1366,12 +1369,13 @@ def render_html(
         'role="tab" tabindex="0" aria-selected="true" aria-controls="tab-sessions" '
         f"onclick=\"showTab('sessions')\">{metrics_core_module.t('tab.sessions', lang)}</span>"
         '<span class="tab-btn" id="tab-btn-panorama" '
-        'role="tab" tabindex="0" aria-selected="false" aria-controls="tab-panorama" '
+        'role="tab" tabindex="-1" aria-selected="false" aria-controls="tab-panorama" '
         f"onclick=\"showTab('panorama')\">{metrics_core_module.t('tab.panorama', lang)}</span>"
         "</div>"
     )
     sessions_tab_html = (
-        '<div class="tab-pane active" id="tab-sessions">'
+        '<div class="tab-pane active" id="tab-sessions" role="tabpanel" '
+        'aria-labelledby="tab-btn-sessions">'
         '<div class="main-row">'
         f'<div class="session-list">{legend_blocks_html}'
         f"{render_session_header(has_tmux_data, lang=lang)}{''.join(rows_html)}</div>"
@@ -1381,7 +1385,10 @@ def render_html(
         "</div>"
         "</div>"
     )
-    panorama_tab_html = f'<div class="tab-pane" id="tab-panorama">{panorama_blocks_html}</div>'
+    panorama_tab_html = (
+        '<div class="tab-pane" id="tab-panorama" role="tabpanel" '
+        f'aria-labelledby="tab-btn-panorama">{panorama_blocks_html}</div>'
+    )
     # Opens with every token type AND every project color already
     # selected (2026-07-21: "tanto lá quanto na legenda... precisa
     # começar com todos selecionados") - the dashboard shows everything

@@ -1443,11 +1443,16 @@ SCRIPT = """
       document.querySelectorAll('.tab-bar .tab-btn').forEach(function(el) {
         el.classList.remove('active');
         el.setAttribute('aria-selected', 'false');
+        el.setAttribute('tabindex', '-1');
       });
       var pane = document.getElementById('tab-' + name);
       var btn = document.getElementById('tab-btn-' + name);
       if (pane) { pane.classList.add('active'); }
-      if (btn) { btn.classList.add('active'); btn.setAttribute('aria-selected', 'true'); }
+      if (btn) {
+        btn.classList.add('active');
+        btn.setAttribute('aria-selected', 'true');
+        btn.setAttribute('tabindex', '0');
+      }
     }
     function showTrendMode(name, periodId) {
       // ids are suffixed with periodId (render_trend_chart runs once per
@@ -1479,9 +1484,14 @@ SCRIPT = """
       container.querySelectorAll('.trend-mode-tabs .tab-btn').forEach(function(el) {
         el.classList.remove('active');
         el.setAttribute('aria-selected', 'false');
+        el.setAttribute('tabindex', '-1');
       });
       if (pane) { pane.classList.add('active'); }
-      if (btn) { btn.classList.add('active'); btn.setAttribute('aria-selected', 'true'); }
+      if (btn) {
+        btn.classList.add('active');
+        btn.setAttribute('aria-selected', 'true');
+        btn.setAttribute('tabindex', '0');
+      }
       syncPressed();
     }
     function toggleProjectsMore(periodId) {

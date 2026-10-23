@@ -45,7 +45,8 @@ def _all_focusable(elements: list[dict[str, Any]], role: str) -> bool:
 
 
 def test_every_tab_is_a_focusable_tab_inside_a_tablist(keyboard_report: dict[str, Any]) -> None:
-    assert _all_focusable(keyboard_report["tabs"], "tab")
+    assert keyboard_report["tabs"]
+    assert all(tab["role"] == "tab" for tab in keyboard_report["tabs"])
     assert keyboard_report["tablists"] and set(keyboard_report["tablists"]) == {"tablist"}
 
 
@@ -169,3 +170,21 @@ def test_a_row_hidden_by_collapse_or_by_the_period_is_display_none(
     # browser, 2026-10-05); jsdom can only prove the cause, not the order.
     assert keyboard_report[key]["count"] > 0, f"{key}: nothing hidden to measure"
     assert keyboard_report[key]["displays"] == ["none"]
+
+
+def test_every_tab_panel_is_a_tabpanel_labelled_by_its_tab(
+    keyboard_report: dict[str, Any],
+) -> None:
+    assert keyboard_report["tabPanels"]
+    for panel in keyboard_report["tabPanels"]:
+        assert panel["role"] == "tabpanel", panel
+        assert panel["labelledby"] == panel["id"], panel
+
+
+def test_only_the_selected_tab_of_a_tablist_is_in_the_tab_order(
+    keyboard_report: dict[str, Any],
+) -> None:
+    # Roving tabindex: the arrow keys move between the tabs of a list, so
+    # Tab itself must leave the list after one stop.
+    assert keyboard_report["modeTabsTabindex"] == ["-1", "0", "-1"]
+    assert keyboard_report["pageTabsTabindex"] == ["-1", "0"]

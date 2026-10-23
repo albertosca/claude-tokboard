@@ -43,6 +43,14 @@ report.tabControls = Array.from(document.querySelectorAll(".tab-btn")).map((tab)
   const controls = tab.getAttribute("aria-controls");
   return { id: tab.id, controls, resolves: Boolean(controls && document.getElementById(controls)) };
 });
+report.tabPanels = Array.from(document.querySelectorAll(".tab-btn")).map((tab) => {
+  const panel = document.getElementById(tab.getAttribute("aria-controls"));
+  return {
+    id: tab.id,
+    role: panel && panel.getAttribute("role"),
+    labelledby: panel && panel.getAttribute("aria-labelledby"),
+  };
+});
 report.tablists = Array.from(document.querySelectorAll(".tab-bar, .trend-mode-tabs")).map(
   (element) => element.getAttribute("role"),
 );
@@ -147,6 +155,7 @@ report.pressedChipsAfterShift = Array.from(
 const modeTabs = Array.from(container.querySelectorAll(".trend-mode-tabs .tab-btn"));
 press(modeTabs[1], "Enter");
 report.modeTabsSelected = modeTabs.map((tab) => tab.getAttribute("aria-selected"));
+report.modeTabsTabindex = modeTabs.map((tab) => tab.getAttribute("tabindex"));
 
 // Arrow keys walk the tabs of one tablist, wrapping, and select as they go.
 function selectedIndex(tabs) {
@@ -168,5 +177,6 @@ for (const key of ["ArrowRight", "ArrowRight", "ArrowLeft", "Home", "End"]) {
 const pageTabs = Array.from(document.querySelectorAll(".tab-bar .tab-btn"));
 press(pageTabs[1], "Enter");
 report.pageTabsSelected = pageTabs.map((tab) => tab.getAttribute("aria-selected"));
+report.pageTabsTabindex = pageTabs.map((tab) => tab.getAttribute("tabindex"));
 
 process.stdout.write(JSON.stringify(report));
