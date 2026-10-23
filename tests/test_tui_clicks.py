@@ -148,6 +148,21 @@ def seeded_tui_home_with_subagents(monkeypatch: pytest.MonkeyPatch, home: Path) 
     return home
 
 
+def _chip_column_finder(legend: Any) -> Any:
+    """A function from a chip's index to a column inside that chip, read
+    from the text the legend actually shows (its chips joined by three
+    spaces) and not from the code that maps a click back to a chip - the
+    chips are NOT equally wide, and a hit test that divides the widget
+    into equal parts clicks the neighbouring chip (backlog 2026-10-23 #1)."""
+    chips = legend.render().split("   ")
+    starts = [sum(len(chip) + 3 for chip in chips[:index]) for index in range(len(chips))]
+
+    def column_for(index: int) -> int:
+        return starts[index] + 1
+
+    return column_for
+
+
 async def _open_panorama(pilot: Any) -> Any:
     app = pilot.app
     await pilot.pause()
@@ -170,10 +185,7 @@ async def _drive_composition_legend_clicks() -> dict[str, Any]:
 
         series = [key for key, _ in tui.CompositionLegend.SERIES]
         width: int = legend.size.width
-        chip_width: int = width // len(series)
-
-        def x_for(index: int) -> int:
-            return index * chip_width + 1
+        column_inside_chip = _chip_column_finder(legend)
 
         results: dict[str, Any] = {"series": series}
 
@@ -191,39 +203,39 @@ async def _drive_composition_legend_clicks() -> dict[str, Any]:
         # Plain click on index 1, then a DIFFERENT plain click on index 2 -
         # each must land on its OWN series, proving the index tracks x
         # rather than being fixed.
-        await pilot.click(legend, offset=(x_for(1), 0))
+        await pilot.click(legend, offset=(column_inside_chip(1), 0))
         await pilot.pause()
         results["after_click_1"] = legend.highlighted
         results["chart_after_click_1"] = chart.highlighted
 
-        await pilot.click(legend, offset=(x_for(2), 0))
+        await pilot.click(legend, offset=(column_inside_chip(2), 0))
         await pilot.pause()
         results["after_click_2"] = legend.highlighted
         results["chart_after_click_2"] = chart.highlighted
 
         # Clicking the SAME chip again (plain) toggles it off entirely.
-        await pilot.click(legend, offset=(x_for(2), 0))
+        await pilot.click(legend, offset=(column_inside_chip(2), 0))
         await pilot.pause()
         results["after_repeat_click_2"] = legend.highlighted
         results["chart_after_repeat_click_2"] = chart.highlighted
 
         # Shift-click builds a union: index 0, then shift+index 3.
-        await pilot.click(legend, offset=(x_for(0), 0))
+        await pilot.click(legend, offset=(column_inside_chip(0), 0))
         await pilot.pause()
-        await pilot.click(legend, offset=(x_for(3), 0), shift=True)
+        await pilot.click(legend, offset=(column_inside_chip(3), 0), shift=True)
         await pilot.pause()
         results["after_shift_union"] = legend.highlighted
         results["chart_after_shift_union"] = chart.highlighted
 
         # Ctrl-click removes just the clicked member from that union.
-        await pilot.click(legend, offset=(x_for(0), 0), control=True)
+        await pilot.click(legend, offset=(column_inside_chip(0), 0), control=True)
         await pilot.pause()
         results["after_ctrl_remove_one"] = legend.highlighted
         results["chart_after_ctrl_remove_one"] = chart.highlighted
 
         # Ctrl-click the last remaining member empties the set to None,
         # not to an empty set.
-        await pilot.click(legend, offset=(x_for(3), 0), control=True)
+        await pilot.click(legend, offset=(column_inside_chip(3), 0), control=True)
         await pilot.pause()
         results["after_ctrl_remove_last"] = legend.highlighted
         results["chart_after_ctrl_remove_last"] = chart.highlighted
@@ -247,10 +259,7 @@ async def _drive_project_legend_clicks() -> dict[str, Any]:
             "prove clicks land on distinct indices - got fewer than expected"
         )
         width: int = legend.size.width
-        chip_width: int = width // len(keys)
-
-        def x_for(index: int) -> int:
-            return index * chip_width + 1
+        column_inside_chip = _chip_column_finder(legend)
 
         results: dict[str, Any] = {"keys": keys}
 
@@ -264,34 +273,34 @@ async def _drive_project_legend_clicks() -> dict[str, Any]:
         await pilot.pause()
         results["after_rightmost_click"] = legend.highlighted
 
-        await pilot.click(legend, offset=(x_for(1), 0))
+        await pilot.click(legend, offset=(column_inside_chip(1), 0))
         await pilot.pause()
         results["after_click_1"] = legend.highlighted
         results["chart_after_click_1"] = chart.project_highlighted
 
-        await pilot.click(legend, offset=(x_for(2), 0))
+        await pilot.click(legend, offset=(column_inside_chip(2), 0))
         await pilot.pause()
         results["after_click_2"] = legend.highlighted
         results["chart_after_click_2"] = chart.project_highlighted
 
-        await pilot.click(legend, offset=(x_for(2), 0))
+        await pilot.click(legend, offset=(column_inside_chip(2), 0))
         await pilot.pause()
         results["after_repeat_click_2"] = legend.highlighted
         results["chart_after_repeat_click_2"] = chart.project_highlighted
 
-        await pilot.click(legend, offset=(x_for(0), 0))
+        await pilot.click(legend, offset=(column_inside_chip(0), 0))
         await pilot.pause()
-        await pilot.click(legend, offset=(x_for(3), 0), shift=True)
+        await pilot.click(legend, offset=(column_inside_chip(3), 0), shift=True)
         await pilot.pause()
         results["after_shift_union"] = legend.highlighted
         results["chart_after_shift_union"] = chart.project_highlighted
 
-        await pilot.click(legend, offset=(x_for(0), 0), control=True)
+        await pilot.click(legend, offset=(column_inside_chip(0), 0), control=True)
         await pilot.pause()
         results["after_ctrl_remove_one"] = legend.highlighted
         results["chart_after_ctrl_remove_one"] = chart.project_highlighted
 
-        await pilot.click(legend, offset=(x_for(3), 0), control=True)
+        await pilot.click(legend, offset=(column_inside_chip(3), 0), control=True)
         await pilot.pause()
         results["after_ctrl_remove_last"] = legend.highlighted
         results["chart_after_ctrl_remove_last"] = chart.project_highlighted
@@ -594,3 +603,36 @@ def test_session_tree_row_renders_a_real_zero_duration_as_0s_not_a_dash(tree_sel
         f"session 'zero-dur' has a real duration_seconds=0 and must render "
         f"'0s' in its own tree row, not '-': {label!r}"
     )
+
+
+# --- legend_chip_index_at --------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("column", "expected_index"),
+    [
+        (0, 0),  # first cell of the first chip
+        (9, 0),  # last cell of the first (ten cells wide) chip
+        (10, 0),  # the gap after a chip still belongs to it
+        (12, 0),
+        (13, 1),  # first cell of the one-cell chip
+        (14, 1),
+        (16, 1),
+        (17, 2),  # first cell of the third chip
+        (18, 2),
+        (500, 2),  # past the end of the line: the last chip
+    ],
+)
+def test_legend_chip_index_at_follows_each_chips_own_width(column, expected_index):
+    assert tui.legend_chip_index_at(["a" * 10, "b", "cc"], column) == expected_index
+
+
+def test_legend_chip_index_at_counts_wide_characters_by_cells_not_characters():
+    # Two wide characters take four cells, so the second chip starts at 7.
+    assert tui.legend_chip_index_at(["界界", "next"], 6) == 0
+    assert tui.legend_chip_index_at(["界界", "next"], 7) == 1
+
+
+def test_legend_chip_index_at_with_one_chip_is_always_that_chip():
+    assert tui.legend_chip_index_at(["only"], 0) == 0
+    assert tui.legend_chip_index_at(["only"], 99) == 0

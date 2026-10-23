@@ -22,6 +22,7 @@ from pathlib import Path
 from types import ModuleType
 from typing import TYPE_CHECKING, Any, ClassVar
 
+from rich.cells import cell_len
 from rich.text import Text
 from textual.app import App, ComposeResult, RenderResult
 from textual.binding import BindingType
@@ -519,10 +520,9 @@ class SessionDetailPanel(VerticalScroll):
 class QuotaSummary(Static):
     """A separate widget from CompositionLegend, deliberately - not a
     second line inside it. CompositionLegend.on_click hit-tests a click
-    purely by event.x against self.size.width // 4 (no event.y check at
-    all), so a second line in the SAME widget would both throw off that
-    math (its width would grow to whatever this line's own text needs)
-    and make a click on this line get misread as a click on a chip."""
+    purely by event.x against the chip texts' widths (no event.y check at
+    all), so a second line in the SAME widget would make a click on this
+    line get misread as a click on a chip."""
 
     def __init__(
         self,
@@ -546,6 +546,28 @@ class QuotaSummary(Static):
             output=self.metrics_core_module.format_tokens(quota_output),
         )
         return line
+
+
+LEGEND_CHIP_SEPARATOR = "   "
+
+
+def legend_chip_index_at(chip_labels: Sequence[str], column: int) -> int:
+    """The chip a click on this column of a legend line landed on.
+
+    The legend prints its chips one after another, each as wide as its own
+    text, joined by LEGEND_CHIP_SEPARATOR; a click belongs to the chip whose
+    text, or whose gap to the next chip, it hit. Dividing the widget into
+    equal parts instead lands on the neighbouring chip whenever the labels
+    differ in width, which they always do (backlog 2026-10-23 #1). A column
+    past the last chip's end is that last chip.
+    """
+    gap = cell_len(LEGEND_CHIP_SEPARATOR)
+    chip_end = -gap
+    for index, label in enumerate(chip_labels):
+        chip_end += gap + cell_len(label)
+        if column < chip_end + gap:
+            return index
+    return len(chip_labels) - 1
 
 
 class CompositionLegend(Static):
@@ -576,22 +598,22 @@ class CompositionLegend(Static):
         self.metrics_core_module = metrics_core_module
         self.lang = lang
 
+    def _chip_labels(self) -> list[str]:
+        return [
+            f"{name} · {self.metrics_core_module.format_tokens(self.totals.get(series, 0))}"
+            for series, name in self.SERIES
+        ]
+
     def render(self) -> str:
         chips = []
-        for series, name in self.SERIES:
-            total = self.totals.get(series, 0)
-            formatted = self.metrics_core_module.format_tokens(total)
+        for (series, _name), label in zip(self.SERIES, self._chip_labels(), strict=True):
             is_highlighted = self.highlighted is not None and series in self.highlighted
             style = "bold reverse" if is_highlighted else ""
-            chip = f"[{style}]{name} · {formatted}[/{style}]" if style else f"{name} · {formatted}"
-            chips.append(chip)
-        return "   ".join(chips)
+            chips.append(f"[{style}]{label}[/{style}]" if style else label)
+        return LEGEND_CHIP_SEPARATOR.join(chips)
 
     def on_click(self, event: Any) -> None:
-        click_position = event.x
-        chip_width = self.size.width // 4 if self.size.width else 0
-        index = min(click_position // max(chip_width, 1), 3) if chip_width else 0
-        series = self.SERIES[index][0]
+        series = self.SERIES[legend_chip_index_at(self._chip_labels(), event.x)][0]
         current: set[str] = self.highlighted or set()
         if event.shift:
             self.highlighted = current | {series}
@@ -1221,26 +1243,28 @@ class ProjectLegend(Static):
         )
         return [*top_keys, *([PANE_OTHER_KEY] if has_other else [])]
 
+    def _chip_labels(self, series_keys: list[PaneKey]) -> list[str]:
+        return [
+            pane_series_label(self.metrics_core_module, key, lang=self.lang) for key in series_keys
+        ]
+
     def render(self) -> str:
         series_keys = self._series_keys()
         if not series_keys:
             return f"[dim]{self.metrics_core_module.t('no_data', self.lang)}[/dim]"
         chips = []
-        for key in series_keys:
-            label = pane_series_label(self.metrics_core_module, key, lang=self.lang)
+        for key, label in zip(series_keys, self._chip_labels(series_keys), strict=True):
             is_highlighted = self.highlighted is not None and key in self.highlighted
             style = "bold reverse" if is_highlighted else ""
             chip = f"[{style}]{label}[/{style}]" if style else label
             chips.append(chip)
-        return "   ".join(chips)
+        return LEGEND_CHIP_SEPARATOR.join(chips)
 
     def on_click(self, event: Any) -> None:
         series_keys = self._series_keys()
         if not series_keys:
             return
-        chip_width = self.size.width // len(series_keys) if self.size.width else 0
-        index = min(event.x // max(chip_width, 1), len(series_keys) - 1) if chip_width else 0
-        key = series_keys[index]
+        key = series_keys[legend_chip_index_at(self._chip_labels(series_keys), event.x)]
         current: set[PaneKey] = self.highlighted or set()
         if event.shift:
             self.highlighted = current | {key}
