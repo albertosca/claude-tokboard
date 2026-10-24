@@ -195,6 +195,7 @@ for either.
 """
 
 import asyncio
+import gc
 import sys
 import threading
 import time
@@ -284,6 +285,7 @@ async def _drive_period_cycle() -> dict[str, Any]:
 
     presses: list[float] = []
     press_cpu: list[float] = []
+    gc_enabled_during_presses: list[bool] = []
     periods: list[Any] = []
     records_seen: list[int] = []
     reload_count = {"n": 0}
@@ -304,6 +306,11 @@ async def _drive_period_cycle() -> dict[str, Any]:
             _blocking_watch["installed"] = True
         _blocking_watch["calls"] = []
         _blocking_watch["thread"] = threading.get_ident()
+        # A collection landing inside a press adds its whole pause to the
+        # thread's CPU time (see test_the_collector_is_kept_out_of_the_cpu_number).
+        collector_was_enabled = gc.isenabled()
+        gc.collect()
+        gc.disable()
         try:
             for _ in range(len(mr.PERIODS)):
                 started = time.perf_counter()
@@ -312,15 +319,19 @@ async def _drive_period_cycle() -> dict[str, Any]:
                 await pilot.pause()
                 press_cpu.append(time.thread_time() - cpu_started)
                 presses.append(time.perf_counter() - started)
+                gc_enabled_during_presses.append(gc.isenabled())
                 periods.append(app.data["period_id"])
                 records_seen.append(len(app.data["records"]))
         finally:
+            if collector_was_enabled:
+                gc.enable()
             _blocking_watch["thread"] = None
             mr.load_records = real_load_records
 
     return {
         "presses": presses,
         "press_cpu": press_cpu,
+        "gc_enabled_during_presses": gc_enabled_during_presses,
         "blocking_calls_during_presses": list(_blocking_watch["calls"]),
         "periods": periods,
         "load_records_calls_during_presses": reload_count["n"],
@@ -393,6 +404,28 @@ def test_cycling_the_period_never_re_reads_the_data(cycle_timings):
         f"{cycle_timings['load_records_calls_during_presses']} time(s). The period-independent "
         "work belongs in load_base_data, once, at startup - see apply_period"
     )
+
+
+def test_the_collector_is_kept_out_of_the_cpu_number(cycle_timings):
+    """2026-10-24: inside the full suite the heaviest press burned up to 0.64s
+    against the 0.4s ceiling (4 failed full runs, reproduced with the TUI test
+    files together, never alone). A gc.callbacks probe found 14 generation-2 collections
+    in that run, several of 0.2-0.33s CPU each: the 218 tests before this one
+    leave a heap of cyclic Textual garbage, and one collection landing inside
+    a press added its whole pause to the thread's CPU time. The ceiling is
+    about the app's own work, so the presses run with the collector off."""
+    assert cycle_timings["gc_enabled_during_presses"] == [False] * len(mr.PERIODS)
+
+
+@pytest.mark.parametrize("collector_was_enabled", [True, False])
+def test_the_collector_is_put_back_the_way_it_was(monkeypatch, tmp_path, collector_was_enabled):
+    seeded_tui_home(monkeypatch, tmp_path)
+    (gc.enable if collector_was_enabled else gc.disable)()
+    try:
+        asyncio.run(_drive_period_cycle())
+        assert gc.isenabled() is collector_was_enabled
+    finally:
+        gc.enable()
 
 
 def test_every_press_stays_responsive(cycle_timings):
