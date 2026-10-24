@@ -436,7 +436,9 @@ def test_render_html_computes_each_records_own_period_membership_and_passes_it_t
         return real_row(*arguments, **keyword_arguments)
 
     def spy_panel(*arguments: Any, **keyword_arguments: Any) -> str:
-        captured["panel_period_ids"] = keyword_arguments.get("period_ids")
+        # The shared empty-panel template renders one panel for no session.
+        if arguments[0] == "mid-age":
+            captured["panel_period_ids"] = keyword_arguments.get("period_ids")
         return real_panel(*arguments, **keyword_arguments)
 
     monkeypatch.setattr(dashboard_html, "render_session_row", spy_row)
@@ -446,6 +448,10 @@ def test_render_html_computes_each_records_own_period_membership_and_passes_it_t
     )
     keyword_arguments = _empty_render_html_kwargs()
     keyword_arguments["records"] = [record]
+    # Only a session with subagents has a pre-rendered panel (2026-10-24).
+    keyword_arguments["subagents_by_session"] = {
+        "mid-age": [{"agent_id": "agent-1", "input_tokens": 5}]
+    }
     keyword_arguments["period_windows"] = _period_windows(_now())
     dashboard_html.render_html(**keyword_arguments, lang="pt")
 

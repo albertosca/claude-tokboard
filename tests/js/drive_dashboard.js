@@ -60,7 +60,8 @@ Object.defineProperty(window.Element.prototype, "scrollWidth", {
 const headers = Array.from(document.querySelectorAll(".group-header"));
 const rows = Array.from(document.querySelectorAll(".session-row[data-periods]"));
 const legendBlocks = Array.from(document.querySelectorAll(".session-list > .period-block"));
-const panels = Array.from(document.querySelectorAll(".detail-panel[data-periods]"));
+// Panels are built on first open (2026-10-24), so the set is read live.
+const livePanels = () => Array.from(document.querySelectorAll(".detail-panel[data-periods]"));
 const allTrendScrolls = Array.from(document.querySelectorAll(".trend-scroll"));
 
 // session id -> the group index its row was rendered into. Group membership
@@ -196,7 +197,7 @@ function resetScroll() {
   allTrendScrolls.forEach((element) => { element.scrollLeft = 0; });
 }
 function closeAllPanels() {
-  panels.forEach((panel) => {
+  livePanels().forEach((panel) => {
     window.closeDetail(panel.id.replace(/^detail-/, ""));
   });
 }
@@ -247,7 +248,7 @@ function measure(periodId) {
     headersWithoutCount,
     legendBlocks: visibleLegends.length,
     legend,
-    visiblePanelIds: panels.filter(isVisible).map((element) => element.id.replace(/^detail-/, "")).sort(),
+    visiblePanelIds: livePanels().filter(isVisible).map((element) => element.id.replace(/^detail-/, "")).sort(),
     trendScrolls: activeScrolls.length,
     trendScrollsAtNewest: activeScrolls.filter((element) => element.scrollLeft === SCROLL_WIDTH).length,
   };
@@ -496,7 +497,7 @@ for (const order of ["expand-then-period", "period-then-expand"]) {
       freshStyles();
       check(
         `panel for ${insider} stays visible under ${periodId}`,
-        panels.filter(isVisible).map((element) => element.id.replace(/^detail-/, "")),
+        livePanels().filter(isVisible).map((element) => element.id.replace(/^detail-/, "")),
         [insider]
       );
     }
@@ -508,7 +509,7 @@ for (const order of ["expand-then-period", "period-then-expand"]) {
       freshStyles();
       check(
         `panel for ${outsider} disappears under ${periodId}`,
-        panels.filter(isVisible).map((element) => element.id.replace(/^detail-/, "")),
+        livePanels().filter(isVisible).map((element) => element.id.replace(/^detail-/, "")),
         []
       );
     }

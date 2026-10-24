@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import html
+import json
 import os
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -157,6 +158,7 @@ def render_session_row(
     show_tmux: bool = True,
     period_ids: tuple[str, ...] = ("tudo",),
     *,
+    controls_panel: bool = True,
     lang: str,
 ) -> str:
     session_id = record.get("session_id") or ""
@@ -201,11 +203,15 @@ def render_session_row(
     # Collapse state and period membership are both plain classes now, so the
     # two mechanisms cannot contradict each other - the row shows only when
     # it is neither collapsed nor outside the active period.
+    # The panel a row controls is built on first open (2026-10-24), so
+    # aria-controls is emitted only while its target is in the page: a
+    # reference to a missing id is an axe failure on every row.
+    controls = f'aria-controls="detail-{session_id}" ' if controls_panel else ""
     return (
         f'<div class="session-row {group_class}{active_class} collapsed" id="row-{session_id}" '
         f'data-group="{group_index}" '
         f'data-periods="{" ".join(period_ids)}" '
-        f'role="button" tabindex="0" aria-controls="detail-{session_id}" '
+        f'role="button" tabindex="0" {controls}'
         f"onclick=\"showSession('{session_id}')\">"
         f'<span class="sid">{session_id[:12]}</span>'
         f'<span class="date-col">{date_text}</span>'
@@ -377,6 +383,28 @@ def render_detail_panel(
         "×</button>"  # noqa: RUF001 - multiplication sign in shipped HTML, not a confusable identifier
         f"<h2>{session_id}</h2>{title}{body}</div>"
     )
+
+
+def render_detail_source(panels: dict[str, str]) -> str:
+    """The panels that carry subagents, pre-rendered, as one inert JSON block.
+
+    Measured 2026-10-24 on the full history: 3,775 panels were 49% of the
+    page's 116,462 elements and the axe collector timed out walking them.
+    The 166 that hold subagents cost most of that; the page script builds
+    one from this block on first open. `</` and `<!--` are escaped so a
+    label cannot end the block early. No panels, no block.
+    """
+    if not panels:
+        return ""
+    payload = json.dumps(panels, ensure_ascii=False, separators=(",", ":"))
+    payload = payload.replace("</", "<\\/").replace("<!--", "<\\u0021--")
+    return f'<script type="application/json" id="detail-source">{payload}</script>'
+
+
+def render_empty_panel_template(*, lang: str) -> str:
+    """The one panel every session without subagents is cloned from."""
+    panel = render_detail_panel("", [], False, lang=lang)
+    return f'<template id="detail-empty-template">{panel}</template>'
 
 
 # The class of every project without one of the eight colour slots
@@ -1249,7 +1277,7 @@ def render_html(
     label_seen: dict[str, int] = {}
 
     rows_html = []
-    panels_html = []
+    panel_sources: dict[str, str] = {}
     for group_index, group in visible_groups:
         rows_html.append(render_group_header(group_index, group, period_windows, lang=lang))
         for record in group["records"]:
@@ -1273,18 +1301,20 @@ def render_html(
                     visible_subagent_count,
                     show_tmux=has_tmux_data,
                     period_ids=periods_for(record),
+                    controls_panel=False,
                     lang=lang,
                 )
             )
-            panels_html.append(
-                render_detail_panel(
+            # Only a session with subagents has a panel worth pre-rendering;
+            # every other one is cloned from a shared template on first open.
+            if visible_subagent_count:
+                panel_sources[session_id] = render_detail_panel(
                     session_id,
                     session_subagents,
                     False,
                     period_ids=periods_for(record),
                     lang=lang,
                 )
-            )
 
     # INDEPENDENT sets of period blocks, not one combined set - ruling from
     # fix-round-1 review. The trend chart stays at its original
@@ -1381,7 +1411,7 @@ def render_html(
         f"{render_session_header(has_tmux_data, lang=lang)}{''.join(rows_html)}</div>"
         '<div class="detail-container">'
         f'<p class="detail-hint">{metrics_core_module.t("detail.hint", lang)}</p>'
-        f"{''.join(panels_html)}</div>"
+        f"{render_detail_source(panel_sources)}{render_empty_panel_template(lang=lang)}</div>"
         "</div>"
         "</div>"
     )

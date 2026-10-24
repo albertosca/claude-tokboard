@@ -1418,6 +1418,47 @@ STYLE = """
 
 SCRIPT = """
     <script>
+    var detailSourceCache = null;
+    function detailSource() {
+      if (detailSourceCache === null) {
+        var node = document.getElementById('detail-source');
+        detailSourceCache = node ? JSON.parse(node.textContent) : {};
+      }
+      return detailSourceCache;
+    }
+    // Panels are not in the page until a session is opened (2026-10-24):
+    // 3,775 of them were half of a 116k-element DOM. A session with
+    // subagents is pre-rendered in #detail-source, every other one is cloned
+    // from one shared template. A created panel stays, so a reopen finds the
+    // same element and an id is never repeated.
+    function ensureDetailPanel(id) {
+      var existing = document.getElementById('detail-' + id);
+      if (existing) { return existing; }
+      var row = document.getElementById('row-' + id);
+      if (!row) { return null; }
+      var panel;
+      var html = detailSource()[id];
+      if (html) {
+        var holder = document.createElement('div');
+        holder.innerHTML = html;
+        panel = holder.firstElementChild;
+      } else {
+        var template = document.getElementById('detail-empty-template');
+        if (!template) { return null; }
+        panel = template.content.firstElementChild.cloneNode(true);
+        panel.id = 'detail-' + id;
+        panel.dataset.periods = row.dataset.periods;
+        panel.querySelector('h2').textContent = id;
+        var closeButton = panel.querySelector('.detail-close');
+        closeButton.removeAttribute('onclick');
+        closeButton.onclick = function () { closeDetail(id); };
+      }
+      // Born outside the active period, it must be hidden like its row.
+      panel.classList.toggle('period-hidden', row.classList.contains('period-hidden'));
+      document.querySelector('.detail-container').appendChild(panel);
+      row.setAttribute('aria-controls', 'detail-' + id);
+      return panel;
+    }
     function showSession(id) {
       var row = document.getElementById('row-' + id);
       if (row) {
@@ -1433,7 +1474,7 @@ SCRIPT = """
       document.querySelectorAll('.session-row').forEach(function(el) {
         el.classList.remove('active');
       });
-      var panel = document.getElementById('detail-' + id);
+      var panel = ensureDetailPanel(id);
       if (panel) { panel.classList.add('open'); }
       if (row) { row.classList.add('active'); }
     }
