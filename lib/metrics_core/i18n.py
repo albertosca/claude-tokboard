@@ -36,8 +36,8 @@ MESSAGES: dict[str, dict[str, str]] = {
     # words already name token types in the same panel, and the quota's
     # input side also counts cache writes.
     "quota_line": {
-        "en": "Quota (approx.): {input} in · {output} out",
-        "pt": "Quota (aprox.): {input} entrada · {output} saída",
+        "en": "Quota (approx., this machine only): {input} in · {output} out",
+        "pt": "Quota (aprox., só esta máquina): {input} entrada · {output} saída",
     },
     # The tooltip on the quota line above - missed by the plan's own
     # replacement table (found by the leak detector, not the plan).
@@ -45,11 +45,16 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "Approximation based on the Anthropic API's rate-limit rule "
         "(input + cache_creation count towards ITPM, cache_read does not, "
         "output is a separate limit). Claude Code does not publish its "
-        "own quota's exact formula.",
+        "own quota's exact formula. Only the Claude Code sessions logged on "
+        "this machine are counted; the account's quota also covers claude.ai "
+        "and other devices, so a limit can be hit with less than this showing.",
         "pt": "Aproximação baseada na regra de rate-limit da API da "
         "Anthropic (input + cache_creation contam pra ITPM, cache_read "
         "não conta, output é um limite separado). O Claude Code não "
-        "publica a fórmula exata da própria quota.",
+        "publica a fórmula exata da própria quota. Só contam as sessões do "
+        "Claude Code registradas nesta máquina; a quota da conta também cobre "
+        "o claude.ai e outros aparelhos, então o limite pode estourar com "
+        "menos do que isto mostra.",
     },
     # The detail panel's close button - also missed by the plan's table.
     "detail.close": {"en": "Close", "pt": "Fechar"},

@@ -176,7 +176,7 @@ def test_render_composition_legend_missing_series_defaults_to_zero():
     # The quota line's own two zeros are plain text, not tag-wrapped like
     # the chips' totals - if they were, this count would silently become 6
     # (see the module's own comment at render_composition_legend).
-    assert "Quota (aprox.): 0 entrada · 0 saída" in out
+    assert "Quota (aprox., só esta máquina): 0 entrada · 0 saída" in out
 
 
 def test_render_composition_legend_quota_line_sums_input_and_cache_creation_only():
@@ -185,7 +185,18 @@ def test_render_composition_legend_quota_line_sums_input_and_cache_creation_only
     # invisible to it entirely; output (series-2) is its own number.
     totals = {"series-1": 100, "series-2": 20, "series-3": 999_999_999, "series-4": 5}
     out = dashboard_html.render_composition_legend(totals, lang="pt")
-    assert "Quota (aprox.): 105 entrada · 20 saída" in out
+    assert "Quota (aprox., só esta máquina): 105 entrada · 20 saída" in out
+
+
+def test_the_quota_tooltip_says_the_figure_is_a_floor_for_the_account():
+    # The label carries "this machine only"; the tooltip says why it matters:
+    # the account's quota also covers claude.ai and other devices.
+    english = dashboard_html.render_composition_legend({}, lang="en")
+    assert "claude.ai" in english
+    assert "this machine" in english
+    portuguese = dashboard_html.render_composition_legend({}, lang="pt")
+    assert "claude.ai" in portuguese
+    assert "nesta máquina" in portuguese
 
 
 # --------------------------------------------------------------------------

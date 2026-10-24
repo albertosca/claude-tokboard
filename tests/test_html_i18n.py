@@ -24,7 +24,7 @@ def test_the_tabs_modes_and_quota_line_are_english(tmp_path: Path) -> None:
         "By project",
         "By token type",
         "By model",
-        "Quota (approx.):",
+        "Quota (approx., this machine only):",
         "Sessions",
         "Overview",
     ):

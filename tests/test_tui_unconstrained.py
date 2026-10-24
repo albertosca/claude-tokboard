@@ -486,7 +486,7 @@ def test_quota_summary_sums_input_and_cache_creation_keeps_output_separate():
     totals = {"series-1": 100, "series-2": 20, "series-3": 999_999_999, "series-4": 5}
     summary = tui.QuotaSummary(totals, mr, lang="pt")
     text = summary.render()
-    assert text == "Quota (aprox.): 105 entrada · 20 saída"
+    assert text == "Quota (aprox., só esta máquina): 105 entrada · 20 saída"
 
 
 def test_project_ranking_rows_show_their_own_token_total_not_the_max():
