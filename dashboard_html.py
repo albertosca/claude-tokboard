@@ -315,8 +315,8 @@ def render_detail_panel(
             subagents, key=lambda subagent: subagent.get("timestamp_start") or "", reverse=True
         )
         title = (
-            f'<h4 class="subagent-title">'
-            f"{metrics_core_module.t('detail.subagents_title', lang, n=len(ordered))}</h4>"
+            f'<h3 class="subagent-title">'
+            f"{metrics_core_module.t('detail.subagents_title', lang, n=len(ordered))}</h3>"
         )
         header = (
             '<div class="subagent-row subagent-header">'
@@ -375,7 +375,7 @@ def render_detail_panel(
         f'<button class="detail-close" onclick="closeDetail(\'{session_id}\')" '
         f'aria-label="{html.escape(metrics_core_module.t("detail.close", lang), quote=True)}">'
         "×</button>"  # noqa: RUF001 - multiplication sign in shipped HTML, not a confusable identifier
-        f"<h3>{session_id}</h3>{title}{body}</div>"
+        f"<h2>{session_id}</h2>{title}{body}</div>"
     )
 
 
@@ -1123,8 +1123,8 @@ def render_project_totals_chart(
     )
     return (
         '<div class="project-chart-container">'
-        f'<h3 class="project-chart-title">'
-        f"{metrics_core_module.t('project_totals_title', lang)}</h3>"
+        f'<h2 class="project-chart-title">'
+        f"{metrics_core_module.t('project_totals_title', lang)}</h2>"
         '<p class="project-chart-sort-note">'
         f"{metrics_core_module.t('project_totals_sort_note', lang)}</p>"
         f"{legend}"

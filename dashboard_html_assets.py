@@ -144,6 +144,9 @@ STYLE = """
       .chart-hatch-bg { fill: transparent; }
       .chart-hatch-line { stroke: var(--surface-1); stroke-width: 3; opacity: 0.6; }
       .project-chart-container { padding: 12px 16px; border-bottom: 1px solid var(--border); }
+      /* The detail panel's heading is an h2 for the outline; this keeps the
+         h3 size it had before (2026-10-24 heading-order fix). */
+      .detail-panel > h2 { font-size: 1.17em; margin: 1em 0; }
       .project-chart-title { font-size: 13px; margin: 0 0 8px; color: var(--text-secondary); }
       .project-chart-sort-note { font-size: 10px; margin: -4px 0 8px; color: var(--text-muted); }
       .project-chart-svg { width: 100%; max-width: 760px; display: block; }
