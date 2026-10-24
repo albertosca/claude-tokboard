@@ -63,3 +63,28 @@ def test_the_others_bucket_recedes_towards_the_surface(theme: str) -> None:
     others = _relative_luminance(_token(block, "group-other"))
     no_project = _relative_luminance(_token(block, "group-none"))
     assert abs(others - surface) < abs(no_project - surface)
+
+
+def _blend(foreground: str, background: str, opacity: float) -> str:
+    channels = [
+        round(
+            opacity * int(foreground[offset : offset + 2], 16)
+            + (1 - opacity) * int(background[offset : offset + 2], 16)
+        )
+        for offset in (1, 3, 5)
+    ]
+    return "#" + "".join(f"{channel:02x}" for channel in channels)
+
+
+@pytest.mark.parametrize("theme", ["light", "dark"])
+def test_an_inactive_period_chip_keeps_small_text_contrast_through_its_opacity(theme: str) -> None:
+    # 2026-10-24, found by a Lighthouse audit in the light theme: the chip
+    # inherits the primary text colour and dims itself with `opacity`, which
+    # the token test above cannot see - 0.55 measured 4.36:1 against 4.5.
+    rule = re.search(r"\.period-chip \{[^}]*?opacity:\s*([0-9.]+);", STYLE)
+    assert rule, ".period-chip opacity not found"
+    block = _theme_blocks()[theme]
+    surface = _token(block, "surface-1")
+    effective = _blend(_token(block, "text-primary"), surface, float(rule.group(1)))
+    ratio = _contrast(effective, surface)
+    assert ratio >= 4.5, f"inactive period chip in {theme}: {ratio:.2f}:1"

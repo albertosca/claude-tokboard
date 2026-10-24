@@ -16,8 +16,8 @@ import re
 
 from dashboard_html_assets import STYLE
 
-SWATCH_RE = re.compile(r"\.session-row\.(group-color-(?:\d+|other))\s*\{")
-CHIP_RE = re.compile(r"legend-chip:has\(\.legend-swatch\.(group-color-(?:\d+|other))\)")
+SWATCH_RE = re.compile(r"\.session-row\.(group-color-(?:\d+|other|none))\s*\{")
+CHIP_RE = re.compile(r"legend-chip:has\(\.legend-swatch\.(group-color-(?:\d+|other|none))\)")
 
 
 def test_every_group_color_swatch_has_a_legend_chip_highlight_rule() -> None:
@@ -40,3 +40,12 @@ def test_the_others_bucket_has_its_swatch_and_chip_rules() -> None:
     assert "group-color-other" in SWATCH_RE.findall(STYLE)
     assert "group-color-other" in CHIP_RE.findall(STYLE)
     assert ".chart-bar.group-color-other { fill: var(--group-other); }" in STYLE
+
+
+def test_the_no_project_bucket_has_its_chip_rule() -> None:
+    # 2026-10-24, found by a Lighthouse contrast audit: the "no project" chip
+    # was the one legend chip with no re-light rule, so it stayed at the dim
+    # opacity while aria-pressed said it was selected (contrast 2.63:1), and
+    # clicking it highlighted nothing.
+    assert "group-color-none" in SWATCH_RE.findall(STYLE)
+    assert "group-color-none" in CHIP_RE.findall(STYLE)

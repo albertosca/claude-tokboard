@@ -1309,6 +1309,13 @@ STYLE = """
         opacity: 1;
         font-weight: 700;
       }
+      /* The "no project" bucket's chip rule, standalone for the same reason.
+         It was the one legend chip without one: it stayed dim while
+         aria-pressed said it was selected (contrast 2.63:1, 2026-10-24). */
+      body[data-highlight~="group-color-none"] .legend-chip:has(.legend-swatch.group-color-none) {
+        opacity: 1;
+        font-weight: 700;
+      }
       .session-row.group-color-other { border-left: 3px solid var(--group-other); }
       .group-header.group-color-other { border-left: 3px solid var(--group-other); }
       .group-icon { width: 10px; display: inline-block; }
@@ -1372,7 +1379,7 @@ STYLE = """
         font: inherit;
         background: none;
         color: inherit;
-        opacity: 0.55;
+        opacity: 0.65;
         white-space: nowrap;
         flex-shrink: 0;
       }
