@@ -303,6 +303,11 @@ def load_base_data(
         "model_slots": model_slots,
         "project_slots": project_slots,
         "lang": lang,
+        # Period-independent like everything else here: the weekly window is
+        # its own calendar, so "p" never re-windows it.
+        "weekly_meter": metrics_core_module.load_weekly_meter_view(
+            Path(metrics_core_module.METRICS_FILE).parent, lang, datetime.now().astimezone()
+        ),
     }
 
 
@@ -347,6 +352,7 @@ def apply_period(
         "model_slots": base["model_slots"],
         "project_slots": base["project_slots"],
         "lang": base["lang"],
+        "weekly_meter": base.get("weekly_meter"),
         "period_id": period_id,
         # The period-independent source this view was derived from, carried
         # along so any holder of a view can re-window it without reloading.
@@ -515,6 +521,58 @@ class SessionDetailPanel(VerticalScroll):
             )
             lines.append(f"[dim]{floor_note}[/dim]")
         self._body.update("\n".join(lines))
+
+
+METER_BAR_CELLS = 40
+
+
+def meter_bar(view: dict[str, Any]) -> str:
+    """The meter as one line of block characters: filled cells up to the
+    value, shaded cells across the observed range, so the range reads
+    without colour (the numbers beside it say the same in words)."""
+    start = view["range_start_percent"]
+    end = view["range_end_percent"]
+    filled = round(view["fill_percent"] * METER_BAR_CELLS / 100)
+    cells = []
+    for index in range(METER_BAR_CELLS):
+        percent = (index + 0.5) * 100 / METER_BAR_CELLS
+        in_range = start is not None and start <= percent <= end
+        if index < filled:
+            cells.append("▓" if in_range else "█")
+        else:
+            cells.append("▒" if in_range else "░")
+    return "".join(cells)
+
+
+class WeeklyMeterPanel(Static):
+    """The weekly-limit panel: the same view dict the HTML page renders
+    (metrics_core.describe_weekly_meter), so the two cannot disagree."""
+
+    def __init__(
+        self, view: dict[str, Any], metrics_core_module: ModuleType, **keyword_arguments: Any
+    ) -> None:
+        super().__init__(**keyword_arguments)
+        self.view = view
+        self.metrics_core_module = metrics_core_module
+
+    def render(self) -> RenderResult:
+        view = self.view
+        lines = [Text(view["heading"], style="bold")]
+        if view["empty"]:
+            lines += [Text(view["status"]), Text(view["caveat"], style="dim")]
+            return Text("\n").join(lines)
+        lines.append(Text(f"{meter_bar(view)}  {view['value_text']} {view['tiers']}"))
+        lines.append(Text(view["status"]))
+        if view["range"]:
+            lines.append(Text(view["range"]))
+        lines += [Text(view["five_hour"]), Text(view["caveat"], style="dim")]
+        for row in view["rows"]:
+            lines.append(
+                Text(
+                    f"{row['window']:<24} {row['accumulated']:>8}  {row['tiers']}  {row['outcome']}"
+                )
+            )
+        return Text("\n").join(lines)
 
 
 class QuotaSummary(Static):
@@ -1550,6 +1608,8 @@ class MetricsTUIApp(App[None]):
                 # queued behind the recompose could leave one frame with all
                 # three legends showing (2026-09-23 review).
                 shown = legend_visibility(self.chart_mode)
+                if self.data.get("weekly_meter"):
+                    yield WeeklyMeterPanel(self.data["weekly_meter"], self.metrics_core_module)
                 quota = QuotaSummary(totals, self.metrics_core_module, lang=lang)
                 quota.display = shown["quota"]
                 yield quota
