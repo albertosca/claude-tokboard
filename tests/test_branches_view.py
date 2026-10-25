@@ -34,6 +34,8 @@ def test_rows_carry_formatted_numbers_and_the_share_of_the_project() -> None:
         {"branch": "dev", "sessions": "1", "tokens": "2.5k", "share": "25%"},
     ]
     assert "last branch" in view["note"]
+    assert list(view["columns"]) == ["branch", "sessions", "tokens", "share"]
+    assert branches_view.describe_branches([], "pt")["columns"]["share"] == "Parcela"
 
 
 def test_detached_and_missing_branches_are_named_in_both_languages() -> None:

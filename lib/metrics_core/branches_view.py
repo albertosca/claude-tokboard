@@ -15,6 +15,7 @@ from .projects import project_display_label
 PROJECTS_SHOWN = 8
 BRANCHES_SHOWN = 8
 DETACHED_BRANCH = "HEAD"
+COLUMN_KEYS = ("branch", "sessions", "tokens", "share")
 
 
 def _branch_label(branch: str | None, lang: str) -> str:
@@ -70,5 +71,6 @@ def describe_branches(breakdown: list[dict[str, Any]], lang: str) -> dict[str, A
         "lang": lang,
         "heading": t("branches.heading", lang),
         "note": t("branches.note", lang),
+        "columns": {key: t(f"branches.col.{key}", lang) for key in COLUMN_KEYS},
         "projects": projects,
     }

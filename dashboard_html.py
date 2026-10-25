@@ -1380,10 +1380,7 @@ def render_branches(view: dict[str, Any], period_id: str) -> str:
     if view["empty"]:
         return ""
     lang = view["lang"]
-    columns = [
-        (str(metrics_core_module.t(f"branches.col.{key}", lang)), key)
-        for key in ("branch", "sessions", "tokens", "share")
-    ]
+    columns = [(label, key) for key, label in view["columns"].items()]
     tables = "".join(
         _render_table(
             str(metrics_core_module.t("branches.caption", lang, project=project["project"])),
