@@ -1,9 +1,12 @@
 """The branch filter of the session list on the HTML dashboard (markup)."""
 
+import html
+import json
 import re
 from typing import Any
 
 import metrics_core as mr
+from metrics_core import branches_view
 from test_dashboard_html_page import _empty_render_html_kwargs, _session_record
 
 import dashboard_html
@@ -90,3 +93,16 @@ def test_the_bar_is_in_portuguese_when_asked() -> None:
 
     assert "Filtrar my-api por branch" in page
     assert ">Todas</button>" in page
+
+
+def test_branches_past_the_cap_get_one_chip_that_lists_them() -> None:
+    busy = [f"branch-{index}" for index in range(branches_view.BRANCHES_SHOWN)]
+    names = [*busy, *busy, "a", 'x"><b>']  # the busy ones have two sessions, so they get the chips
+    bar = dashboard_html.render_branch_filter(2, _view(*names))
+
+    assert bar.count("<button") == 1 + branches_view.BRANCHES_SHOWN + 1
+    assert "2 other branches · 2" in bar
+    match = re.search(r'data-branches="([^"]*)"', bar)
+    assert match is not None
+    assert json.loads(html.unescape(match.group(1))) == ["a", 'x"><b>']
+    assert "<b>" not in bar

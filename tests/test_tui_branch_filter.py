@@ -33,12 +33,16 @@ def _records() -> list[dict[str, Any]]:
 
 
 def _drive(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, presses: list[str], lang: str = "en"
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    presses: list[str],
+    lang: str = "en",
+    records: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     seeded_tui_home(monkeypatch, tmp_path)
     arguments = tui.build_arg_parser().parse_args(["--label-budget", "0"])
     data = dict(tui.load_data(arguments, metrics_core_module=mr))
-    data["records"] = _records()
+    data["records"] = _records() if records is None else records
     data["subagents_by_session"] = {}
     data["lang"] = lang
 
@@ -172,3 +176,20 @@ def test_b_with_the_cursor_on_no_group_does_nothing(
             return len(app._notifications)
 
     assert asyncio.run(run()) == 0
+
+
+def test_b_reaches_the_branches_past_the_html_chip_cap(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    busy = mr.branches_view.BRANCHES_SHOWN
+    records = [
+        _session(PROJECT, f"busy-{number}", WHEN) | {"session_id": f"busy-{number}-{copy}"}
+        for number in range(busy)
+        for copy in range(2)
+    ]
+    records.append(_session(PROJECT, "quiet-one", WHEN) | {"session_id": "quiet-one"})
+
+    outcome = _drive(monkeypatch, tmp_path, ["my-api"] * (busy + 1), records=records)
+
+    assert outcome["leaves"][-1] == ["quiet-one"]
+    assert any("quiet-one" in note for note in outcome["notes"])

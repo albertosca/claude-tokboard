@@ -448,6 +448,15 @@ def group_label(group_state: dict[str, Any], metrics_core_module: ModuleType, *,
     )
 
 
+def labelled_branches(view: dict[str, Any]) -> list[tuple[str, str]]:
+    """Every (key, label) pair of a branch filter view, the ones past the chip
+    cap included."""
+    pairs = [(chip["key"], chip["label"]) for chip in view["chips"]]
+    if view["rest"]:
+        pairs += list(zip(view["rest"]["keys"], view["rest"]["branch_labels"], strict=True))
+    return pairs
+
+
 def matching_branch(records: list[dict[str, Any]], branch: str | None) -> list[dict[str, Any]]:
     """Records on `branch`, matched the way the page matches a row: by the text
     of the branch column, "-" standing for no branch. None keeps them all."""
@@ -1880,7 +1889,7 @@ class MetricsTUIApp(App[None]):
                 )
             )
             return
-        keys: list[str | None] = [None, *(chip["key"] for chip in view["chips"])]
+        keys: list[str | None] = [None, *(key for key, _ in labelled_branches(view))]
         group_state["branch"] = keys[(keys.index(group_state["branch"]) + 1) % len(keys)]
         node.remove_children()
         add_session_leaves(
@@ -1898,9 +1907,7 @@ class MetricsTUIApp(App[None]):
                 project=group_state["label"],
                 branch=view["all"]
                 if group_state["branch"] is None
-                else next(
-                    chip["label"] for chip in view["chips"] if chip["key"] == group_state["branch"]
-                ),
+                else dict(labelled_branches(view))[group_state["branch"]],
             )
         )
 

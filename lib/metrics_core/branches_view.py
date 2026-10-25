@@ -10,7 +10,7 @@ from typing import Any
 
 from .branches import BRANCH_OTHERS_KEY, list_group_branches
 from .format import format_tokens
-from .i18n import t
+from .i18n import t, tn
 from .projects import project_display_label
 
 PROJECTS_SHOWN = 8
@@ -79,6 +79,7 @@ def describe_branch_filter(
     options = list_group_branches(records)
     if len(options) < 2:
         return None
+    rest = options[BRANCHES_SHOWN:]
     return {
         "label": t("branches.filter.label", lang, project=project_label),
         "all": t("branches.filter.all", lang),
@@ -90,6 +91,18 @@ def describe_branch_filter(
             }
             for branch, sessions in options[:BRANCHES_SHOWN]
         ],
+        # The branches past the chip cap, narrowed to together: without it
+        # they could never be filtered at all.
+        "rest": _filter_rest(rest, lang) if rest else None,
+    }
+
+
+def _filter_rest(rest: list[tuple[str | None, int]], lang: str) -> dict[str, Any]:
+    return {
+        "keys": [NO_BRANCH_KEY if branch is None else branch for branch, _ in rest],
+        "branch_labels": [_branch_label(branch, lang) for branch, _ in rest],
+        "label": tn("branches.filter.rest", len(rest), lang),
+        "sessions": str(sum(sessions for _, sessions in rest)),
     }
 
 

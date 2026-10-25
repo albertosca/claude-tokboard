@@ -1531,6 +1531,8 @@ SCRIPT = """
     // the filter). A panel follows its row, as it does for the period.
     function filterBranch(groupId, chip) {
       var wanted = chip.getAttribute('data-branch');
+      var listed = chip.getAttribute('data-branches');
+      var wantedSet = listed === null ? null : JSON.parse(listed);
       var bar = chip.closest('.branch-filter');
       bar.querySelectorAll('.branch-chip').forEach(function (other) {
         other.setAttribute('aria-pressed', other === chip ? 'true' : 'false');
@@ -1538,7 +1540,9 @@ SCRIPT = """
       var rows = document.querySelectorAll('.session-row[data-group="' + groupId + '"]');
       rows.forEach(function (row) {
         var branch = row.querySelector('.branch-col').getAttribute('title');
-        var hidden = wanted !== '' && branch !== wanted;
+        var hidden = wantedSet === null
+          ? wanted !== '' && branch !== wanted
+          : wantedSet.indexOf(branch) === -1;
         row.classList.toggle('branch-hidden', hidden);
         var panel = document.getElementById('detail-' + row.id.slice(4));
         if (panel) { panel.classList.toggle('branch-hidden', hidden); }

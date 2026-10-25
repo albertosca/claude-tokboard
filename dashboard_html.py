@@ -296,6 +296,15 @@ def render_branch_filter(group_index: int, view: dict[str, Any] | None) -> str:
             f'aria-pressed="false" onclick="filterBranch({group_index}, this)">'
             f"{html.escape(chip['label'])} · {chip['sessions']}</button>"
         )
+    rest = view["rest"]
+    if rest is not None:
+        # One chip for every branch past the cap; the script reads the list.
+        chips.append(
+            '<button type="button" class="branch-chip" '
+            f'data-branches="{html.escape(json.dumps(rest["keys"]))}" '
+            f'aria-pressed="false" onclick="filterBranch({group_index}, this)">'
+            f"{html.escape(rest['label'])} · {rest['sessions']}</button>"
+        )
     return (
         f'<div class="branch-filter" role="group" aria-label="{html.escape(view["label"])}" '
         f'data-group="{group_index}">{"".join(chips)}</div>'
@@ -1628,15 +1637,14 @@ def render_html(
     # restructure, which is explicitly a later phase, smuggled into a
     # filtering task.
     #
-    # There are THREE such div sets now - the composition legend below
-    # became the third - and each group header additionally carries one
-    # `group-count period-block` span per period. So the page holds
-    # 3 x 5 = 15 `.period-block` divs, plus one span per group per period:
-    # measured on the test fixture's own generated page (2026-08-14), 15
-    # divs and 35 spans over 7 groups. This comment used to read "10
-    # `.period-block` elements total (5 + 5), not 5" - true when written,
-    # wrong through both changes since and never updated, so trust the
-    # shape stated here over any count you remember.
+    # There are several such div sets now - the trend chart, the quota line,
+    # the panorama chart, the composition legend and the branches panel - and
+    # each group header additionally carries one `group-count period-block`
+    # span per period. A set can skip a period it has nothing to show for
+    # (measured on a real page: the branches panel had no block for the
+    # shortest period). This comment used to quote totals, and
+    # the count was wrong after every change since it was written; no number
+    # is written down now, so measure one on a generated page.
     #
     # Every set carries the same `data-period` values and the same
     # `.period-block` class, so selectPeriod()'s single

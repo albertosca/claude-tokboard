@@ -200,6 +200,8 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "Filter {project} by branch",
         "pt": "Filtrar {project} por branch",
     },
+    "branches.filter.rest.one": {"en": "{n} other branch", "pt": "{n} outra branch"},
+    "branches.filter.rest.other": {"en": "{n} other branches", "pt": "{n} outras branches"},
     "branches.col.branch": {"en": "Branch", "pt": "Branch"},
     "branches.col.sessions": {"en": "Sessions", "pt": "Sessões"},
     "branches.col.tokens": {"en": "Tokens", "pt": "Tokens"},

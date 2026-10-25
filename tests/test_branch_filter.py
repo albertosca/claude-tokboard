@@ -55,3 +55,34 @@ def test_only_the_busiest_branches_become_chips() -> None:
 
     assert view is not None
     assert len(view["chips"]) == branches_view.BRANCHES_SHOWN
+
+
+def test_the_branches_past_the_chip_cap_are_grouped_into_one_rest_option() -> None:
+    names = [f"branch-{index}" for index in range(branches_view.BRANCHES_SHOWN + 3)]
+
+    view = branches_view.describe_branch_filter(_records(*names), "my-api", "en")
+
+    assert view is not None
+    assert view["rest"] == {
+        "keys": ["branch-7", "branch-8", "branch-9"],  # ties sort by name: 10 comes before 2
+        "branch_labels": ["branch-7", "branch-8", "branch-9"],
+        "label": "3 other branches",
+        "sessions": "3",
+    }
+
+
+def test_the_rest_option_is_singular_for_one_branch_and_translated() -> None:
+    names = [f"branch-{index}" for index in range(branches_view.BRANCHES_SHOWN + 1)]
+
+    english = branches_view.describe_branch_filter(_records(*names), "my-api", "en")
+    portuguese = branches_view.describe_branch_filter(_records(*names), "my-api", "pt")
+
+    assert english is not None and english["rest"]["label"] == "1 other branch"
+    assert portuguese is not None and portuguese["rest"]["label"] == "1 outra branch"
+
+
+def test_a_group_within_the_chip_cap_has_no_rest_option() -> None:
+    view = branches_view.describe_branch_filter(_records("main", "dev"), "my-api", "en")
+
+    assert view is not None
+    assert view["rest"] is None
