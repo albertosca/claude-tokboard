@@ -56,6 +56,66 @@ MESSAGES: dict[str, dict[str, str]] = {
         "o claude.ai e outros aparelhos, então o limite pode estourar com "
         "menos do que isto mostra.",
     },
+    # The weekly-limit meter. The hypothesis wording is part of the contract:
+    # the panel never states a single cap or a predicted hour.
+    "meter.heading": {
+        "en": "Weekly limit meter (hypothesis)",
+        "pt": "Medidor do limite semanal (hipótese)",
+    },
+    "meter.name": {
+        "en": "Cache creation in the current weekly window",
+        "pt": "Cache creation na janela semanal atual",
+    },
+    "meter.window": {"en": "Window starting {start}", "pt": "Janela iniciada em {start}"},
+    "meter.inferred": {"en": " (inferred)", "pt": " (inferida)"},
+    "meter.tiers": {
+        "en": "5-minute {five_minute} · 1-hour {one_hour}",
+        "pt": "5 minutos {five_minute} · 1 hora {one_hour}",
+    },
+    "meter.range": {
+        "en": "Accumulated at the first rejection of past weeks: {minimum} to {maximum}",
+        "pt": "Acumulado na primeira rejeição das semanas passadas: {minimum} a {maximum}",
+    },
+    "meter.points.one": {"en": "Hypothesis, {n} point", "pt": "Hipótese, {n} ponto"},
+    "meter.points.other": {"en": "Hypothesis, {n} points", "pt": "Hipótese, {n} pontos"},
+    "meter.status.insufficient": {
+        "en": "Not enough data to estimate the cap",
+        "pt": "Dados insuficientes para estimar o limite",
+    },
+    "meter.status.contradicted": {
+        "en": "Contradicted: a full week went past this range without a rejection",
+        "pt": "Contradita: uma semana completa passou desta faixa sem rejeição",
+    },
+    "meter.status.no_data": {
+        "en": "No calls stored yet",
+        "pt": "Nenhuma chamada registrada ainda",
+    },
+    "meter.status.no_anchor": {
+        "en": "No weekly rejection recorded yet, so the window cannot be placed",
+        "pt": "Nenhuma rejeição semanal registrada, então a janela não pode ser posicionada",
+    },
+    "meter.caveat": {
+        "en": "Lower bound: only the Claude Code sessions on this machine are counted.",
+        "pt": "Limite inferior: só contam as sessões do Claude Code desta máquina.",
+    },
+    "meter.five_hour": {
+        "en": "Last 5 hours: {accumulated} cache creation · {rejected} rejected "
+        "5-hour windows in the last 7 days",
+        "pt": "Últimas 5 horas: {accumulated} de cache creation · {rejected} janelas "
+        "de 5 horas rejeitadas nos últimos 7 dias",
+    },
+    "meter.col.window": {"en": "Window", "pt": "Janela"},
+    "meter.col.accumulated": {"en": "Accumulated", "pt": "Acumulado"},
+    "meter.col.tiers": {"en": "5-minute / 1-hour", "pt": "5 minutos / 1 hora"},
+    "meter.col.outcome": {"en": "Outcome", "pt": "Resultado"},
+    "meter.outcome.rejected": {
+        "en": "Rejected at {accumulated}",
+        "pt": "Rejeitada em {accumulated}",
+    },
+    "meter.outcome.clear": {"en": "No rejection", "pt": "Sem rejeição"},
+    "meter.outcome.open": {"en": "In progress", "pt": "Em andamento"},
+    "meter.outcome.partial": {"en": " · partial data", "pt": " · dados parciais"},
+    "meter.table_caption": {"en": "Recent weekly windows", "pt": "Janelas semanais recentes"},
     # The detail panel's close button - also missed by the plan's table.
     "detail.close": {"en": "Close", "pt": "Fechar"},
     # Why an output figure carries a "≥": the hooks' incomplete_usage_messages
