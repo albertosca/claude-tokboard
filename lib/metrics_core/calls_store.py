@@ -19,6 +19,9 @@ from __future__ import annotations
 
 import json
 import os
+import stat
+import tempfile
+from collections.abc import Iterable, Iterator
 from pathlib import Path
 from typing import Any
 
@@ -155,3 +158,110 @@ def read_region(
             for field in USAGE_FIELDS:
                 known[field] = max(known[field], row[field])
     return list(calls.values()), hits, offset
+
+
+# Whole rows are written in chunks of at most this many bytes, one write(2)
+# each, so two sessions appending at once can interleave at a row boundary
+# at worst, never inside a row.
+APPEND_CHUNK_BYTES = 4096
+
+
+def append_rows(path: Path, rows: Iterable[dict[str, Any]]) -> None:
+    lines = [(json.dumps(row, separators=(",", ":")) + "\n").encode() for row in rows]
+    if not lines:
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    is_new = not path.exists()
+    with path.open("ab", buffering=0) as handle:
+        chunk = b""
+        for line in lines:
+            if chunk and len(chunk) + len(line) > APPEND_CHUNK_BYTES:
+                handle.write(chunk)
+                chunk = b""
+            chunk += line
+        handle.write(chunk)
+    if is_new:
+        path.chmod(stat.S_IRUSR | stat.S_IWUSR)
+
+
+def load_cursor(metrics_directory: Path) -> dict[str, int]:
+    """transcript path -> byte offset already logged. Lenient: a damaged
+    cursor only means re-reading, which the readers' dedup absorbs."""
+    try:
+        loaded = json.loads((metrics_directory / CURSOR_FILE_NAME).read_text())
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(loaded, dict):
+        return {}
+    return {
+        key: value
+        for key, value in loaded.items()
+        if isinstance(value, int) and not isinstance(value, bool) and value >= 0
+    }
+
+
+def save_cursor(metrics_directory: Path, cursor: dict[str, int]) -> None:
+    # Pruned on every save so the file stays as small as the transcripts left.
+    # Two hooks saving at once can lose one entry; that transcript is then
+    # read again from 0 and its rows deduplicated on read.
+    alive = {path: offset for path, offset in cursor.items() if Path(path).exists()}
+    metrics_directory.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary_name = tempfile.mkstemp(dir=metrics_directory, prefix=".calls_cursor.")
+    with os.fdopen(descriptor, "w") as handle:
+        json.dump(alive, handle)
+    Path(temporary_name).replace(metrics_directory / CURSOR_FILE_NAME)
+
+
+def read_jsonl_rows(path: Path) -> Iterator[dict[str, Any]]:
+    try:
+        handle = path.open("rb")
+    except OSError:
+        return
+    with handle:
+        for raw_line in handle:
+            try:
+                row = json.loads(raw_line)
+            except ValueError:
+                continue
+            if isinstance(row, dict):
+                yield row
+
+
+def read_calls(path: Path) -> list[dict[str, Any]]:
+    """Every API response once, at its per-field peak, oldest first."""
+    merged: dict[str, dict[str, Any]] = {}
+    for row in read_jsonl_rows(path):
+        message_id = row.get("message_id")
+        if not isinstance(message_id, str) or not isinstance(row.get("timestamp"), str):
+            continue
+        counts = {field: _count(row.get(field)) for field in USAGE_FIELDS}
+        known = merged.get(message_id)
+        if known is None:
+            merged[message_id] = {**row, **counts}
+            continue
+        for field in USAGE_FIELDS:
+            known[field] = max(known[field], counts[field])
+    return sorted(merged.values(), key=lambda row: row["timestamp"])
+
+
+def read_limit_hits(path: Path) -> list[dict[str, Any]]:
+    """Every rejection once, oldest first."""
+    unique: dict[tuple[Any, ...], dict[str, Any]] = {}
+    for row in read_jsonl_rows(path):
+        timestamp = row.get("timestamp")
+        if not isinstance(timestamp, str):
+            continue
+        key = (timestamp, row.get("rate_limit_type"), row.get("resets_at"))
+        unique.setdefault(key, row)
+    return sorted(unique.values(), key=lambda row: row["timestamp"])
+
+
+def log_transcript(transcript_path: str, metrics_directory: Path) -> None:
+    """Append what a transcript gained since the last call. Rows go in
+    BEFORE the cursor moves, so a crash in between duplicates, never loses."""
+    cursor = load_cursor(metrics_directory)
+    rows, hits, offset = read_region(transcript_path, cursor.get(transcript_path, 0))
+    append_rows(metrics_directory / CALLS_FILE_NAME, rows)
+    append_rows(metrics_directory / LIMIT_HITS_FILE_NAME, hits)
+    cursor[transcript_path] = offset
+    save_cursor(metrics_directory, cursor)
