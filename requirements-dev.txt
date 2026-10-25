@@ -23,4 +23,4 @@ mypy>=1.11
 # which hid this requirement rather than removing it - and hid
 # dashboard_tui.py from coverage.py along with it (2026-09-01).
 textual>=8.0
-textual-plotext>=1.0
+textual-plotext>=1.0.1
