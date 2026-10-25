@@ -62,13 +62,21 @@ def _classified(calls: list[dict[str, Any]]) -> list[dict[str, Any]]:
         placed.sort(key=lambda item: item[0])
         sidechain = bool(placed[0][1].get("sidechain"))
         previous = None
+        previous_context = 0
         for position, (moment, call) in enumerate(placed):
             cache_5m, cache_1h = _number(call, "cache_5m"), _number(call, "cache_1h")
             creation = cache_5m + cache_1h
             context = _number(call, "input") + _number(call, "cache_read") + creation
+            cache_read = _number(call, "cache_read")
             if position == 0:
                 cause = COLD_START
-            elif creation > 0 and creation >= REWRITE_SHARE * context:
+            elif (
+                creation > 0
+                and creation >= REWRITE_SHARE * context
+                and cache_read < REWRITE_SHARE * previous_context
+            ):
+                # A big write alone is also what early growth looks like; the
+                # cache was lost only if it did not serve most of the last context.
                 cause = REWRITE
             else:
                 cause = INCREMENTAL
@@ -89,6 +97,7 @@ def _classified(calls: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 }
             )
             previous = moment
+            previous_context = context
     return classified
 
 

@@ -50,9 +50,20 @@ def test_the_singular_point_label() -> None:
 
 
 def test_a_contradicted_range_is_named() -> None:
-    view = weekly_meter_view.describe_weekly_meter(_meter([4_000, 9_000], current=50_000), "en")
+    calls = [_call(ANCHOR - 5 * WEEK, 1), _call(ANCHOR - 3 * WEEK - 3600, 2_000, 2_000)]
+    calls += [_call(ANCHOR - 2 * WEEK - 3600, 4_500, 4_500)]
+    calls += [_call(ANCHOR - WEEK - 3600, 50_000)]  # a whole week past the range, never rejected
+    hits = [
+        _hit(ANCHOR - 3 * WEEK - 7200, ANCHOR - 3 * WEEK),
+        _hit(ANCHOR - 2 * WEEK - 7200, ANCHOR - 2 * WEEK),
+    ]
+    now = datetime.fromtimestamp(ANCHOR + 7200, tz=timezone.utc)
+    meter = weekly_windows.compute_weekly_meter(calls, hits, now)
+
+    view = weekly_meter_view.describe_weekly_meter(meter, "en")
 
     assert view["status"].startswith("Contradicted")
+    assert view["status"].endswith("(Hypothesis, 2 points)")
 
 
 def test_portuguese_strings_replace_the_english_ones() -> None:

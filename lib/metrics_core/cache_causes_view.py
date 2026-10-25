@@ -77,7 +77,9 @@ def describe_cache_causes(causes: dict[str, Any], lang: str) -> dict[str, Any]:
         )
     return {
         "lang": lang,
-        "empty": not shown,
+        "empty": not (
+            shown or any(entry["runs"] for entry in causes["subagent_sizes"]) or first["versions"]
+        ),
         "heading": t("causes.heading", lang),
         "note": t("causes.note", lang),
         "alert": alert,
@@ -85,7 +87,7 @@ def describe_cache_causes(causes: dict[str, Any], lang: str) -> dict[str, Any]:
         "sizes": [
             {
                 "size": _size_label(index, lang),
-                "runs": format_tokens(entry["runs"]),
+                "runs": str(entry["runs"]),
                 "creation": format_tokens(entry["creation"]),
                 "rewrite": _share(entry["rewrite"], entry["creation"], lang),
             }
@@ -94,7 +96,7 @@ def describe_cache_causes(causes: dict[str, Any], lang: str) -> dict[str, Any]:
         "first_requests": [
             {
                 "version": entry["version"],
-                "conversations": format_tokens(entry["conversations"]),
+                "conversations": str(entry["conversations"]),
                 "median": format_tokens(entry["median"]),
             }
             for entry in first["versions"]

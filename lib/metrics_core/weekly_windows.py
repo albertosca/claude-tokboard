@@ -19,6 +19,11 @@ WEEK_SECONDS = 7 * 24 * 3600
 FIVE_HOUR_SECONDS = 5 * 3600
 # Fewer rejected windows than this and the panel says it cannot estimate a cap.
 MINIMUM_RANGE_POINTS = 2
+# A reset time past this (2100-01-01) is not epoch seconds: a millisecond
+# value would send the window grid walking one week per iteration for good.
+LATEST_USABLE_RESET = 4_102_444_800
+# Two rejections whose reset times differ by less than this are one week.
+RESET_JITTER_SECONDS = 3600
 
 
 def _epoch(timestamp: Any) -> float | None:
@@ -31,7 +36,11 @@ def _epoch(timestamp: Any) -> float | None:
 
 
 def _usable_reset(value: Any) -> int | None:
-    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, int)
+        or not 0 < value <= LATEST_USABLE_RESET
+    ):
         return None
     return value
 
@@ -61,7 +70,12 @@ def _weekly_hit_times(hits: list[dict[str, Any]]) -> dict[int, float]:
         if end is None or moment is None:
             continue
         first[end] = min(moment, first.get(end, moment))
-    return first
+    merged: dict[int, float] = {}
+    for end in sorted(first):
+        anchor = next((kept for kept in merged if end - kept < RESET_JITTER_SECONDS), None)
+        key = end if anchor is None else anchor
+        merged[key] = min(first[end], merged.get(key, first[end]))
+    return merged
 
 
 def _window_ends(
@@ -174,7 +188,10 @@ def compute_weekly_meter(
         observed = {"minimum": min(points), "maximum": max(points), "points": len(points)}
     state = "insufficient" if observed is None else "hypothesis"
     if observed is not None and any(
-        window["covered"] and not window["rejected"] and window["accumulated"] > observed["maximum"]
+        window["end"] <= now_epoch
+        and window["covered"]
+        and not window["rejected"]
+        and window["accumulated"] > observed["maximum"]
         for window in windows
     ):
         state = "contradicted"

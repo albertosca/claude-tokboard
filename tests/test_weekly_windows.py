@@ -213,3 +213,40 @@ def test_a_reset_time_far_ahead_of_the_clock_still_yields_the_window_in_progress
     assert meter["current"]["inferred"] is True
     assert meter["current"]["accumulated"] == 0
     assert sum(window["accumulated"] for window in meter["windows"]) == 7
+
+
+def test_a_reset_time_in_milliseconds_is_unusable_not_a_crash() -> None:
+    calls = [_call(ANCHOR - 100, 7)]
+
+    meter = weekly_windows.compute_weekly_meter(calls, [_hit(ANCHOR, ANCHOR * 1000)], _now(ANCHOR))
+
+    assert meter["state"] == "no_anchor"
+
+
+def test_the_window_in_progress_never_contradicts_the_range() -> None:
+    calls: list[dict[str, Any]] = [_call(ANCHOR - 4 * WEEK, 1)]
+    hits: list[dict[str, Any]] = []
+    for end in (ANCHOR - 2 * WEEK, ANCHOR - WEEK):
+        week_calls, hit = _week_with_rejection(end, 100)
+        calls += week_calls
+        hits.append(hit)
+    calls.append(_call(ANCHOR + 3 * 24 * 3600, 500))  # three days into the open week
+
+    meter = weekly_windows.compute_weekly_meter(calls, hits, _now(ANCHOR + 4 * 24 * 3600))
+
+    assert meter["current"]["accumulated"] == 500
+    assert meter["state"] == "hypothesis"
+
+
+def test_two_rejections_with_reset_times_a_minute_apart_are_one_week() -> None:
+    calls: list[dict[str, Any]] = [_call(ANCHOR - 4 * WEEK, 1)]
+    hits: list[dict[str, Any]] = []
+    for end in (ANCHOR - WEEK, ANCHOR):
+        week_calls, hit = _week_with_rejection(end, 100)
+        calls += week_calls
+        hits.append(hit)
+    hits.append(_hit(ANCHOR - 3000, ANCHOR + 60))  # the same week, a jittered reset
+
+    meter = weekly_windows.compute_weekly_meter(calls, hits, _now(ANCHOR + 100))
+
+    assert meter["range"]["points"] == 2

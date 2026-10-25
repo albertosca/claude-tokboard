@@ -159,3 +159,15 @@ def test_the_tier_alert_reaches_the_panel() -> None:
     view["causes"] = cache_causes_view.describe_cache_causes(causes_for("cache_5m"), "en")
 
     assert f"⚠ {view['causes']['alert']}" in _panel_text(view)
+
+
+def test_the_window_column_is_as_wide_as_the_longest_label() -> None:
+    view = _view([4_000, 9_000], current=3_000)
+    view["rows"][0]["window"] = "W" * 50
+
+    lines = _panel_text(view).splitlines()
+    row_lines = [line for line in lines if line.startswith(("W" * 50, view["rows"][1]["window"]))]
+
+    assert row_lines[0].index(view["rows"][0]["accumulated"]) == row_lines[1].index(
+        view["rows"][1]["accumulated"]
+    )

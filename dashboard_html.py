@@ -1295,22 +1295,26 @@ def render_cache_causes(view: dict[str, Any]) -> str:
         if view["first_jump"]
         else ""
     )
-    windows = _render_table(
-        str(metrics_core_module.t("causes.table_caption", lang)),
-        [
-            (label(key), key)
-            for key in (
-                "window",
-                "total",
-                "cold_start",
-                "rewrite",
-                "incremental",
-                "after_idle",
-                "main_short",
-                "subagent_short",
-            )
-        ],
-        view["windows"],
+    windows = (
+        ""
+        if not view["windows"]
+        else _render_table(
+            str(metrics_core_module.t("causes.table_caption", lang)),
+            [
+                (label(key), key)
+                for key in (
+                    "window",
+                    "total",
+                    "cold_start",
+                    "rewrite",
+                    "incremental",
+                    "after_idle",
+                    "main_short",
+                    "subagent_short",
+                )
+            ],
+            view["windows"],
+        )
     )
     sizes = _render_table(
         str(metrics_core_module.t("causes.sizes_caption", lang)),

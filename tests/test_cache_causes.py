@@ -56,8 +56,8 @@ def test_first_call_is_a_cold_start_big_write_later_is_a_rewrite_small_is_increm
 
 
 def test_a_rewrite_after_the_main_idle_limit_is_counted_as_after_idle() -> None:
-    quick = [_call("main", 0, created=10), _call("main", 60, created=40_000, read=100)]
-    slow = [_call("main", 0, created=10), _call("main", 5_000, created=40_000, read=100)]
+    quick = [_call("main", 0, created=10), _call("main", 60, created=40_000, read=2)]
+    slow = [_call("main", 0, created=10), _call("main", 5_000, created=40_000, read=2)]
 
     assert _causes(quick)["windows"][0]["rewrite_after_idle"] == 0
     assert _causes(slow)["windows"][0]["rewrite_after_idle"] == 40_000
@@ -66,9 +66,9 @@ def test_a_rewrite_after_the_main_idle_limit_is_counted_as_after_idle() -> None:
 def test_a_subagent_gap_over_five_minutes_is_idle_but_a_main_gap_of_that_size_is_not() -> None:
     gap = [
         _call("run", 0, created=10, sidechain=1),
-        _call("run", 400, created=40_000, read=100, sidechain=1),
+        _call("run", 400, created=40_000, read=2, sidechain=1),
     ]
-    main = [_call("m", 0, created=10), _call("m", 400, created=40_000, read=100)]
+    main = [_call("m", 0, created=10), _call("m", 400, created=40_000, read=2)]
 
     assert _causes(gap)["windows"][0]["rewrite_after_idle"] == 40_000
     assert _causes(main)["windows"][0]["rewrite_after_idle"] == 0
@@ -114,7 +114,8 @@ def test_subagent_runs_are_binned_by_call_count() -> None:
     small = [_call("small", offset, created=1, read=10, sidechain=1) for offset in range(3)]
     large = [_call("large", offset, created=1, read=10, sidechain=1) for offset in range(31)]
     medium = [_call("medium", offset, created=1, read=10, sidechain=1) for offset in range(11)]
-    large[5]["cache_1h"] = 90  # a rewrite inside the long run
+    large[5]["cache_1h"] = 90  # a rewrite inside the long run: the cache served nothing
+    large[5]["cache_read"] = 0
 
     sizes = _causes(small + medium + large)["subagent_sizes"]
 
@@ -173,3 +174,21 @@ def test_a_call_with_no_timestamp_is_skipped_and_no_windows_means_no_alert() -> 
 
     assert result["windows"] == []
     assert result["tier_alert"] is False
+
+
+def test_early_growth_of_a_young_conversation_is_not_a_lost_cache() -> None:
+    calls = [_call("main", 0, created=10_000), _call("main", 30, created=15_000, read=10_000)]
+
+    window = _causes(calls)["windows"][0]
+
+    assert window["causes"]["rewrite"] == 0
+    assert window["causes"]["incremental"] == 15_000
+
+
+def test_a_window_with_no_rejection_still_reports_sizes_and_first_requests() -> None:
+    calls = [_call(f"main-{index}", 0, created=10_000) for index in range(5)]
+
+    causes = cache_causes.compute_cache_causes(calls, {"windows": [], "current": None})
+
+    assert causes["windows"] == []
+    assert causes["first_requests"]["versions"][0]["version"] == "2.0.1"

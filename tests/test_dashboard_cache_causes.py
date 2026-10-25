@@ -98,3 +98,13 @@ def test_each_table_scrolls_inside_its_own_labelled_region() -> None:
     assert page.count('class="table-scroll" role="region"') == 3
     assert page.count('tabindex="0"') == 3
     assert "table-scroll { overflow-x: auto" in dashboard_html_assets.STYLE
+
+
+def test_no_windows_table_when_there_are_no_windows() -> None:
+    causes: dict[str, Any] = causes_for(jump=True)
+    causes["windows"] = []
+    view = cache_causes_view.describe_cache_causes(causes, "en")
+
+    page = dashboard_html.render_cache_causes(view)
+
+    assert page.count("<caption>") == 2

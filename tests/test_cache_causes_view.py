@@ -110,3 +110,24 @@ def test_the_loader_returns_the_meter_and_its_causes_from_one_read(tmp_path: Pat
 
     assert view["causes"]["heading"] == "Where the cache creation came from"
     assert view["causes"]["empty"] is False
+
+
+def test_run_and_conversation_counts_are_plain_numbers_not_tokens() -> None:
+    causes: dict[str, Any] = causes_for(jump=True)
+    causes["subagent_sizes"][0]["runs"] = 1_234
+    causes["first_requests"]["versions"][0]["conversations"] = 1_234
+
+    view = cache_causes_view.describe_cache_causes(causes, "en")
+
+    assert view["sizes"][0]["runs"] == "1234"
+    assert view["first_requests"][0]["conversations"] == "1234"
+
+
+def test_a_view_with_no_windows_but_other_tables_is_not_empty() -> None:
+    causes: dict[str, Any] = causes_for(jump=True)
+    causes["windows"] = []
+
+    view = cache_causes_view.describe_cache_causes(causes, "en")
+
+    assert view["empty"] is False
+    assert view["windows"] == []

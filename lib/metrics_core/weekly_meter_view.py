@@ -102,6 +102,8 @@ def describe_weekly_meter(meter: dict[str, Any], lang: str) -> dict[str, Any]:
         status = points_label(observed["points"], lang)
     else:
         status = t(f"meter.status.{state}", lang)
+        if observed is not None:
+            status += f" ({points_label(observed['points'], lang)})"
     view = {
         **base,
         "status": status,

@@ -566,10 +566,12 @@ class WeeklyMeterPanel(Static):
         if view["range"]:
             lines.append(Text(view["range"]))
         lines += [Text(view["five_hour"]), Text(view["caveat"], style="dim")]
+        label_width = max((len(row["window"]) for row in view["rows"]), default=0)
         for row in view["rows"]:
             lines.append(
                 Text(
-                    f"{row['window']:<24} {row['accumulated']:>8}  {row['tiers']}  {row['outcome']}"
+                    f"{row['window']:<{label_width}} {row['accumulated']:>8}  "
+                    f"{row['tiers']}  {row['outcome']}"
                 )
             )
         lines += self.causes_lines()
@@ -591,9 +593,10 @@ class WeeklyMeterPanel(Static):
             if warning:
                 lines.append(Text(f"⚠ {warning}", style="bold"))
         window_keys = ("total", "cold_start", "rewrite", "incremental", "after_idle")
+        window_width = max((len(row["window"]) for row in causes["windows"]), default=0)
         for row in causes["windows"]:
             fields = "  ".join(f"{label(key)} {row[key]}" for key in window_keys)
-            lines.append(Text(f"{row['window']:<24} {fields}"))
+            lines.append(Text(f"{row['window']:<{window_width}} {fields}"))
             lines.append(
                 Text(
                     f"  {label('main_short')} {row['main_short']}  "
@@ -603,9 +606,10 @@ class WeeklyMeterPanel(Static):
             )
         size_keys = ("runs", "creation", "rewrite")
         size_labels = {"runs": "runs", "creation": "creation", "rewrite": "rewrite_share"}
+        size_width = max((len(row["size"]) for row in causes["sizes"]), default=0)
         for row in causes["sizes"]:
             fields = "  ".join(f"{label(size_labels[key])} {row[key]}" for key in size_keys)
-            lines.append(Text(f"{row['size']:<24} {fields}"))
+            lines.append(Text(f"{row['size']:<{size_width}} {fields}"))
         for row in causes["first_requests"]:
             lines.append(
                 Text(

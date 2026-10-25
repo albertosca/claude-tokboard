@@ -123,9 +123,11 @@ MESSAGES: dict[str, dict[str, str]] = {
     },
     "causes.note": {
         "en": "Cold start: the first call of a conversation. Rewrite: a later call that wrote "
-        "at least half of its own context, so the cache was lost. Incremental: normal growth.",
+        "at least half of its own context while the cache served less than half of the previous "
+        "one, so the cache was lost. Incremental: normal growth.",
         "pt": "Partida a frio: a primeira chamada de uma conversa. Reescrita: uma chamada "
-        "posterior que gravou ao menos metade do próprio contexto, ou seja, o cache se perdeu. "
+        "posterior que gravou ao menos metade do próprio contexto enquanto o cache serviu menos "
+        "da metade do anterior, ou seja, o cache se perdeu. "
         "Incremental: crescimento normal.",
     },
     "causes.table_caption": {
