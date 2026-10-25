@@ -1,5 +1,6 @@
 """The causes as strings, and the loader that feeds both dashboards."""
 
+import json
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -131,3 +132,47 @@ def test_a_view_with_no_windows_but_other_tables_is_not_empty() -> None:
 
     assert view["empty"] is False
     assert view["windows"] == []
+
+
+def test_the_loader_joins_calls_to_projects_through_the_session_records(tmp_path: Path) -> None:
+    metrics = tmp_path / "metrics"
+    metrics.mkdir()
+    calls: list[dict[str, Any]] = []
+    sessions: list[dict[str, Any]] = []
+    for index in range(5):
+        for name, path in (
+            ("main", "/Users/username/code/my-api"),
+            ("tree", "/Users/username/code/my-api/.claude/worktrees/fix"),
+        ):
+            conversation = f"{name}-{index}"
+            calls.append(
+                {
+                    "message_id": f"message-{conversation}",
+                    "conversation": conversation,
+                    "timestamp": "2026-10-01T10:00:00.000Z",
+                    "sidechain": 0,
+                    "cache_1h": 40_000,
+                }
+            )
+            sessions.append({"session_id": conversation, "project_path": path})
+    sessions.append({"session_id": "orphan", "project_path": None})
+    calls_store.append_rows(metrics / "calls.jsonl", calls)
+    calls_store.append_rows(
+        metrics / "limit-hits.jsonl",
+        [
+            {
+                "timestamp": "2026-10-02T10:00:00.000Z",
+                "rate_limit_type": "seven_day",
+                "resets_at": 1_791_000_000,
+            }
+        ],
+    )
+    (metrics / "sessions.jsonl").write_text("".join(json.dumps(row) + "\n" for row in sessions))
+
+    view = weekly_meter_view.load_weekly_meter_view(
+        metrics, "en", datetime(2026, 10, 3, tzinfo=timezone.utc)
+    )
+
+    assert view["causes"]["first_by_project"] == [
+        {"project": "my-api", "conversations": "10", "median": "40.0k"}
+    ]

@@ -168,6 +168,18 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "Size of the first request of a main conversation, by Claude Code version",
         "pt": "Tamanho da primeira requisição de uma conversa principal, por versão do Claude Code",
     },
+    "causes.by_project_caption": {
+        "en": "Size of the first request of a main conversation, by project",
+        "pt": "Tamanho da primeira requisição de uma conversa principal, por projeto",
+    },
+    "causes.idle_caption": {
+        "en": "Sessions that rewrote the most cache after an idle pause",
+        "pt": "Sessões que mais reescreveram cache depois de uma pausa",
+    },
+    "causes.col.session": {"en": "Session", "pt": "Sessão"},
+    "causes.col.idle_tokens": {"en": "Rewritten after idle", "pt": "Reescrito após pausa"},
+    "causes.col.resumes": {"en": "Resumes", "pt": "Retomadas"},
+    "causes.col.project": {"en": "Project", "pt": "Projeto"},
     "causes.col.version": {"en": "Version", "pt": "Versão"},
     "causes.col.conversations": {"en": "Conversations", "pt": "Conversas"},
     "causes.col.median": {"en": "Median first request", "pt": "Mediana da primeira requisição"},

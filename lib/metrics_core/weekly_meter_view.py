@@ -15,6 +15,8 @@ from .cache_causes_view import describe_cache_causes
 from .calls_store import CALLS_FILE_NAME, LIMIT_HITS_FILE_NAME, read_calls, read_limit_hits
 from .format import format_tokens
 from .i18n import session_date, t, tn
+from .projects import color_group_key, project_display_label
+from .records import load_records
 from .weekly_windows import compute_weekly_meter
 
 # Rows in the recent-windows table.
@@ -126,6 +128,17 @@ def describe_weekly_meter(meter: dict[str, Any], lang: str) -> dict[str, Any]:
     return view
 
 
+def _project_of(metrics_directory: Path, lang: str) -> dict[str, str]:
+    """Conversation id to project label, through the session records: a call
+    row carries the transcript's id, which is the session id."""
+    mapping: dict[str, str] = {}
+    for record in load_records(str(metrics_directory / "sessions.jsonl")):
+        path = color_group_key(record.get("project_path"))
+        if record.get("session_id") and path:
+            mapping[str(record["session_id"])] = project_display_label(path, lang=lang)
+    return mapping
+
+
 def load_weekly_meter_view(metrics_directory: Path, lang: str, now: datetime) -> dict[str, Any]:
     """Read the stores and describe the meter and its causes: what each
     dashboard calls. The calls are read once for both."""
@@ -134,5 +147,7 @@ def load_weekly_meter_view(metrics_directory: Path, lang: str, now: datetime) ->
         calls, read_limit_hits(metrics_directory / LIMIT_HITS_FILE_NAME), now
     )
     view = describe_weekly_meter(meter, lang)
-    view["causes"] = describe_cache_causes(compute_cache_causes(calls, meter), lang)
+    view["causes"] = describe_cache_causes(
+        compute_cache_causes(calls, meter, _project_of(metrics_directory, lang)), lang
+    )
     return view

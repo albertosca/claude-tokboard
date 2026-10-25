@@ -13,6 +13,12 @@ from .i18n import session_date, t
 RECENT_CAUSE_WINDOWS = 4
 
 
+def _session_label(entry: dict[str, Any], lang: str) -> str:
+    started = datetime.fromtimestamp(entry["started"], tz=timezone.utc).isoformat()
+    day = session_date(started, lang)
+    return f"{entry['project']} · {day}" if entry["project"] else day
+
+
 def _percent(part: int, whole: int) -> int:
     return round(100 * part / whole) if whole else 0
 
@@ -78,7 +84,11 @@ def describe_cache_causes(causes: dict[str, Any], lang: str) -> dict[str, Any]:
     return {
         "lang": lang,
         "empty": not (
-            shown or any(entry["runs"] for entry in causes["subagent_sizes"]) or first["versions"]
+            shown
+            or any(entry["runs"] for entry in causes["subagent_sizes"])
+            or first["versions"]
+            or causes["first_by_project"]
+            or causes["idle_sessions"]
         ),
         "heading": t("causes.heading", lang),
         "note": t("causes.note", lang),
@@ -100,6 +110,22 @@ def describe_cache_causes(causes: dict[str, Any], lang: str) -> dict[str, Any]:
                 "median": format_tokens(entry["median"]),
             }
             for entry in first["versions"]
+        ],
+        "first_by_project": [
+            {
+                "project": entry["project"],
+                "conversations": str(entry["conversations"]),
+                "median": format_tokens(entry["median"]),
+            }
+            for entry in causes["first_by_project"]
+        ],
+        "idle_sessions": [
+            {
+                "session": _session_label(entry, lang),
+                "tokens": format_tokens(entry["tokens"]),
+                "resumes": str(entry["resumes"]),
+            }
+            for entry in causes["idle_sessions"]
         ],
         "first_jump": jump,
     }

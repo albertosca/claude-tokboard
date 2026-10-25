@@ -34,6 +34,10 @@ MINIMUM_TIER_SAMPLE = 100_000
 # version's (each over at least MINIMUM_VERSION_CONVERSATIONS) is flagged.
 FIRST_REQUEST_JUMP = 0.20
 MINIMUM_VERSION_CONVERSATIONS = 5
+# Projects listed in the first-request-by-project table, largest median first.
+PROJECTS_SHOWN = 8
+# Sessions listed in the rewritten-after-idle table.
+SESSIONS_SHOWN = 5
 
 
 def _epoch(timestamp: Any) -> float | None:
@@ -191,10 +195,61 @@ def _first_requests(items: list[dict[str, Any]]) -> dict[str, Any]:
     return {"versions": versions, "jump": jump}
 
 
-def compute_cache_causes(calls: list[dict[str, Any]], meter: dict[str, Any]) -> dict[str, Any]:
+def _first_requests_by_project(
+    items: list[dict[str, Any]], project_of: dict[str, str]
+) -> list[dict[str, Any]]:
+    """Median first request per project, for the projects with enough
+    conversations. A conversation whose project is unknown is left out."""
+    contexts: dict[str, list[int]] = {}
+    for item in items:
+        project = project_of.get(item["conversation"])
+        if item["position"] == 0 and not item["sidechain"] and project:
+            contexts.setdefault(project, []).append(item["context"])
+    rows: list[dict[str, Any]] = [
+        {"project": project, "conversations": len(sizes), "median": int(median(sizes))}
+        for project, sizes in contexts.items()
+        if len(sizes) >= MINIMUM_VERSION_CONVERSATIONS
+    ]
+    rows.sort(key=lambda row: (-row["median"], row["project"]))
+    return rows[:PROJECTS_SHOWN]
+
+
+def _idle_sessions(items: list[dict[str, Any]], project_of: dict[str, str]) -> list[dict[str, Any]]:
+    """Main conversations ranked by the tokens they rewrote after an idle
+    pause: what resuming an old session cost."""
+    totals: dict[str, dict[str, Any]] = {}
+    for item in items:
+        entry = totals.setdefault(
+            item["conversation"],
+            {"started": item["moment"], "main": not item["sidechain"], "tokens": 0, "resumes": 0},
+        )
+        entry["started"] = min(entry["started"], item["moment"])
+        if entry["main"] and _idle_rewrite(item):
+            entry["tokens"] += item["creation"]
+            entry["resumes"] += 1
+    rows = [
+        {
+            "project": project_of.get(conversation, ""),
+            "started": entry["started"],
+            "tokens": entry["tokens"],
+            "resumes": entry["resumes"],
+        }
+        for conversation, entry in totals.items()
+        if entry["tokens"] > 0
+    ]
+    rows.sort(key=lambda row: (-row["tokens"], row["started"]))
+    return rows[:SESSIONS_SHOWN]
+
+
+def compute_cache_causes(
+    calls: list[dict[str, Any]],
+    meter: dict[str, Any],
+    project_of: dict[str, str] | None = None,
+) -> dict[str, Any]:
     """Causes per recent weekly window, plus the all-history size and
     first-request views. `meter` is compute_weekly_meter's output; its windows
-    decide the buckets."""
+    decide the buckets. `project_of` maps a conversation id to a project label
+    (call rows carry none, so the caller joins them through the sessions)."""
     items = _classified(calls)
     windows = []
     for window in meter["windows"]:
@@ -219,4 +274,6 @@ def compute_cache_causes(calls: list[dict[str, Any]], meter: dict[str, Any]) -> 
         "tier_alert": alert,
         "subagent_sizes": _subagent_sizes(items),
         "first_requests": _first_requests(items),
+        "first_by_project": _first_requests_by_project(items, project_of or {}),
+        "idle_sessions": _idle_sessions(items, project_of or {}),
     }

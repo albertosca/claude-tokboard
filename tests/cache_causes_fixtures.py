@@ -34,4 +34,6 @@ def causes_for(tier: str = "cache_1h", jump: bool = False) -> dict[str, Any]:
             calls.append(_row(f"new-{index}", 20, 80_000, 0, claude_code_version="2.0.2"))
     window = {"start": START - 10, "end": START + WEEK, "covered": True}
     meter = {"windows": [window], "current": window}
-    return cache_causes.compute_cache_causes(calls, meter)
+    projects = {f"old-{index}": "my-api" for index in range(5)}
+    projects |= {f"new-{index}": "blog-site" for index in range(5)}
+    return cache_causes.compute_cache_causes(calls, meter, projects)

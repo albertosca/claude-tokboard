@@ -618,6 +618,21 @@ class WeeklyMeterPanel(Static):
                     f"{label('median')} {row['median']}"
                 )
             )
+        for row in causes["first_by_project"]:
+            lines.append(
+                Text(
+                    f"{row['project']}  "
+                    f"{label('conversations')} {row['conversations']}  "
+                    f"{label('median')} {row['median']}"
+                )
+            )
+        for row in causes["idle_sessions"]:
+            lines.append(
+                Text(
+                    f"{row['session']}  {label('idle_tokens')} {row['tokens']}  "
+                    f"{label('resumes')} {row['resumes']}"
+                )
+            )
         return lines
 
 

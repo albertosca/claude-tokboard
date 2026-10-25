@@ -192,3 +192,83 @@ def test_a_window_with_no_rejection_still_reports_sizes_and_first_requests() -> 
 
     assert causes["windows"] == []
     assert causes["first_requests"]["versions"][0]["version"] == "2.0.1"
+
+
+def _by_project(calls: list[dict[str, Any]], mapping: dict[str, str]) -> list[dict[str, Any]]:
+    result: list[dict[str, Any]] = cache_causes.compute_cache_causes(calls, _meter(), mapping)[
+        "first_by_project"
+    ]
+    return result
+
+
+def test_first_request_by_project_orders_by_median_and_needs_enough_conversations() -> None:
+    calls = [_call(f"big-{index}", 0, created=90_000) for index in range(5)]
+    calls += [_call(f"small-{index}", 0, created=30_000) for index in range(5)]
+    calls += [_call(f"thin-{index}", 0, created=500_000) for index in range(4)]
+    mapping = {f"{name}-{index}": name for name in ("big", "small", "thin") for index in range(5)}
+
+    rows = _by_project(calls, mapping)
+
+    assert [(row["project"], row["conversations"]) for row in rows] == [("big", 5), ("small", 5)]
+    assert rows[0]["median"] == 90_001
+
+
+def test_first_request_by_project_ignores_unmapped_conversations_and_subagent_starts() -> None:
+    calls = [_call(f"lost-{index}", 0, created=70_000) for index in range(6)]
+    calls += [_call(f"run-{index}", 0, created=70_000, sidechain=1) for index in range(6)]
+    mapping = {f"run-{index}": "my-api" for index in range(6)}
+
+    assert _by_project(calls, mapping) == []
+    assert _causes(calls)["first_by_project"] == []
+
+
+def test_only_the_largest_projects_are_listed() -> None:
+    calls: list[dict[str, Any]] = []
+    mapping: dict[str, str] = {}
+    for project in range(cache_causes.PROJECTS_SHOWN + 2):
+        for index in range(5):
+            calls.append(_call(f"p{project}-{index}", 0, created=10_000 + project))
+            mapping[f"p{project}-{index}"] = f"project-{project}"
+
+    rows = _by_project(calls, mapping)
+
+    assert len(rows) == cache_causes.PROJECTS_SHOWN
+    assert rows[0]["project"] == f"project-{cache_causes.PROJECTS_SHOWN + 1}"
+
+
+def test_idle_sessions_rank_by_tokens_rewritten_after_a_main_pause() -> None:
+    calls = [
+        _call("big", 0, created=10),
+        _call("big", 5_000, created=40_000, read=2),
+        _call("big", 10_000, created=30_000, read=2),
+        _call("small", 0, created=10),
+        _call("small", 5_000, created=20_000, read=2),
+        _call("quick", 0, created=10),
+        _call("quick", 60, created=90_000, read=2),
+        _call("agent", 0, created=10, sidechain=1),
+        _call("agent", 400, created=90_000, read=2, sidechain=1),
+    ]
+    mapping = {"big": "my-api", "small": "blog-site"}
+
+    rows = cache_causes.compute_cache_causes(calls, _meter(), mapping)["idle_sessions"]
+
+    assert [(row["project"], row["tokens"], row["resumes"]) for row in rows] == [
+        ("my-api", 70_000, 2),
+        ("blog-site", 20_000, 1),
+    ]
+    assert rows[0]["started"] == START
+
+
+def test_idle_sessions_are_capped() -> None:
+    calls = []
+    for index in range(cache_causes.SESSIONS_SHOWN + 3):
+        calls += [
+            _call(f"s{index}", 0, created=10),
+            _call(f"s{index}", 5_000, created=1_000 * (index + 1), read=0),
+        ]
+
+    rows = cache_causes.compute_cache_causes(calls, _meter())["idle_sessions"]
+
+    assert len(rows) == cache_causes.SESSIONS_SHOWN
+    assert rows[0]["tokens"] == 1_000 * (cache_causes.SESSIONS_SHOWN + 3)
+    assert rows[0]["project"] == ""

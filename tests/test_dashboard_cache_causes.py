@@ -14,12 +14,12 @@ def _view(lang: str = "en", jump: bool = False, tier: str = "cache_1h") -> dict[
     return cache_causes_view.describe_cache_causes(causes_for(tier, jump), lang)
 
 
-def test_the_panel_is_a_labelled_section_with_three_captioned_tables() -> None:
+def test_the_panel_is_a_labelled_section_with_five_captioned_tables() -> None:
     page = dashboard_html.render_cache_causes(_view(jump=True))
 
     assert 'aria-labelledby="cache-causes-heading"' in page
     assert 'id="cache-causes-heading"' in page
-    assert page.count("<caption>") == 3
+    assert page.count("<caption>") == 5
     assert page.count('<th scope="col">') >= 10
 
 
@@ -56,7 +56,15 @@ def test_the_version_jump_is_text_not_only_style() -> None:
 def test_an_empty_view_renders_nothing() -> None:
     first: dict[str, Any] = {"versions": [], "jump": None}
     empty = cache_causes_view.describe_cache_causes(
-        {"windows": [], "tier_alert": False, "subagent_sizes": [], "first_requests": first}, "en"
+        {
+            "windows": [],
+            "tier_alert": False,
+            "subagent_sizes": [],
+            "first_requests": first,
+            "first_by_project": [],
+            "idle_sessions": [],
+        },
+        "en",
     )
 
     assert dashboard_html.render_cache_causes(empty) == ""
@@ -95,8 +103,8 @@ def test_a_meter_view_without_causes_renders_no_causes_panel() -> None:
 def test_each_table_scrolls_inside_its_own_labelled_region() -> None:
     page = dashboard_html.render_cache_causes(_view(jump=True))
 
-    assert page.count('class="table-scroll" role="region"') == 3
-    assert page.count('tabindex="0"') == 3
+    assert page.count('class="table-scroll" role="region"') == 5
+    assert page.count('tabindex="0"') == 5
     assert "table-scroll { overflow-x: auto" in dashboard_html_assets.STYLE
 
 
@@ -107,4 +115,4 @@ def test_no_windows_table_when_there_are_no_windows() -> None:
 
     page = dashboard_html.render_cache_causes(view)
 
-    assert page.count("<caption>") == 2
+    assert page.count("<caption>") == 4

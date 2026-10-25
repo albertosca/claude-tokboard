@@ -134,6 +134,12 @@ def test_the_panel_prints_the_causes_the_html_page_does() -> None:
         shared += [row["size"], row["runs"], row["creation"], row["rewrite"]]
     for row in view["causes"]["first_requests"]:
         shared += [row["version"], row["conversations"], row["median"]]
+    for row in view["causes"]["first_by_project"]:
+        shared += [row["project"], row["conversations"], row["median"]]
+    assert view["causes"]["first_by_project"]
+    for row in view["causes"]["idle_sessions"]:
+        shared += [row["session"], row["tokens"], row["resumes"]]
+    assert view["causes"]["idle_sessions"]
     for fragment in shared:
         assert fragment in text, fragment
         assert fragment in page, fragment

@@ -1339,11 +1339,37 @@ def render_cache_causes(view: dict[str, Any]) -> str:
         if view["first_requests"]
         else ""
     )
+    by_project = (
+        _render_table(
+            str(metrics_core_module.t("causes.by_project_caption", lang)),
+            [
+                (label("project"), "project"),
+                (label("conversations"), "conversations"),
+                (label("median"), "median"),
+            ],
+            view["first_by_project"],
+        )
+        if view["first_by_project"]
+        else ""
+    )
+    idle = (
+        _render_table(
+            str(metrics_core_module.t("causes.idle_caption", lang)),
+            [
+                (label("session"), "session"),
+                (label("idle_tokens"), "tokens"),
+                (label("resumes"), "resumes"),
+            ],
+            view["idle_sessions"],
+        )
+        if view["idle_sessions"]
+        else ""
+    )
     return (
         '<section class="weekly-meter cache-causes" aria-labelledby="cache-causes-heading">'
         f'<h2 id="cache-causes-heading">{html.escape(view["heading"])}</h2>'
         f'<p class="meter-caveat">{html.escape(view["note"])}</p>'
-        f"{alert}{windows}{sizes}{first}{jump}</section>"
+        f"{alert}{windows}{sizes}{first}{by_project}{idle}{jump}</section>"
     )
 
 
