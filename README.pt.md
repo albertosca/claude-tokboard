@@ -17,9 +17,12 @@ Uma contagem crua de tokens mistura leitura de cache, que é barata, com os toke
 ## O que você ganha
 
 - **Uma visão de cota, não só de volume.** Uma linha à parte estima quanto do seu rate limit o período consumiu: entrada e escrita de cache de um lado, saída do outro, leitura de cache fora da conta - o peso que a Anthropic documenta para a API dela. O Claude Code não publica a própria fórmula, então a linha vem marcada como aproximada.
-- **Um dia, três recortes.** O gráfico de tendência divide o total de cada dia por projeto, por tipo de token ou por modelo. Um dia tem a mesma altura em todas as abas, então trocar de aba refatia o dia em vez de mudar a escala.
+- **Um dia, quatro recortes.** O gráfico de tendência divide o total de cada dia por projeto, por tipo de token, por modelo ou por branch do git. Um dia tem a mesma altura em todas as abas, então trocar de aba refatia o dia em vez de mudar a escala.
 - **Uma última barra honesta.** No navegador, o período que ainda está em andamento sempre mostra quanto dele já passou, hachurado, para que uma semana pela metade nunca pareça uma queda ali; o app de terminal diz o mesmo numa linha sob o eixo do gráfico ("última barra: 37% da semana até agora"), encurtada para caber num terminal estreito.
 - **Cada sessão, com os seus subagentes.** As sessões ficam agrupadas por projeto, cada uma com seus subagentes, duração e tokens detalhados, e dá para filtrar por período.
+- **Um medidor do limite semanal.** Os dashboards mostram o cache creation acumulado na janela semanal atual, com as camadas de 5 minutos e de 1 hora separadas, contra a faixa vista nas primeiras rejeições das semanas passadas. É uma hipótese, rotulada como tal com o número de pontos por trás - a Anthropic não publica como o limite semanal é contado.
+- **De onde vem o cache creation.** Cada janela semanal o divide em partida a frio, reescrita após uma pausa e crescimento incremental, e mostra quais sessões mais reescreveram após ficar ociosas.
+- **Tokens por branch.** Para cada projeto que usou mais de uma branch do git, um painel mostra quanto cada uma custou, a lista de sessões se restringe a uma só branch e o gráfico de tendência pode ser fatiado por branch - no navegador e no terminal.
 - **Clique para destacar.** Clique numa entrada da legenda ou numa barra para destacar um projeto, tipo de token ou modelo no gráfico inteiro.
 
 ![O app de terminal: tabela de sessões com painel de detalhe, e depois o gráfico de tendência passando pelos três recortes de um dia](assets/tui-pt.gif)
@@ -127,6 +130,8 @@ A partir da 2.2.0, a contagem de ferramentas passa a ser por chamada distinta - 
 
 A partir da 2.3.0, um total de tokens marcado com "≥" torna esse piso visível: algumas das mensagens daquela linha nunca receberam o registro final de consumo, então o total real pode ser maior que o mostrado. `python3 scripts/backfill-token-dedup.py --fields incomplete_usage` consegue preencher essa marca nas linhas gravadas antes desta versão. Uma linha cuja transcrição já não está no disco nunca recebe a marca, e isso não tem volta: sem a transcrição, não há como saber se o consumo ficou incompleto.
 
+A partir da 2.5.0, os dois hooks também registram uma linha por resposta da API (`calls.jsonl`) e uma por rejeição de rate limit (`limit-hits.jsonl`), que alimentam o medidor do limite semanal. Os arquivos começam vazios; `python3 scripts/backfill-calls.py` os preenche com os transcripts que o Claude Code ainda guarda (simulação até receber `--apply`, e ele mostra o dia mais antigo que consegue alcançar). O Claude Code apaga transcripts antigos, então rode uma vez depois de atualizar.
+
 ## Contribuindo
 
 ```bash
@@ -137,7 +142,7 @@ ruff check . && ruff format --check .
 mypy --strict .
 ```
 
-Não há etapa de build. `dashboard_html.py` e `dashboard_tui.py` são os dois pontos de entrada. PRs são bem-vindos - para qualquer coisa além de uma correção pequena, abra uma issue antes para combinarmos a direção.
+Não há etapa de build. `dashboard_html.py` e `dashboard_tui.py` são os dois pontos de entrada. PRs são bem-vindos - para qualquer coisa além de uma correção pequena, abra uma issue antes para combinarmos a direção. Veja o [CONTRIBUTING.md](CONTRIBUTING.md) (em inglês) para o nível de qualidade exigido e o [SECURITY.md](SECURITY.md) (em inglês) para reportar uma vulnerabilidade em privado.
 
 ## Licença
 

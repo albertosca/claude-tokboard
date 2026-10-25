@@ -1,0 +1,20 @@
+name: Feature request
+description: Something tokboard should show or do
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: The question you cannot answer today
+      description: What do you want to know about your Claude Code usage that the dashboards do not tell you?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What it could look like
+      description: In the browser, in the terminal, or both.
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Workarounds you considered

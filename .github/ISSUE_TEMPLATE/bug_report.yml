@@ -1,0 +1,35 @@
+name: Bug report
+description: Something behaved wrong
+labels: [bug]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What did you do, what did you see, what did you expect? A screenshot helps for anything visual - blur project names first.
+    validations:
+      required: true
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Where
+      options:
+        - HTML dashboard
+        - Terminal (TUI) app
+        - Logging hooks
+        - Repair scripts
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: tokboard version
+      description: The "version" in .claude-plugin/plugin.json.
+      placeholder: "2.5.0"
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: OS, Python and Claude Code versions
+      placeholder: "macOS 15 / Python 3.12 / Claude Code 2.1.300"

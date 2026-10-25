@@ -17,9 +17,12 @@ A raw token count mixes cheap cache reads with the tokens that count against rat
 ## What you get
 
 - **A quota view, not just a volume view.** A separate line estimates how much of your rate limit a period used: input and cache writes on one side, output on the other, cache reads left out - the weighting Anthropic documents for its API. Claude Code doesn't publish its own formula, so the line is labelled approximate.
-- **One day, three slicings.** The trend chart splits each day's total by project, by token type or by model. A day stays the same height in every tab, so switching re-slices it instead of rescaling it.
+- **One day, four slicings.** The trend chart splits each day's total by project, by token type, by model or by git branch. A day stays the same height in every tab, so switching re-slices it instead of rescaling it.
 - **An honest last bar.** The browser always shows how much of the bucket still in progress has elapsed, hatched, so a half-finished week never reads as a drop there; the terminal app says the same in a line under the chart's axis ("last bar: 37% of the week so far"), shortened to fit a narrow terminal.
 - **Every session, with its subagents.** Sessions are grouped by project, each with its subagents, duration and token breakdown, and filterable by period.
+- **A weekly-limit meter.** The dashboards show the cache creation piled up in the current weekly window, the 5-minute and 1-hour tiers apart, against the range seen at the first rejections of past weeks. It is a hypothesis, labelled as one with the number of data points behind it - Anthropic does not publish how the weekly limit is counted.
+- **Where cache creation comes from.** Each weekly window splits it into cold start, rewrite after an idle pause and incremental growth, and shows which sessions rewrote the most after idle.
+- **Tokens per branch.** For every project that used more than one git branch, a panel shows what each branch cost, the session list narrows to a single branch, and the trend chart can be sliced by branch - in the browser and in the terminal.
 - **Click to highlight.** Click a legend entry or a bar to spotlight one project, token type or model across the chart.
 
 ![The terminal app: a session table with a detail panel, then the trend chart cycling through its three slicings of a day](assets/tui-en.gif)
@@ -127,6 +130,8 @@ From 2.2.0, the tools count is per distinct tool call - about 4x higher than bef
 
 From 2.3.0, a row's token total prefixed with "≥" is that same floor made visible: some of its messages never got a final usage entry, so the real total may be higher than shown. `python3 scripts/backfill-token-dedup.py --fields incomplete_usage` can backfill that marker onto rows logged before this version. A row whose transcript is no longer on disk never gets it, for good: without the transcript there is no way to tell whether its usage was incomplete.
 
+From 2.5.0, both hooks also log one row per API response (`calls.jsonl`) and one per rate-limit rejection (`limit-hits.jsonl`), which feed the weekly-limit meter. They start empty; `python3 scripts/backfill-calls.py` seeds them from the transcripts Claude Code still keeps (a dry run until given `--apply`, and it prints the earliest day it can reach). Claude Code deletes old transcripts, so run it once after upgrading.
+
 ## Contributing
 
 ```bash
@@ -137,7 +142,7 @@ ruff check . && ruff format --check .
 mypy --strict .
 ```
 
-No build step. `dashboard_html.py` and `dashboard_tui.py` are the two entry points. PRs are welcome - for anything beyond a small fix, open an issue first so we can agree on the direction.
+No build step. `dashboard_html.py` and `dashboard_tui.py` are the two entry points. PRs are welcome - for anything beyond a small fix, open an issue first so we can agree on the direction. See [CONTRIBUTING.md](CONTRIBUTING.md) for the quality bar, and [SECURITY.md](SECURITY.md) for how to report a vulnerability privately.
 
 ## License
 

@@ -11,6 +11,12 @@ on:
 permissions:
   contents: read
 
+# A newer push to a pull request supersedes the run in flight. Runs on main
+# queue instead of being cancelled, so a push never loses its own result.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   test:
     runs-on: ubuntu-latest
