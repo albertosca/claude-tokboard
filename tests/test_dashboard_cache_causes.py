@@ -7,6 +7,7 @@ from metrics_core import cache_causes_view, weekly_meter_view
 from weekly_meter_fixtures import meter_for
 
 import dashboard_html
+import dashboard_html_assets
 
 
 def _view(lang: str = "en", jump: bool = False, tier: str = "cache_1h") -> dict[str, Any]:
@@ -89,3 +90,11 @@ def test_a_meter_view_without_causes_renders_no_causes_panel() -> None:
     page = dashboard_html.render_html(**_empty_render_html_kwargs(), lang="en", weekly_meter=weekly)
 
     assert 'id="cache-causes-heading"' not in page
+
+
+def test_each_table_scrolls_inside_its_own_labelled_region() -> None:
+    page = dashboard_html.render_cache_causes(_view(jump=True))
+
+    assert page.count('class="table-scroll" role="region"') == 3
+    assert page.count('tabindex="0"') == 3
+    assert "table-scroll { overflow-x: auto" in dashboard_html_assets.STYLE

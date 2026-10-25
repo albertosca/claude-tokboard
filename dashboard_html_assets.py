@@ -419,6 +419,7 @@ STYLE = """
       .meter-contradicted { color: var(--text-primary); font-weight: bold; }
       .meter-caveat { color: var(--text-muted); }
       .causes-alert { color: var(--text-primary); font-weight: bold; }
+      .table-scroll { overflow-x: auto; }
       .meter-table { width: 100%; border-collapse: collapse; margin-top: 8px; }
       .meter-table caption { text-align: left; color: var(--text-muted); padding-bottom: 4px; }
       .meter-table th, .meter-table td {

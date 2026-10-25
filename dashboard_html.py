@@ -1273,8 +1273,9 @@ def _render_table(caption: str, columns: list[tuple[str, str]], rows: list[dict[
         for row in rows
     )
     return (
+        f'<div class="table-scroll" role="region" aria-label="{html.escape(caption)}" tabindex="0">'
         f'<table class="meter-table"><caption>{html.escape(caption)}</caption>'
-        f"<thead><tr>{head}</tr></thead><tbody>{body}</tbody></table>"
+        f"<thead><tr>{head}</tr></thead><tbody>{body}</tbody></table></div>"
     )
 
 
