@@ -310,6 +310,7 @@ def test_render_html_marks_exactly_one_default_period_active_per_block_family(
         *,
         lang: str,
         model_slots: Any = None,
+        branch_slots: Any = None,
     ) -> str:
         return f"TREND::{period_id}"
 

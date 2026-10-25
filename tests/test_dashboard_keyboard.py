@@ -92,7 +92,7 @@ def test_selecting_a_period_presses_exactly_its_chip_and_announces_it(
 
 
 def test_the_chart_mode_tabs_report_which_one_is_selected(keyboard_report: dict[str, Any]) -> None:
-    assert keyboard_report["modeTabsSelected"] == ["false", "true", "false"]
+    assert keyboard_report["modeTabsSelected"] == ["false", "true", "false", "false"]
 
 
 def test_the_page_tabs_report_which_one_is_selected(keyboard_report: dict[str, Any]) -> None:
@@ -147,16 +147,17 @@ def test_every_tab_names_the_panel_it_controls(keyboard_report: dict[str, Any]) 
 
 
 def test_arrow_keys_walk_the_tabs_of_a_tablist_and_wrap(keyboard_report: dict[str, Any]) -> None:
-    # The chart-mode tablist has three tabs and starts on the second.
+    # The chart-mode tablist has four tabs and starts on the second.
     walked = [
         (step["key"], step["selected"], step["focused"]) for step in keyboard_report["arrowTrail"]
     ]
     assert walked == [
         ("ArrowRight", 2, 2),
+        ("ArrowRight", 3, 3),
         ("ArrowRight", 0, 0),
-        ("ArrowLeft", 2, 2),
+        ("ArrowLeft", 3, 3),
         ("Home", 0, 0),
-        ("End", 2, 2),
+        ("End", 3, 3),
     ]
     assert all(step["prevented"] for step in keyboard_report["arrowTrail"])
 
@@ -186,5 +187,5 @@ def test_only_the_selected_tab_of_a_tablist_is_in_the_tab_order(
 ) -> None:
     # Roving tabindex: the arrow keys move between the tabs of a list, so
     # Tab itself must leave the list after one stop.
-    assert keyboard_report["modeTabsTabindex"] == ["-1", "0", "-1"]
+    assert keyboard_report["modeTabsTabindex"] == ["-1", "0", "-1", "-1"]
     assert keyboard_report["pageTabsTabindex"] == ["-1", "0"]

@@ -617,8 +617,8 @@ def test_render_trend_chart_bar_width_floor_flag_false_and_widths_pinned_for_rea
             records, {"/proj/a": "group-color-1"}, "p1", lang="pt"
         )
         floor_hit_matches = re.findall(r'data-floor-hit="(true|false)"', out)
-        # One per trend-pane: pane, tokens, and (since 2026-09) model.
-        assert floor_hit_matches == ["false", "false", "false"]
+        # One per trend-pane: pane, tokens, model and (since 2026-10) branch.
+        assert floor_hit_matches == ["false", "false", "false", "false"]
         expected_bar_width = _expected_step(bucket_count) * 0.6
         pane_svg = _svg_block(out, "chart-pane-")
         rects = [
@@ -1185,7 +1185,7 @@ def test_render_trend_chart_model_mode_legend_lists_models_by_spend_descending()
         ),
     ]
     out = dashboard_html.render_trend_chart(records, {"/proj/a": "group-color-1"}, "p1", lang="pt")
-    pane_fragment = out.split('id="trend-pane-model-p1"')[1]
+    pane_fragment = out.split('id="trend-pane-model-p1"')[1].split('id="trend-pane-branch-p1"')[0]
     labels = re.findall(
         r'<span class="legend-chip"[^>]*><span class="legend-swatch[^"]*"></span>([^<]*)</span>',
         pane_fragment,
@@ -1224,7 +1224,7 @@ def test_render_trend_chart_model_bands_and_chips_are_clickable_and_agree_on_cla
         assert onclick_class == css_class, (css_class, onclick_class)
         band_classes[label.strip()] = css_class
 
-    pane_fragment = out.split('id="trend-pane-model-p1"')[1]
+    pane_fragment = out.split('id="trend-pane-model-p1"')[1].split('id="trend-pane-branch-p1"')[0]
     chips = re.findall(
         r'<span class="legend-chip" role="button" tabindex="0" data-highlight-key="[^"]*" '
         r'onclick="highlightModel\(\'([^\']*)\', event\)">'
@@ -1247,7 +1247,7 @@ def test_render_trend_chart_model_bands_never_share_a_colour_with_each_other():
         _model_day_record("2026-01-02", 100),
     ]
     out = dashboard_html.render_trend_chart(records, {"/proj/a": "group-color-1"}, "p1", lang="pt")
-    pane_fragment = out.split('id="trend-pane-model-p1"')[1]
+    pane_fragment = out.split('id="trend-pane-model-p1"')[1].split('id="trend-pane-branch-p1"')[0]
     swatches = re.findall(r'<span class="legend-swatch ([^"]*)"></span>', pane_fragment)
     assert len(swatches) == 5  # four models plus the unattributed remainder
     assert len(set(swatches)) == 5, swatches
@@ -1266,7 +1266,7 @@ def test_render_trend_chart_model_mode_gives_an_overflow_model_its_own_highlight
         _model_day_record("2026-01-02", 100),
     ]
     out = dashboard_html.render_trend_chart(records, {"/proj/a": "group-color-1"}, "p1", lang="pt")
-    pane_fragment = out.split('id="trend-pane-model-p1"')[1]
+    pane_fragment = out.split('id="trend-pane-model-p1"')[1].split('id="trend-pane-branch-p1"')[0]
     swatches = re.findall(r'<span class="legend-swatch ([^"]*)"></span>', pane_fragment)
     assert len(swatches) == 32, swatches  # 31 models plus the unattributed remainder
     overflow_swatches = [swatch for swatch in swatches if swatch.startswith("model-overflow-")]

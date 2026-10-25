@@ -303,6 +303,7 @@ def load_base_data(
         "open_projects": open_projects,
         "model_slots": model_slots,
         "project_slots": project_slots,
+        "branch_slots": metrics_core_module.assign_branch_slots(daily_chart_records),
         "lang": lang,
         # Period-independent like everything else here: the weekly window is
         # its own calendar, so "p" never re-windows it.
@@ -356,6 +357,7 @@ def apply_period(
         "open_projects": base["open_projects"],
         "model_slots": base["model_slots"],
         "project_slots": base["project_slots"],
+        "branch_slots": base["branch_slots"],
         "lang": base["lang"],
         "weekly_meter": base.get("weekly_meter"),
         "period_id": period_id,
@@ -1114,6 +1116,7 @@ class TrendChart(PlotextPlot):
         lang: str,
         model_slots: dict[str, metrics_core.ModelColorSlot] | None = None,
         project_slots: dict[str, int] | None = None,
+        branch_slots: dict[str, int] | None = None,
         **keyword_arguments: Any,
     ) -> None:
         super().__init__(**keyword_arguments)
@@ -1121,6 +1124,15 @@ class TrendChart(PlotextPlot):
         self.chart_records = chart_records
         self.mode = mode
         self.lang = lang
+        # Each branch's colour slot, settled over the whole history by
+        # load_base_data so a branch keeps its colour whichever period is on
+        # screen. None - a chart built on its own - settles them over this
+        # chart's records instead.
+        self.branch_slots = (
+            branch_slots
+            if branch_slots is not None
+            else metrics_core_module.assign_branch_slots(chart_records)
+        )
         # Each project's colour slot, settled once per run by
         # load_base_data. None - a chart built on its own - settles them
         # over this chart's records instead, like model_slots below.
@@ -1144,10 +1156,10 @@ class TrendChart(PlotextPlot):
     def on_mount(self) -> None:
         self.render_chart()
 
-    # The three ways the same quantity - a day's total tokens - gets sliced.
-    # "t" walks them in this order and wraps, so a third press returns to
+    # The four ways the same quantity - a day's total tokens - gets sliced.
+    # "t" walks them in this order and wraps, so the last press returns to
     # where it started rather than stranding the user in the last mode.
-    MODES: ClassVar[list[str]] = ["pane", "tokens", "model"]
+    MODES: ClassVar[list[str]] = ["pane", "tokens", "model", "branch"]
 
     def toggle_mode(self) -> None:
         self.mode = self.MODES[(self.MODES.index(self.mode) + 1) % len(self.MODES)]
@@ -1318,6 +1330,35 @@ class TrendChart(PlotextPlot):
             ]
             color.append(PANE_OTHER_COLOR)
             title = "chart_title.model"
+        elif self.mode == "branch":
+            # The same buckets as the HTML tab (metrics_core.branches): the
+            # slotted branches by spend over the window, "no branch", then
+            # the one others bucket - a band every day, so a colour means one
+            # thing across the whole chart.
+            window_records = [record for day in days for record in day["records"]]
+            branch_series = self.metrics_core_module.compute_branch_series(
+                window_records, self.branch_slots
+            )
+            per_day_totals = [
+                self.metrics_core_module.sum_tokens_by_branch(day["records"], self.branch_slots)
+                for day in days
+            ]
+            series_lists = [
+                [totals.get(branch, 0) for totals in per_day_totals] for branch in branch_series
+            ]
+            series_labels = [
+                self.metrics_core_module.branch_series_label(branch, self.lang)
+                for branch in branch_series
+            ]
+            color = [
+                PANE_OTHER_COLOR
+                if branch == self.metrics_core_module.BRANCH_OTHERS_KEY
+                else PANE_NO_PROJECT_COLOR
+                if branch is None
+                else PANE_COLORS[self.branch_slots[branch]]
+                for branch in branch_series
+            ]
+            title = "chart_title.branch"
         else:
             input_totals = [
                 sum(record.get("input_tokens", 0) or 0 for record in day["records"]) for day in days
@@ -1770,6 +1811,7 @@ class MetricsTUIApp(App[None]):
                     lang=lang,
                     model_slots=self.data["model_slots"],
                     project_slots=self.data["project_slots"],
+                    branch_slots=self.data.get("branch_slots"),
                 )
                 yield ProjectRankingList(
                     self.metrics_core_module,

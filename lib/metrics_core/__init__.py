@@ -55,8 +55,15 @@ from .backfill import (
     write_backfill_state,
     write_field_state,
 )
-from .branches import compute_branch_breakdown
-from .branches_view import describe_branch_filter, describe_branches
+from .branches import (
+    BRANCH_OTHERS_KEY,
+    assign_branch_slots,
+    branch_bucket,
+    compute_branch_breakdown,
+    compute_branch_series,
+    sum_tokens_by_branch,
+)
+from .branches_view import branch_series_label, describe_branch_filter, describe_branches
 from .cache_causes import compute_cache_causes
 from .cache_causes_view import describe_cache_causes
 from .calls_store import (
@@ -153,6 +160,7 @@ from .weekly_windows import compute_weekly_meter
 __all__ = [
     "AGENT_LABELS_FILE",
     "BACKFILL_STATE_FILE",
+    "BRANCH_OTHERS_KEY",
     "CALLS_FILE_NAME",
     "CONFIG_FILE",
     "DEFAULT_CUTOFF",
@@ -188,10 +196,13 @@ __all__ = [
     "apply_field_plan",
     "apply_plan",
     "as_of",
+    "assign_branch_slots",
     "assign_group_colors",
     "assign_model_slots",
     "assign_project_slots",
     "at_cut",
+    "branch_bucket",
+    "branch_series_label",
     "build_file_order_sums",
     "build_prefix_sums",
     "build_project_groups",
@@ -200,6 +211,7 @@ __all__ = [
     "color_group_key",
     "compress_to_label",
     "compute_branch_breakdown",
+    "compute_branch_series",
     "compute_cache_causes",
     "compute_model_totals",
     "compute_project_first_seen",
@@ -283,6 +295,7 @@ __all__ = [
     "sha256_of",
     "split_worktree",
     "subagent_transcripts",
+    "sum_tokens_by_branch",
     "t",
     "tick_label",
     "tn",

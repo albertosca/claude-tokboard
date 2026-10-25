@@ -472,6 +472,7 @@ def render_trend_chart(
     *,
     lang: str,
     model_slots: dict[str, metrics_core_module.ModelColorSlot] | None = None,
+    branch_slots: dict[str, int] | None = None,
 ) -> str:
     granularity, days = metrics_core_module.aggregate_by_day(records)
     parse_format = metrics_core_module.GRANULARITY_CONFIG[granularity]["parse_fmt"]
@@ -810,6 +811,57 @@ def render_trend_chart(
                     )
         return "".join(bars)
 
+    # The branch slicing joins the same group-color-N vocabulary as the
+    # project one, with the same eight slots: a branch past them folds into
+    # the one "others" segment, a record with no branch is the grey remainder.
+    # render_html settles the slots once over the whole history, so a branch
+    # keeps its colour in every period's chart; a chart rendered on its own
+    # settles them over its own records.
+    window_records = [record for day in days for record in day["records"]]
+    chart_branch_slots = (
+        branch_slots
+        if branch_slots is not None
+        else metrics_core_module.assign_branch_slots(window_records)
+    )
+    branch_series = metrics_core_module.compute_branch_series(window_records, chart_branch_slots)
+
+    def branch_class(branch: str | None) -> str:
+        if branch is None:
+            return "group-color-none"
+        if branch == metrics_core_module.BRANCH_OTHERS_KEY:
+            return OTHERS_CLASS
+        return f"group-color-{chart_branch_slots[branch] + 1}"
+
+    def bars_for_branch() -> str:
+        bars = []
+        hatch_id = f"chart-hatch-branch-{period_id}"
+        for day_index, day in enumerate(days):
+            bar_left = padding_left + day_index * step + (step - bar_width) / 2
+            by_branch = metrics_core_module.sum_tokens_by_branch(day["records"], chart_branch_slots)
+            vertical_cursor: float = padding_top + plot_height
+            for branch in branch_series:
+                value = by_branch.get(branch, 0)
+                if value <= 0:
+                    continue
+                seg_height = (value / maximum_pane) * plot_height if maximum_pane else 0
+                vertical_cursor -= seg_height
+                css_class = branch_class(branch)
+                label = metrics_core_module.branch_series_label(branch, lang)
+                note = partial_note if day_index == day_count - 1 else ""
+                bars.append(
+                    f'<rect x="{bar_left:.1f}" y="{vertical_cursor:.1f}" '
+                    f'width="{bar_width:.1f}" height="{seg_height:.1f}" '
+                    f'class="chart-bar {css_class}" '
+                    f"onclick=\"highlightBranch('{css_class}', event)\">"
+                    f"<title>{html.escape(label)} · {bucket_labels[day_index]} - "
+                    f"{metrics_core_module.format_tokens(value)} tokens{note}</title></rect>"
+                )
+                if day_index == day_count - 1 and partial_fraction is not None:
+                    bars.append(
+                        hatch_overlay(hatch_id, bar_left, vertical_cursor, bar_width, seg_height)
+                    )
+        return "".join(bars)
+
     # width is fixed in CSS pixels (not 100%/responsive): with
     # preserveAspectRatio="none" a stretchy width forces the browser to
     # scale the viewBox's x-axis to fill the container, which distorts
@@ -864,6 +916,15 @@ def render_trend_chart(
         f'style="width:{width}px">'
         f"{hatch_defs(f'chart-hatch-model-{period_id}')}"
         f"{highlight_html}{build_y_axis(maximum_pane)}{tick_labels_html}{bars_for_model()}</svg>"
+    )
+
+    branch_svg = (
+        f'<svg viewBox="0 0 {width} {height}" class="trend-svg" '
+        f'id="chart-branch-{period_id}" preserveAspectRatio="none" '
+        f'role="img" aria-label="{html.escape(metrics_core_module.t("chart_title.branch", lang))}" '
+        f'style="width:{width}px">'
+        f"{hatch_defs(f'chart-hatch-branch-{period_id}')}"
+        f"{highlight_html}{build_y_axis(maximum_pane)}{tick_labels_html}{bars_for_branch()}</svg>"
     )
 
     # Always scrollable now, not just in the floor-hit (scrollable=True)
@@ -961,6 +1022,14 @@ def render_trend_chart(
         f"{metrics_core_module.t('no_model', lang)}</span>"
     )
     model_legend_html = f'<div class="project-chart-legend">{"".join(model_legend_chips)}</div>'
+    branch_legend_chips = [
+        f'<span class="legend-chip" {chip_attributes(branch_class(branch))}'
+        f"onclick=\"highlightBranch('{branch_class(branch)}', event)\">"
+        f'<span class="legend-swatch {branch_class(branch)}"></span>'
+        f"{html.escape(metrics_core_module.branch_series_label(branch, lang))}</span>"
+        for branch in branch_series
+    ]
+    branch_legend_html = f'<div class="project-chart-legend">{"".join(branch_legend_chips)}</div>'
 
     return (
         '<div class="trend-container">'
@@ -980,6 +1049,11 @@ def render_trend_chart(
         f'aria-controls="trend-pane-model-{period_id}" '
         f"onclick=\"showTrendMode('model', '{period_id}')\">"
         f"{metrics_core_module.t('mode.model', lang)}</span>"
+        f'<span class="tab-btn" id="trend-btn-branch-{period_id}" '
+        'role="tab" tabindex="-1" aria-selected="false" '
+        f'aria-controls="trend-pane-branch-{period_id}" '
+        f"onclick=\"showTrendMode('branch', '{period_id}')\">"
+        f"{metrics_core_module.t('mode.branch', lang)}</span>"
         "</div>"
         f'<div class="trend-pane active" id="trend-pane-pane-{period_id}" role="tabpanel" '
         f'aria-labelledby="trend-btn-pane-{period_id}">'
@@ -1001,6 +1075,11 @@ def render_trend_chart(
         f'aria-labelledby="trend-btn-model-{period_id}">'
         f'<div class="trend-scroll" data-floor-hit="{str(scrollable).lower()}">{model_svg}</div>'
         f'<div class="trend-legend-slot">{model_legend_html}</div>'
+        "</div>"
+        f'<div class="trend-pane" id="trend-pane-branch-{period_id}" role="tabpanel" '
+        f'aria-labelledby="trend-btn-branch-{period_id}">'
+        f'<div class="trend-scroll" data-floor-hit="{str(scrollable).lower()}">{branch_svg}</div>'
+        f'<div class="trend-legend-slot">{branch_legend_html}</div>'
         "</div>"
         f"{band_note_html}"
         "</div>"
@@ -1447,6 +1526,9 @@ def render_html(
         MODEL_COLOR_SLOTS,
     )
 
+    # Over the whole history too: a branch keeps its colour in every period.
+    branch_slots = metrics_core_module.assign_branch_slots(daily_chart_records)
+
     def periods_for(record: dict[str, Any]) -> tuple[str, ...]:
         return tuple(
             period.id
@@ -1585,7 +1667,13 @@ def render_html(
         trend_blocks.append(
             f'<div class="period-block" data-period="{period.id}"{hidden_attribute}>'
             + render_trend_chart(
-                scoped_daily, group_colors, period.id, now=now, lang=lang, model_slots=model_slots
+                scoped_daily,
+                group_colors,
+                period.id,
+                now=now,
+                lang=lang,
+                model_slots=model_slots,
+                branch_slots=branch_slots,
             )
             + "</div>"
         )

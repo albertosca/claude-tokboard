@@ -547,7 +547,7 @@ def _m(**fields: int) -> dict[str, int]:
     return base
 
 
-def test_toggle_mode_cycles_through_three_modes_and_returns():
+def test_toggle_mode_cycles_through_four_modes_and_returns():
     chart = tui.TrendChart(
         mr, [_august_session("a", day=1), _august_session("b", day=5)], lang="pt"
     )
@@ -557,7 +557,9 @@ def test_toggle_mode_cycles_through_three_modes_and_returns():
     chart.toggle_mode()
     assert chart.mode == "model"
     chart.toggle_mode()
-    assert chart.mode == "pane", "the third press must come back to the start"
+    assert chart.mode == "branch"
+    chart.toggle_mode()
+    assert chart.mode == "pane", "the fourth press must come back to the start"
 
 
 def test_model_mode_labels_each_band_with_a_shortened_model_name():

@@ -162,7 +162,7 @@ function selectedIndex(tabs) {
   return tabs.findIndex((tab) => tab.getAttribute("aria-selected") === "true");
 }
 report.arrowTrail = [];
-for (const key of ["ArrowRight", "ArrowRight", "ArrowLeft", "Home", "End"]) {
+for (const key of ["ArrowRight", "ArrowRight", "ArrowRight", "ArrowLeft", "Home", "End"]) {
   const current = modeTabs[selectedIndex(modeTabs)];
   const prevented = press(current, key);
   report.arrowTrail.push({

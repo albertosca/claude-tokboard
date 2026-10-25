@@ -134,11 +134,17 @@ async def _drive_mode_toggle() -> dict[str, Any]:
         project_visible_model = app.query_one(tui.ProjectLegend).display
         quota_visible_model = app.query_one(tui.QuotaSummary).display
 
-        # The round trip is now three presses, not two - the cycle grew a
-        # third mode (tokens by model) in 2026-09.
+        # The round trip is now four presses - the cycle grew a third mode
+        # (tokens by model) in 2026-09 and a fourth (by branch) in 2026-10.
         await pilot.press("t")
         await pilot.pause()
         mode_after_third_toggle = chart.mode
+        branch_text = chart.render().plain
+        project_visible_branch = app.query_one(tui.ProjectLegend).display
+
+        await pilot.press("t")
+        await pilot.pause()
+        mode_after_fourth_toggle = chart.mode
         pane_text_after_round_trip = chart.render().plain
 
         return {
@@ -159,6 +165,9 @@ async def _drive_mode_toggle() -> dict[str, Any]:
             "mode_after_second_toggle": mode_after_second_toggle,
             "pane_text_after_round_trip": pane_text_after_round_trip,
             "mode_after_third_toggle": mode_after_third_toggle,
+            "branch_text": branch_text,
+            "project_visible_branch": project_visible_branch,
+            "mode_after_fourth_toggle": mode_after_fourth_toggle,
         }
 
 
@@ -198,8 +207,10 @@ async def _drive_highlighting() -> dict[str, Any]:
         tokens_text_after_stray_highlight = chart.render().plain
         chart.set_project_highlight(None)
 
-        # Two presses to get back to pane: the cycle passes through the
-        # by-model mode, which neither highlight field touches.
+        # Three presses to get back to pane: the cycle passes through the
+        # by-model and by-branch modes, which neither highlight field touches.
+        await pilot.press("t")
+        await pilot.pause()
         await pilot.press("t")
         await pilot.pause()
         await pilot.press("t")
@@ -261,16 +272,26 @@ def test_toggle_switches_the_mode(mode_toggle):
     assert mode_toggle["tokens_mode"] == "tokens"
 
 
-def test_toggle_is_a_three_state_cycle_that_wraps(mode_toggle):
-    """Pins the boundary explicitly: the cycle is exactly three long, and
-    the third "t" wraps to the start rather than stranding the user in the
-    last mode or advancing to a fourth state.
+def test_toggle_is_a_four_state_cycle_that_wraps(mode_toggle):
+    """Pins the boundary explicitly: the cycle is exactly four long, and
+    the fourth "t" wraps to the start rather than stranding the user in the
+    last mode or advancing to a fifth state.
 
-    This test used to pin a strict TWO-state flip. The third mode (tokens
-    by model) was added deliberately in 2026-09, so the guard was updated
-    rather than deleted - it still refuses a cycle of any other length."""
+    This test used to pin a strict TWO-state flip, then three. The third
+    mode (tokens by model) was added deliberately in 2026-09 and the fourth
+    (by branch) in 2026-10, so the guard was updated rather than deleted -
+    it still refuses a cycle of any other length."""
     assert mode_toggle["mode_after_second_toggle"] == "model"
-    assert mode_toggle["mode_after_third_toggle"] == "pane"
+    assert mode_toggle["mode_after_third_toggle"] == "branch"
+    assert mode_toggle["mode_after_fourth_toggle"] == "pane"
+
+
+def test_branch_mode_has_its_own_title_and_no_project_legend(mode_toggle):
+    """Its bands are labelled by plotext's own legend, like the model mode's,
+    so the project legend must not describe a slicing no longer on screen."""
+    assert "Tokens por dia (por branch)" in mode_toggle["branch_text"]
+    assert "Tokens por dia (por projeto)" not in mode_toggle["branch_text"]
+    assert mode_toggle["project_visible_branch"] is False
 
 
 def test_model_mode_hides_both_of_the_other_modes_legends(mode_toggle):

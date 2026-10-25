@@ -228,10 +228,12 @@ MESSAGES: dict[str, dict[str, str]] = {
         "pt": "Tokens por dia (por tipo de token)",
     },
     "chart_title.model": {"en": "Tokens per day (by model)", "pt": "Tokens por dia (por modelo)"},
+    "chart_title.branch": {"en": "Tokens per day (by branch)", "pt": "Tokens por dia (por branch)"},
     "chart_too_narrow": {"en": "Too narrow for the chart", "pt": "Estreito demais para o gráfico"},
     "mode.pane": {"en": "By project", "pt": "Por projeto"},
     "mode.tokens": {"en": "By token type", "pt": "Por tipo de token"},
     "mode.model": {"en": "By model", "pt": "Por modelo"},
+    "mode.branch": {"en": "By branch", "pt": "Por branch"},
     "partial": {"en": " (partial, {pct}%)", "pt": " (parcial, {pct}%)"},
     # What the trend chart's shaded band marks (2026-10-05 review).
     "chart.band_note": {

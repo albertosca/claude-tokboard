@@ -1717,6 +1717,10 @@ SCRIPT = """
     function highlightModel(groupClass, event) {
       toggleHighlight(groupClass, event);
     }
+    // Same for "Por branch": its bands and chips carry group-color-N too.
+    function highlightBranch(groupClass, event) {
+      toggleHighlight(groupClass, event);
+    }
     function selectPeriod(periodId) {
       document.querySelectorAll('.period-chip').forEach(function (chip) {
         var isSelected = chip.dataset.period === periodId;
