@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from .branches import list_group_branches
 from .format import format_tokens
 from .i18n import t
 from .projects import project_display_label
@@ -56,6 +57,33 @@ def _project_rows(item: dict[str, Any], lang: str) -> list[dict[str, str]]:
             )
         )
     return rows
+
+
+NO_BRANCH_KEY = "-"
+
+
+def describe_branch_filter(
+    records: list[dict[str, Any]], project_label: str, lang: str
+) -> dict[str, Any] | None:
+    """The chips that narrow one project group of the session list to a
+    branch, or None when the group has fewer than two branches. A chip's
+    `key` is what the session row shows in its branch column ("-" for none),
+    so the page matches rows by text and rows need no attribute of their own."""
+    options = list_group_branches(records)
+    if len(options) < 2:
+        return None
+    return {
+        "label": t("branches.filter.label", lang, project=project_label),
+        "all": t("branches.filter.all", lang),
+        "chips": [
+            {
+                "key": NO_BRANCH_KEY if branch is None else branch,
+                "label": _branch_label(branch, lang),
+                "sessions": str(sessions),
+            }
+            for branch, sessions in options[:BRANCHES_SHOWN]
+        ],
+    }
 
 
 def describe_branches(breakdown: list[dict[str, Any]], lang: str) -> dict[str, Any]:

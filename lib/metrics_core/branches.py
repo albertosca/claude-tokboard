@@ -16,6 +16,16 @@ def _branch_of(record: dict[str, Any]) -> str | None:
     return record.get("git_branch") or None
 
 
+def list_group_branches(records: list[dict[str, Any]]) -> list[tuple[str | None, int]]:
+    """The distinct branches of one session-list group with their session
+    counts, busiest first."""
+    counts: dict[str | None, int] = {}
+    for record in records:
+        branch = _branch_of(record)
+        counts[branch] = counts.get(branch, 0) + 1
+    return sorted(counts.items(), key=lambda item: (-item[1], item[0] or ""))
+
+
 def compute_branch_breakdown(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Projects with at least two branches in `records`, largest first. A
     worktree belongs to its parent project, as it does in the chart legend."""

@@ -1374,6 +1374,7 @@ STYLE = """
          wins on its own, no !important needed - an open panel whose
          session just left the active period still disappears. */
       .detail-panel.open.period-hidden { display: none; }
+      .detail-panel.open.branch-hidden { display: none; }
       .detail-close {
         float: right;
         background: none;
@@ -1432,6 +1433,23 @@ STYLE = """
         flex-shrink: 0;
       }
       .period-chip.active { opacity: 1; font-weight: 600; }
+      .branch-chip {
+        cursor: pointer;
+        border: 1px solid currentColor;
+        border-radius: 999px;
+        padding: 4px 12px;
+        font: inherit;
+        background: none;
+        color: inherit;
+        opacity: 0.65;
+        white-space: nowrap;
+      }
+      .branch-chip[aria-pressed="true"] { opacity: 1; font-weight: 600; }
+      /* One bar per project group with 2+ branches, right after its header,
+         so it leaves with the header (collapsed, or outside the period). */
+      .branch-filter { display: flex; flex-wrap: wrap; gap: 6px; padding: 4px 16px; }
+      .group-header.collapsed + .branch-filter,
+      .group-header.period-hidden + .branch-filter { display: none; }
       .backfill-note {
         margin-left: auto;
         font-size: 11px;
@@ -1446,6 +1464,7 @@ STYLE = """
          compose instead of fighting (see render_session_row). */
       .session-row.collapsed { display: none; }
       .session-row.period-hidden { display: none; }
+      .session-row.branch-hidden { display: none; }
       .group-header.period-hidden { display: none; }
       /* Phones (2026-10-05): with the viewport meta the page lays out at the
          device's real width, so the two panes stack instead of squeezing the
@@ -1500,14 +1519,41 @@ SCRIPT = """
       }
       // Born outside the active period, it must be hidden like its row.
       panel.classList.toggle('period-hidden', row.classList.contains('period-hidden'));
+      panel.classList.toggle('branch-hidden', row.classList.contains('branch-hidden'));
       document.querySelector('.detail-container').appendChild(panel);
       row.setAttribute('aria-controls', 'detail-' + id);
       return panel;
+    }
+    // Narrows one project group to a branch ('' = every branch). Rows are
+    // matched by the text of their own branch column, so a row carries no
+    // attribute for this; the hidden state is a class of its own, which
+    // composes with `collapsed` and `period-hidden` (a period change keeps
+    // the filter). A panel follows its row, as it does for the period.
+    function filterBranch(groupId, chip) {
+      var wanted = chip.getAttribute('data-branch');
+      var bar = chip.closest('.branch-filter');
+      bar.querySelectorAll('.branch-chip').forEach(function (other) {
+        other.setAttribute('aria-pressed', other === chip ? 'true' : 'false');
+      });
+      var rows = document.querySelectorAll('.session-row[data-group="' + groupId + '"]');
+      rows.forEach(function (row) {
+        var branch = row.querySelector('.branch-col').getAttribute('title');
+        var hidden = wanted !== '' && branch !== wanted;
+        row.classList.toggle('branch-hidden', hidden);
+        var panel = document.getElementById('detail-' + row.id.slice(4));
+        if (panel) { panel.classList.toggle('branch-hidden', hidden); }
+      });
     }
     function showSession(id) {
       var row = document.getElementById('row-' + id);
       if (row) {
         var groupId = row.getAttribute('data-group');
+        if (row.classList.contains('branch-hidden')) {
+          // Asked for by id (a link, a call), so show it: drop the filter.
+          document.querySelector(
+            '.branch-filter[data-group="' + groupId + '"] .branch-chip[data-branch=""]'
+          ).click();
+        }
         var header = document.getElementById('group-' + groupId);
         if (header && header.classList.contains('collapsed')) {
           toggleGroup(parseInt(groupId, 10));

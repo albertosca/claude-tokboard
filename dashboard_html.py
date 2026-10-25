@@ -279,6 +279,29 @@ def render_group_header(
     )
 
 
+def render_branch_filter(group_index: int, view: dict[str, Any] | None) -> str:
+    """The chips that narrow one project group to a branch. One bar per group,
+    never one attribute per row: the script matches rows by the text of their
+    branch column. Sits right after the group header so CSS can hide it with
+    the header (collapsed, outside the period)."""
+    if view is None:
+        return ""
+    chips = [
+        '<button type="button" class="branch-chip" data-branch="" aria-pressed="true" '
+        f'onclick="filterBranch({group_index}, this)">{html.escape(view["all"])}</button>'
+    ]
+    for chip in view["chips"]:
+        chips.append(
+            f'<button type="button" class="branch-chip" data-branch="{html.escape(chip["key"])}" '
+            f'aria-pressed="false" onclick="filterBranch({group_index}, this)">'
+            f"{html.escape(chip['label'])} · {chip['sessions']}</button>"
+        )
+    return (
+        f'<div class="branch-filter" role="group" aria-label="{html.escape(view["label"])}" '
+        f'data-group="{group_index}">{"".join(chips)}</div>'
+    )
+
+
 def render_session_header(show_tmux: bool = True, *, lang: str) -> str:
     tmux_span = (
         f'<span class="tmux-window">{metrics_core_module.t("col.tmux", lang)}</span>'
@@ -1468,6 +1491,16 @@ def render_html(
     panel_sources: dict[str, str] = {}
     for group_index, group in visible_groups:
         rows_html.append(render_group_header(group_index, group, period_windows, lang=lang))
+        rows_html.append(
+            render_branch_filter(
+                group_index,
+                metrics_core_module.describe_branch_filter(
+                    group["records"],
+                    metrics_core_module.project_display_label(group["project"], lang=lang),
+                    lang,
+                ),
+            )
+        )
         for record in group["records"]:
             session_id = record.get("session_id") or ""
             label = record.get("task_label")

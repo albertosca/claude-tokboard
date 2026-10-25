@@ -23,6 +23,7 @@ from types import ModuleType
 from typing import TYPE_CHECKING, Any, ClassVar
 
 from rich.cells import cell_len
+from rich.markup import escape
 from rich.text import Text
 from textual.app import App, ComposeResult, RenderResult
 from textual.binding import BindingType
@@ -412,52 +413,85 @@ def build_session_tree(
         if not visible_records:
             continue
         label = metrics_core_module.project_display_label(project_path, lang=lang)
-        total_tokens = sum(
-            metrics_core_module.record_token_total(record) for record in visible_records
-        )
-        session_count = metrics_core_module.tn(
-            "sessions",
-            len(visible_records),
-            lang,
-            n=metrics_core_module.format_tokens(len(visible_records)),
-        )
+        group_state = {
+            "label": label,
+            "records": visible_records,
+            "branch": None,
+            "subagents_by_session": subagents_by_session,
+        }
         group_node = tree.root.add(
-            f"{label} ({session_count} · {metrics_core_module.format_tokens(total_tokens)} tokens)",
+            group_label(group_state, metrics_core_module, lang=lang),
+            data=group_state,
             expand=False,
         )
-        for record in visible_records:
-            session_id = record.get("session_id") or ""
-            date_text = metrics_core_module.format_date(record.get("timestamp_start"), lang=lang)
-            task_label = record.get("task_label") or "-"
-            tokens = metrics_core_module.format_tokens(
-                metrics_core_module.record_token_total(record)
-            )
-            # A floor gets a "≥" inside the same right-aligned column; the
-            # detail panel carries the note that says why.
-            if metrics_core_module.incomplete_usage_messages(record):
-                tokens = "≥" + tokens
-            # format_duration, like the HTML table: raw seconds printed
-            # "333874s" for a long session (2026-10-05 review).
-            duration_text = metrics_core_module.format_duration(record.get("duration_seconds"))
-            # Subagent count badge (2026-07-21, ported from
-            # dashboard_html.py's render_session_row/subagent_badge) - lets
-            # you tell which sessions dispatched subagents right in the
-            # tree, without expanding every single one's detail panel.
-            # Counts only subagents that actually recorded tokens, same
-            # filter render_html applies to its own badge.
-            session_subagents = subagents_by_session.get(session_id, [])
-            visible_subagent_count = sum(
-                1
-                for subagent in session_subagents
-                if metrics_core_module.record_token_total(subagent) > 0
-            )
-            subagent_badge = f" 🤖{visible_subagent_count}" if visible_subagent_count else ""
-            row = (
-                f"{session_id[:12]:<14}{date_text:<14}{task_label[:28]:<30}"
-                f"{tokens:>8}   {duration_text:>9}{subagent_badge}"
-            )
-            group_node.add_leaf(row, data={"session_id": session_id})
+        add_session_leaves(
+            group_node, visible_records, subagents_by_session, metrics_core_module, lang=lang
+        )
     return tree
+
+
+def group_label(group_state: dict[str, Any], metrics_core_module: ModuleType, *, lang: str) -> str:
+    """The group's line: its project, what it currently shows, and the branch
+    it is narrowed to (none = every branch)."""
+    shown = matching_branch(group_state["records"], group_state["branch"])
+    total_tokens = sum(metrics_core_module.record_token_total(record) for record in shown)
+    session_count = metrics_core_module.tn(
+        "sessions", len(shown), lang, n=metrics_core_module.format_tokens(len(shown))
+    )
+    # Escaped: a bracketed branch name is a Rich markup tag to the label.
+    narrowed = f" {escape('[' + group_state['branch'] + ']')}" if group_state["branch"] else ""
+    return (
+        f"{group_state['label']} ({session_count} · "
+        f"{metrics_core_module.format_tokens(total_tokens)} tokens){narrowed}"
+    )
+
+
+def matching_branch(records: list[dict[str, Any]], branch: str | None) -> list[dict[str, Any]]:
+    """Records on `branch`, matched the way the page matches a row: by the text
+    of the branch column, "-" standing for no branch. None keeps them all."""
+    if branch is None:
+        return records
+    return [record for record in records if (record.get("git_branch") or "-") == branch]
+
+
+def add_session_leaves(
+    group_node: Any,
+    records: list[dict[str, Any]],
+    subagents_by_session: dict[str, list[dict[str, Any]]],
+    metrics_core_module: ModuleType,
+    *,
+    lang: str,
+) -> None:
+    for record in records:
+        session_id = record.get("session_id") or ""
+        date_text = metrics_core_module.format_date(record.get("timestamp_start"), lang=lang)
+        task_label = record.get("task_label") or "-"
+        tokens = metrics_core_module.format_tokens(metrics_core_module.record_token_total(record))
+        # A floor gets a "≥" inside the same right-aligned column; the
+        # detail panel carries the note that says why.
+        if metrics_core_module.incomplete_usage_messages(record):
+            tokens = "≥" + tokens
+        # format_duration, like the HTML table: raw seconds printed
+        # "333874s" for a long session (2026-10-05 review).
+        duration_text = metrics_core_module.format_duration(record.get("duration_seconds"))
+        # Subagent count badge (2026-07-21, ported from
+        # dashboard_html.py's render_session_row/subagent_badge) - lets
+        # you tell which sessions dispatched subagents right in the
+        # tree, without expanding every single one's detail panel.
+        # Counts only subagents that actually recorded tokens, same
+        # filter render_html applies to its own badge.
+        session_subagents = subagents_by_session.get(session_id, [])
+        visible_subagent_count = sum(
+            1
+            for subagent in session_subagents
+            if metrics_core_module.record_token_total(subagent) > 0
+        )
+        subagent_badge = f" 🤖{visible_subagent_count}" if visible_subagent_count else ""
+        row = (
+            f"{session_id[:12]:<14}{date_text:<14}{task_label[:28]:<30}"
+            f"{tokens:>8}   {duration_text:>9}{subagent_badge}"
+        )
+        group_node.add_leaf(row, data={"session_id": session_id})
 
 
 class SessionDetailPanel(VerticalScroll):
@@ -1642,6 +1676,7 @@ class MetricsTUIApp(App[None]):
         ("m", "toggle_more_projects", "key.more_projects"),
         ("g", "toggle_tab", "key.toggle_tab"),
         ("p", "cycle_period", "key.cycle_period"),
+        ("b", "cycle_branch", "key.branch_filter"),
     )
 
     # `arguments` is required, not an arguments=None default (2026-08-13): the app
@@ -1757,7 +1792,7 @@ class MetricsTUIApp(App[None]):
 
     def on_tree_node_selected(self, event: Any) -> None:
         session_data = event.node.data
-        if not session_data:
+        if not session_data or "session_id" not in session_data:
             return
         session_id = session_data["session_id"]
         subagents = self.data["subagents_by_session"].get(session_id, [])
@@ -1778,6 +1813,54 @@ class MetricsTUIApp(App[None]):
         chart.toggle_mode()
         self.chart_mode = chart.mode
         self._sync_legend_visibility()
+
+    def action_cycle_branch(self) -> None:
+        """Narrow the highlighted project group to its next branch; after the
+        last one, back to every branch. In place, so the tree keeps its
+        expanded groups and scroll position (unlike "p", this never needs the
+        whole app rebuilt)."""
+        if self.active_tab_id != "tab-sessions":
+            return
+        node = self.query_one(Tree).cursor_node
+        if node is not None and not (node.data and "records" in node.data):
+            node = node.parent
+        if node is None or not (node.data and "records" in node.data):
+            return
+        group_state = node.data
+        lang = self.data["lang"]
+        view = self.metrics_core_module.describe_branch_filter(
+            group_state["records"], group_state["label"], lang
+        )
+        if view is None:
+            self.notify(
+                self.metrics_core_module.t(
+                    "notify.branch_single", lang, project=group_state["label"]
+                )
+            )
+            return
+        keys: list[str | None] = [None, *(chip["key"] for chip in view["chips"])]
+        group_state["branch"] = keys[(keys.index(group_state["branch"]) + 1) % len(keys)]
+        node.remove_children()
+        add_session_leaves(
+            node,
+            matching_branch(group_state["records"], group_state["branch"]),
+            group_state["subagents_by_session"],
+            self.metrics_core_module,
+            lang=lang,
+        )
+        node.set_label(group_label(group_state, self.metrics_core_module, lang=lang))
+        self.notify(
+            self.metrics_core_module.t(
+                "notify.branch",
+                lang,
+                project=group_state["label"],
+                branch=view["all"]
+                if group_state["branch"] is None
+                else next(
+                    chip["label"] for chip in view["chips"] if chip["key"] == group_state["branch"]
+                ),
+            )
+        )
 
     def action_toggle_more_projects(self) -> None:
         self.query_one(ProjectRankingList).toggle_more()

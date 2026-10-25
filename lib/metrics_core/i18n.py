@@ -195,6 +195,11 @@ MESSAGES: dict[str, dict[str, str]] = {
     "branches.none": {"en": "(no branch)", "pt": "(sem branch)"},
     "branches.others": {"en": "others ({count})", "pt": "outros ({count})"},
     "branches.caption": {"en": "{project}: tokens by branch", "pt": "{project}: tokens por branch"},
+    "branches.filter.all": {"en": "All", "pt": "Todas"},
+    "branches.filter.label": {
+        "en": "Filter {project} by branch",
+        "pt": "Filtrar {project} por branch",
+    },
     "branches.col.branch": {"en": "Branch", "pt": "Branch"},
     "branches.col.sessions": {"en": "Sessions", "pt": "Sessões"},
     "branches.col.tokens": {"en": "Tokens", "pt": "Tokens"},
@@ -313,6 +318,12 @@ MESSAGES: dict[str, dict[str, str]] = {
     "key.toggle_tab": {"en": "Charts/Sessions", "pt": "Gráficos/Sessões"},
     "key.cycle_period": {"en": "period", "pt": "período"},
     "notify.period": {"en": "period: {name}", "pt": "período: {name}"},
+    "key.branch_filter": {"en": "branch filter", "pt": "filtro de branch"},
+    "notify.branch": {"en": "{project}: {branch}", "pt": "{project}: {branch}"},
+    "notify.branch_single": {
+        "en": "{project}: only one branch to filter",
+        "pt": "{project}: só um branch para filtrar",
+    },
     # The token-dedup correction boundary note.
     "backfill.never_applied": {
         "en": "token duplication not yet corrected in the history "

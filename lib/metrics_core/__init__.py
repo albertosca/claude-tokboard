@@ -56,7 +56,7 @@ from .backfill import (
     write_field_state,
 )
 from .branches import compute_branch_breakdown
-from .branches_view import describe_branches
+from .branches_view import describe_branch_filter, describe_branches
 from .cache_causes import compute_cache_causes
 from .cache_causes_view import describe_cache_causes
 from .calls_store import (
@@ -215,6 +215,7 @@ __all__ = [
     "dedupe_sessions",
     "dedupe_subagents",
     "describe_backfill_state",
+    "describe_branch_filter",
     "describe_branches",
     "describe_cache_causes",
     "describe_weekly_meter",
