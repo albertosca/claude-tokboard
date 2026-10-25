@@ -183,6 +183,22 @@ MESSAGES: dict[str, dict[str, str]] = {
     "causes.col.version": {"en": "Version", "pt": "Versão"},
     "causes.col.conversations": {"en": "Conversations", "pt": "Conversas"},
     "causes.col.median": {"en": "Median first request", "pt": "Mediana da primeira requisição"},
+    # Tokens per git branch inside a project.
+    "branches.heading": {"en": "Tokens by branch", "pt": "Tokens por branch"},
+    "branches.note": {
+        "en": "Projects with at least two branches in the period. A session counts whole "
+        "under the last branch it showed.",
+        "pt": "Projetos com pelo menos dois branches no período. Uma sessão conta inteira no "
+        "último branch que mostrou.",
+    },
+    "branches.detached": {"en": "(detached)", "pt": "(destacado)"},
+    "branches.none": {"en": "(no branch)", "pt": "(sem branch)"},
+    "branches.others": {"en": "others ({count})", "pt": "outros ({count})"},
+    "branches.caption": {"en": "{project}: tokens by branch", "pt": "{project}: tokens por branch"},
+    "branches.col.branch": {"en": "Branch", "pt": "Branch"},
+    "branches.col.sessions": {"en": "Sessions", "pt": "Sessões"},
+    "branches.col.tokens": {"en": "Tokens", "pt": "Tokens"},
+    "branches.col.share": {"en": "Share", "pt": "Parcela"},
     "causes.first_jump": {
         "en": "The first request grew by {percent}% or more from {before} to {after}.",
         "pt": "A primeira requisição cresceu {percent}% ou mais de {before} para {after}.",

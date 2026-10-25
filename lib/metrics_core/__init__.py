@@ -55,6 +55,8 @@ from .backfill import (
     write_backfill_state,
     write_field_state,
 )
+from .branches import compute_branch_breakdown
+from .branches_view import describe_branches
 from .cache_causes import compute_cache_causes
 from .cache_causes_view import describe_cache_causes
 from .calls_store import (
@@ -197,6 +199,7 @@ __all__ = [
     "cold_summary_source",
     "color_group_key",
     "compress_to_label",
+    "compute_branch_breakdown",
     "compute_cache_causes",
     "compute_model_totals",
     "compute_project_first_seen",
@@ -212,6 +215,7 @@ __all__ = [
     "dedupe_sessions",
     "dedupe_subagents",
     "describe_backfill_state",
+    "describe_branches",
     "describe_cache_causes",
     "describe_weekly_meter",
     "expand_records_to_daily_deltas",
