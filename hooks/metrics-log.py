@@ -12,7 +12,7 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
 from metrics_core import append_record as _append_record
-from metrics_core import parse_transcript
+from metrics_core import log_transcript, parse_transcript
 
 METRICS_DIRECTORY = Path("~/.claude/metrics").expanduser()
 METRICS_FILE = METRICS_DIRECTORY / "sessions.jsonl"
@@ -123,6 +123,13 @@ def append_record(record: dict[str, Any]) -> None:
     _append_record(METRICS_FILE, record)
 
 
+def log_calls(transcript_path: str) -> None:
+    # Best-effort: the per-call store is rebuilt by the readers' dedup and the
+    # backfill, so a failure here must never cost the session its own record.
+    with contextlib.suppress(Exception):
+        log_transcript(transcript_path, METRICS_DIRECTORY)
+
+
 def main() -> None:
     try:
         hook_input = json.load(sys.stdin)
@@ -132,6 +139,7 @@ def main() -> None:
         parsed = parse_transcript(transcript_path)
         record = build_record(hook_input, parsed)
         append_record(record)
+        log_calls(transcript_path)
     except Exception:
         return
 
