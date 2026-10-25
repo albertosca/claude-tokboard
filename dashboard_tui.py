@@ -572,7 +572,49 @@ class WeeklyMeterPanel(Static):
                     f"{row['window']:<24} {row['accumulated']:>8}  {row['tiers']}  {row['outcome']}"
                 )
             )
+        lines += self.causes_lines()
         return Text("\n").join(lines)
+
+    def causes_lines(self) -> list[Text]:
+        """The cache-creation causes, from the same view dict the HTML page
+        renders (metrics_core.describe_cache_causes)."""
+        causes = self.view.get("causes")
+        if not causes or causes["empty"]:
+            return []
+        lang = causes["lang"]
+
+        def label(key: str) -> str:
+            return str(self.metrics_core_module.t(f"causes.col.{key}", lang))
+
+        lines = [Text(""), Text(causes["heading"], style="bold"), Text(causes["note"], style="dim")]
+        for warning in (causes["alert"], causes["first_jump"]):
+            if warning:
+                lines.append(Text(f"⚠ {warning}", style="bold"))
+        window_keys = ("total", "cold_start", "rewrite", "incremental", "after_idle")
+        for row in causes["windows"]:
+            fields = "  ".join(f"{label(key)} {row[key]}" for key in window_keys)
+            lines.append(Text(f"{row['window']:<24} {fields}"))
+            lines.append(
+                Text(
+                    f"  {label('main_short')} {row['main_short']}  "
+                    f"{label('subagent_short')} {row['subagent_short']}",
+                    style="dim",
+                )
+            )
+        size_keys = ("runs", "creation", "rewrite")
+        size_labels = {"runs": "runs", "creation": "creation", "rewrite": "rewrite_share"}
+        for row in causes["sizes"]:
+            fields = "  ".join(f"{label(size_labels[key])} {row[key]}" for key in size_keys)
+            lines.append(Text(f"{row['size']:<24} {fields}"))
+        for row in causes["first_requests"]:
+            lines.append(
+                Text(
+                    f"{label('version')} {row['version']}  "
+                    f"{label('conversations')} {row['conversations']}  "
+                    f"{label('median')} {row['median']}"
+                )
+            )
+        return lines
 
 
 class QuotaSummary(Static):

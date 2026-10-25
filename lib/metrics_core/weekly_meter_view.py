@@ -10,6 +10,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from .cache_causes import compute_cache_causes
+from .cache_causes_view import describe_cache_causes
 from .calls_store import CALLS_FILE_NAME, LIMIT_HITS_FILE_NAME, read_calls, read_limit_hits
 from .format import format_tokens
 from .i18n import session_date, t, tn
@@ -123,10 +125,12 @@ def describe_weekly_meter(meter: dict[str, Any], lang: str) -> dict[str, Any]:
 
 
 def load_weekly_meter_view(metrics_directory: Path, lang: str, now: datetime) -> dict[str, Any]:
-    """Read the stores and describe the meter: what each dashboard calls."""
+    """Read the stores and describe the meter and its causes: what each
+    dashboard calls. The calls are read once for both."""
+    calls = read_calls(metrics_directory / CALLS_FILE_NAME)
     meter = compute_weekly_meter(
-        read_calls(metrics_directory / CALLS_FILE_NAME),
-        read_limit_hits(metrics_directory / LIMIT_HITS_FILE_NAME),
-        now,
+        calls, read_limit_hits(metrics_directory / LIMIT_HITS_FILE_NAME), now
     )
-    return describe_weekly_meter(meter, lang)
+    view = describe_weekly_meter(meter, lang)
+    view["causes"] = describe_cache_causes(compute_cache_causes(calls, meter), lang)
+    return view

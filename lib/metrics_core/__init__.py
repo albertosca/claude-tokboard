@@ -55,6 +55,8 @@ from .backfill import (
     write_backfill_state,
     write_field_state,
 )
+from .cache_causes import compute_cache_causes
+from .cache_causes_view import describe_cache_causes
 from .calls_store import (
     CALLS_FILE_NAME,
     LIMIT_HITS_FILE_NAME,
@@ -195,6 +197,7 @@ __all__ = [
     "cold_summary_source",
     "color_group_key",
     "compress_to_label",
+    "compute_cache_causes",
     "compute_model_totals",
     "compute_project_first_seen",
     "compute_project_last_seen",
@@ -209,6 +212,7 @@ __all__ = [
     "dedupe_sessions",
     "dedupe_subagents",
     "describe_backfill_state",
+    "describe_cache_causes",
     "describe_weekly_meter",
     "expand_records_to_daily_deltas",
     "file_kind_problem",

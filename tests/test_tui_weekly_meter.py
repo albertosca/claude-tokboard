@@ -114,3 +114,48 @@ def test_cycling_the_period_keeps_the_same_weekly_view(
     second = tui.apply_period(base, mr.PERIODS[1].id, mr)
 
     assert first["weekly_meter"] is second["weekly_meter"] is base["weekly_meter"]
+
+
+def test_the_panel_prints_the_causes_the_html_page_does() -> None:
+    from cache_causes_fixtures import causes_for
+    from metrics_core import cache_causes_view
+
+    view = _view([4_000, 9_000], current=3_000)
+    view["causes"] = cache_causes_view.describe_cache_causes(causes_for(jump=True), "en")
+
+    text = _panel_text(view)
+    page = html.unescape(dashboard_html.render_cache_causes(view["causes"]))
+
+    shared = [view["causes"]["heading"], view["causes"]["first_jump"]]
+    for row in view["causes"]["windows"]:
+        shared += [row["window"], row["total"], row["cold_start"], row["rewrite"]]
+        shared += [row["after_idle"], row["main_short"], row["subagent_short"]]
+    for row in view["causes"]["sizes"]:
+        shared += [row["size"], row["runs"], row["creation"], row["rewrite"]]
+    for row in view["causes"]["first_requests"]:
+        shared += [row["version"], row["conversations"], row["median"]]
+    for fragment in shared:
+        assert fragment in text, fragment
+        assert fragment in page, fragment
+
+
+def test_the_panel_without_causes_or_with_an_empty_one_adds_nothing() -> None:
+    from cache_causes_fixtures import causes_for
+    from metrics_core import cache_causes_view
+
+    view = _view([4_000, 9_000], current=3_000)
+    base = _panel_text(view)
+    view["causes"] = cache_causes_view.describe_cache_causes(causes_for(), "en")
+    view["causes"]["empty"] = True
+
+    assert _panel_text(view) == base
+
+
+def test_the_tier_alert_reaches_the_panel() -> None:
+    from cache_causes_fixtures import causes_for
+    from metrics_core import cache_causes_view
+
+    view = _view([4_000, 9_000], current=3_000)
+    view["causes"] = cache_causes_view.describe_cache_causes(causes_for("cache_5m"), "en")
+
+    assert f"⚠ {view['causes']['alert']}" in _panel_text(view)

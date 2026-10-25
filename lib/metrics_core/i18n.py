@@ -116,6 +116,63 @@ MESSAGES: dict[str, dict[str, str]] = {
     "meter.outcome.open": {"en": "In progress", "pt": "Em andamento"},
     "meter.outcome.partial": {"en": " · partial data", "pt": " · dados parciais"},
     "meter.table_caption": {"en": "Recent weekly windows", "pt": "Janelas semanais recentes"},
+    # Why the cache was written (cold start, rewrite, incremental).
+    "causes.heading": {
+        "en": "Where the cache creation came from",
+        "pt": "De onde veio o cache creation",
+    },
+    "causes.note": {
+        "en": "Cold start: the first call of a conversation. Rewrite: a later call that wrote "
+        "at least half of its own context, so the cache was lost. Incremental: normal growth.",
+        "pt": "Partida a frio: a primeira chamada de uma conversa. Reescrita: uma chamada "
+        "posterior que gravou ao menos metade do próprio contexto, ou seja, o cache se perdeu. "
+        "Incremental: crescimento normal.",
+    },
+    "causes.table_caption": {
+        "en": "Cache creation by cause, per weekly window",
+        "pt": "Cache creation por causa, por janela semanal",
+    },
+    "causes.col.window": {"en": "Window", "pt": "Janela"},
+    "causes.col.total": {"en": "Total", "pt": "Total"},
+    "causes.col.cold_start": {"en": "Cold start", "pt": "Partida a frio"},
+    "causes.col.rewrite": {"en": "Rewrite", "pt": "Reescrita"},
+    "causes.col.incremental": {"en": "Incremental", "pt": "Incremental"},
+    "causes.col.after_idle": {"en": "Rewrite after idle", "pt": "Reescrita após pausa"},
+    "causes.col.main_short": {"en": "Main 5-minute tier", "pt": "Principal na camada de 5 min"},
+    "causes.col.subagent_short": {
+        "en": "Subagents 5-minute tier",
+        "pt": "Subagentes na camada de 5 min",
+    },
+    "causes.share": {"en": "{amount} ({percent}%)", "pt": "{amount} ({percent}%)"},
+    "causes.none": {"en": "none", "pt": "nenhuma"},
+    "causes.tier_alert": {
+        "en": "The main conversation is writing {percent}% of its cache creation to the "
+        "5-minute tier this window: each pause of 5 minutes now costs a rewrite.",
+        "pt": "A conversa principal está gravando {percent}% do cache creation na camada de "
+        "5 minutos nesta janela: cada pausa de 5 minutos agora custa uma reescrita.",
+    },
+    "causes.sizes_caption": {
+        "en": "Subagent runs by number of calls (all stored history)",
+        "pt": "Execuções de subagente por número de chamadas (todo o histórico guardado)",
+    },
+    "causes.col.size": {"en": "Calls per run", "pt": "Chamadas por execução"},
+    "causes.col.runs": {"en": "Runs", "pt": "Execuções"},
+    "causes.col.creation": {"en": "Cache creation", "pt": "Cache creation"},
+    "causes.col.rewrite_share": {"en": "Of it rewrites", "pt": "Dele, reescritas"},
+    "causes.size.upto": {"en": "up to {bound}", "pt": "até {bound}"},
+    "causes.size.between": {"en": "{low} to {high}", "pt": "{low} a {high}"},
+    "causes.size.over": {"en": "over {bound}", "pt": "mais de {bound}"},
+    "causes.first_caption": {
+        "en": "Size of the first request of a main conversation, by Claude Code version",
+        "pt": "Tamanho da primeira requisição de uma conversa principal, por versão do Claude Code",
+    },
+    "causes.col.version": {"en": "Version", "pt": "Versão"},
+    "causes.col.conversations": {"en": "Conversations", "pt": "Conversas"},
+    "causes.col.median": {"en": "Median first request", "pt": "Mediana da primeira requisição"},
+    "causes.first_jump": {
+        "en": "The first request grew by {percent}% or more from {before} to {after}.",
+        "pt": "A primeira requisição cresceu {percent}% ou mais de {before} para {after}.",
+    },
     # The detail panel's close button - also missed by the plan's table.
     "detail.close": {"en": "Close", "pt": "Fechar"},
     # Why an output figure carries a "≥": the hooks' incomplete_usage_messages

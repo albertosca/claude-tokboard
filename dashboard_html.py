@@ -1265,6 +1265,83 @@ def _render_meter_table(view: dict[str, Any]) -> str:
     )
 
 
+def _render_table(caption: str, columns: list[tuple[str, str]], rows: list[dict[str, str]]) -> str:
+    """A captioned table; `columns` is (header text, row key) pairs."""
+    head = "".join(f'<th scope="col">{html.escape(header)}</th>' for header, _ in columns)
+    body = "".join(
+        "<tr>" + "".join(f"<td>{html.escape(row[key])}</td>" for _, key in columns) + "</tr>"
+        for row in rows
+    )
+    return (
+        f'<table class="meter-table"><caption>{html.escape(caption)}</caption>'
+        f"<thead><tr>{head}</tr></thead><tbody>{body}</tbody></table>"
+    )
+
+
+def render_cache_causes(view: dict[str, Any]) -> str:
+    """Where the cache creation came from. `view` is
+    metrics_core.describe_cache_causes's dict, which the TUI renders too."""
+    if view["empty"]:
+        return ""
+    lang = view["lang"]
+
+    def label(key: str) -> str:
+        return str(metrics_core_module.t(f"causes.col.{key}", lang))
+
+    alert = f'<p class="causes-alert">⚠ {html.escape(view["alert"])}</p>' if view["alert"] else ""
+    jump = (
+        f'<p class="causes-alert">⚠ {html.escape(view["first_jump"])}</p>'
+        if view["first_jump"]
+        else ""
+    )
+    windows = _render_table(
+        str(metrics_core_module.t("causes.table_caption", lang)),
+        [
+            (label(key), key)
+            for key in (
+                "window",
+                "total",
+                "cold_start",
+                "rewrite",
+                "incremental",
+                "after_idle",
+                "main_short",
+                "subagent_short",
+            )
+        ],
+        view["windows"],
+    )
+    sizes = _render_table(
+        str(metrics_core_module.t("causes.sizes_caption", lang)),
+        [
+            (label("size"), "size"),
+            (label("runs"), "runs"),
+            (label("creation"), "creation"),
+            (label("rewrite_share"), "rewrite"),
+        ],
+        view["sizes"],
+    )
+    first = (
+        _render_table(
+            str(metrics_core_module.t("causes.first_caption", lang)),
+            [
+                (label("version"), "version"),
+                (label("conversations"), "conversations"),
+                (label("median"), "median"),
+            ],
+            view["first_requests"],
+        )
+        if view["first_requests"]
+        else ""
+    )
+    return (
+        '<section class="weekly-meter cache-causes" aria-labelledby="cache-causes-heading">'
+        f'<h2 id="cache-causes-heading">{html.escape(view["heading"])}</h2>'
+        f'<p class="meter-caveat">{html.escape(view["note"])}</p>'
+        f"{alert}{windows}{sizes}{first}{jump}</section>"
+    )
+
+
 def render_html(
     records: list[dict[str, Any]],
     subagents_by_session: dict[Any, list[dict[str, Any]]],
@@ -1458,10 +1535,12 @@ def render_html(
         f"onclick=\"showTab('panorama')\">{metrics_core_module.t('tab.panorama', lang)}</span>"
         "</div>"
     )
+    causes_view = (weekly_meter or {}).get("causes")
     sessions_tab_html = (
         '<div class="tab-pane active" id="tab-sessions" role="tabpanel" '
         'aria-labelledby="tab-btn-sessions">'
         f"{render_weekly_meter(weekly_meter) if weekly_meter else ''}"
+        f"{render_cache_causes(causes_view) if causes_view else ''}"
         '<div class="main-row">'
         f'<div class="session-list">{legend_blocks_html}'
         f"{render_session_header(has_tmux_data, lang=lang)}{''.join(rows_html)}</div>"
