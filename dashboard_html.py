@@ -1571,7 +1571,7 @@ def render_html(
         branches_html = render_branches(
             metrics_core_module.describe_branches(
                 metrics_core_module.compute_branch_breakdown(
-                    metrics_core_module.filter_sessions_by_window(records, window)
+                    metrics_core_module.filter_sessions_by_window(records, window=window)
                 ),
                 lang,
             ),
