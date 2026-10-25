@@ -130,6 +130,12 @@ Two other fields have their own `--fields` mode, run only when named and never i
 
 All three modes share the same safety mechanics: they back up the target file first and verify the copy by sha256 before proceeding, write the corrected result to a new file and rename it into place only after validation (never editing in place), and carry over verbatim anything appended to the live, append-only metrics file while the run was in progress. Every mode is a dry run by default and writes nothing until `--apply` is passed.
 
+## backfill-calls.py
+
+Seeds `calls.jsonl` (one row per API response) and `limit-hits.jsonl` (one row per rate-limit rejection) from the transcripts still on disk. The hooks fill both files from the moment they are installed; this covers what the transcripts that remain can still say, and the dry run states the earliest day it can reach (`earliest day reachable`). Claude Code deletes old transcripts, so run it once after installing the version that adds the hooks.
+
+It only appends to those two files and never opens `sessions.jsonl`, `subagents.jsonl` or `memory-reads.jsonl`, so it takes no backup and has no `--cutoff`: a row is written only when its message id is absent from the store, which makes a second run write nothing. A message replayed into a second transcript by a resumed session is written once, at its per-field peak. After `--apply` it records each transcript's end offset in `calls_cursor.json`, so the hooks continue from there. A dry run (the default) writes nothing and prints the exact command to apply; `--projects-dir` and `--metrics-dir` point it at copies.
+
 ## verify-detectors.py
 
 Re-proves that `tests/` actually catches the two Criticals it was built for, instead of leaving that proof sitting in a session transcript that eventually rots. Both defects shipped past five reviews because every check that existed asserted the markup *contained* an attribute, which is true whether the thing the attribute controls works or not:
