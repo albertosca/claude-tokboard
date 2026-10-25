@@ -384,6 +384,49 @@ STYLE = """
       }
       .session-row .duration-col { width: 55px; flex-shrink: 0; text-align: right; }
       .session-row .comp-header { width: 90px; flex-shrink: 0; }
+      .weekly-meter {
+        padding: 10px 10px 12px;
+        border-bottom: 1px solid var(--border);
+        font-size: 12px;
+        color: var(--text-secondary);
+        font-family: monospace;
+      }
+      .weekly-meter h2 { font-size: 13px; margin: 0 0 8px; color: var(--text-primary); }
+      .weekly-meter p { margin: 4px 0; }
+      .meter-track {
+        position: relative;
+        height: 14px;
+        border: 1px solid var(--text-muted);
+        border-radius: 3px;
+        background: var(--surface-1);
+        overflow: hidden;
+      }
+      .meter-fill { position: absolute; inset: 0 auto 0 0; background: var(--series-4); }
+      /* The observed range is a striped band with solid edges, so it reads
+         without relying on colour; the range is also spelled out in text. */
+      .meter-range-band {
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        border-left: 2px solid var(--text-primary);
+        border-right: 2px solid var(--text-primary);
+        background: repeating-linear-gradient(
+          135deg, transparent 0 3px, var(--text-primary) 3px 4px
+        );
+        opacity: 0.55;
+      }
+      .meter-value b { color: var(--text-primary); }
+      .meter-contradicted { color: var(--text-primary); font-weight: bold; }
+      .meter-caveat { color: var(--text-muted); }
+      .meter-table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+      .meter-table caption { text-align: left; color: var(--text-muted); padding-bottom: 4px; }
+      .meter-table th, .meter-table td {
+        text-align: left;
+        padding: 3px 8px 3px 0;
+        border-bottom: 1px solid var(--border);
+        font-weight: normal;
+      }
+      .meter-table th { color: var(--text-muted); }
       .quota-line {
         padding: 6px 10px 0;
         font-size: 11px;

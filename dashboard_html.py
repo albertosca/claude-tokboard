@@ -1211,6 +1211,60 @@ def render_period_filter(*, lang: str) -> str:
     return f'<div class="period-filter">{"".join(chips)}{render_backfill_note(lang=lang)}</div>'
 
 
+def render_weekly_meter(view: dict[str, Any]) -> str:
+    """The weekly-limit panel. `view` is metrics_core.describe_weekly_meter's
+    dict: the TUI renders the same one, so the numbers cannot differ."""
+    heading = f'<h2 id="weekly-meter-heading">{html.escape(view["heading"])}</h2>'
+    caveat = f'<p class="meter-caveat">{html.escape(view["caveat"])}</p>'
+    opening = '<section class="weekly-meter" aria-labelledby="weekly-meter-heading">'
+    if view["empty"]:
+        status = f'<p class="meter-status">{html.escape(view["status"])}</p>'
+        return f"{opening}{heading}{status}{caveat}</section>"
+    band = ""
+    if view["range_start_percent"] is not None:
+        width = view["range_end_percent"] - view["range_start_percent"]
+        band = (
+            f'<div class="meter-range-band" style="left:{view["range_start_percent"]}%;'
+            f'width:{width:.1f}%"></div>'
+        )
+    value_text = f"{view['value_text']}. {view['status']}"
+    track = (
+        f'<div class="meter-track" role="meter" '
+        f'aria-label="{html.escape(view["name"], quote=True)}" '
+        f'aria-valuemin="0" aria-valuemax="{view["scale_maximum"]}" '
+        f'aria-valuenow="{view["value"]}" '
+        f'aria-valuetext="{html.escape(value_text, quote=True)}">'
+        f'<div class="meter-fill" style="width:{view["fill_percent"]}%"></div>{band}</div>'
+    )
+    range_line = f'<p class="meter-range">{html.escape(view["range"])}</p>' if view["range"] else ""
+    lines = (
+        f'<p class="meter-value"><b>{html.escape(view["value_text"])}</b> '
+        f"{html.escape(view['tiers'])}</p>"
+        f'<p class="meter-status meter-{view["state"]}">{html.escape(view["status"])}</p>'
+        f"{range_line}"
+        f'<p class="meter-five-hour">{html.escape(view["five_hour"])}</p>'
+    )
+    return f"{opening}{heading}{track}{lines}{caveat}{_render_meter_table(view)}</section>"
+
+
+def _render_meter_table(view: dict[str, Any]) -> str:
+    lang = view["lang"]
+    columns = ("window", "accumulated", "tiers", "outcome")
+    head = "".join(
+        f'<th scope="col">{html.escape(metrics_core_module.t(f"meter.col.{column}", lang))}</th>'
+        for column in columns
+    )
+    body = "".join(
+        "<tr>" + "".join(f"<td>{html.escape(row[column])}</td>" for column in columns) + "</tr>"
+        for row in view["rows"]
+    )
+    caption = html.escape(metrics_core_module.t("meter.table_caption", lang))
+    return (
+        f'<table class="meter-table"><caption>{caption}</caption>'
+        f"<thead><tr>{head}</tr></thead><tbody>{body}</tbody></table>"
+    )
+
+
 def render_html(
     records: list[dict[str, Any]],
     subagents_by_session: dict[Any, list[dict[str, Any]]],
@@ -1223,6 +1277,7 @@ def render_html(
     now: datetime,
     *,
     lang: str,
+    weekly_meter: dict[str, Any] | None = None,
 ) -> str:
     group_colors = build_group_colors(chart_records, daily_chart_records, now=now)
     # Over the whole history, not per period, so a model keeps its colour
@@ -1406,6 +1461,7 @@ def render_html(
     sessions_tab_html = (
         '<div class="tab-pane active" id="tab-sessions" role="tabpanel" '
         'aria-labelledby="tab-btn-sessions">'
+        f"{render_weekly_meter(weekly_meter) if weekly_meter else ''}"
         '<div class="main-row">'
         f'<div class="session-list">{legend_blocks_html}'
         f"{render_session_header(has_tmux_data, lang=lang)}{''.join(rows_html)}</div>"
@@ -1731,6 +1787,9 @@ def main() -> None:
             open_projects,
             render_now,
             lang=lang,
+            weekly_meter=metrics_core_module.load_weekly_meter_view(
+                Path(metrics_core_module.METRICS_FILE).parent, lang, render_now
+            ),
         )
         output_path = Path("~/.claude/metrics/dashboard.html").expanduser()
         with output_path.open("w") as output_file:

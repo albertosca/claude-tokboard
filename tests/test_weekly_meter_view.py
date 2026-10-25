@@ -1,47 +1,12 @@
 """The display model both dashboards render the weekly meter from."""
 
 from datetime import datetime, timezone
-from typing import Any
 
 from metrics_core import weekly_meter_view, weekly_windows
-
-WEEK = 7 * 24 * 3600
-ANCHOR = 1_800_000_000
-
-
-def _iso(epoch: float) -> str:
-    return datetime.fromtimestamp(epoch, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
-
-
-def _call(epoch: float, five_minute: int, one_hour: int = 0) -> dict[str, Any]:
-    return {
-        "message_id": f"message-{epoch}",
-        "timestamp": _iso(epoch),
-        "cache_5m": five_minute,
-        "cache_1h": one_hour,
-    }
-
-
-def _hit(epoch: float, resets_at: int) -> dict[str, Any]:
-    return {
-        "timestamp": _iso(epoch),
-        "rate_limit_type": "seven_day",
-        "resets_at": resets_at,
-        "status": "rejected",
-    }
-
-
-def _meter(usages: list[int], current: int = 0) -> dict[str, Any]:
-    """A meter with one rejected, fully covered week per entry of `usages`."""
-    calls = [_call(ANCHOR - (len(usages) + 2) * WEEK, 1)]
-    hits = []
-    for position, usage in enumerate(usages):
-        end = ANCHOR - (len(usages) - 1 - position) * WEEK
-        calls.append(_call(end - WEEK + 3600, usage // 2, usage - usage // 2))
-        hits.append(_hit(end - 3600, end))
-    calls.append(_call(ANCHOR + 3600, current // 3, current - current // 3))
-    now = datetime.fromtimestamp(ANCHOR + 7200, tz=timezone.utc)
-    return weekly_windows.compute_weekly_meter(calls, hits, now)
+from weekly_meter_fixtures import ANCHOR, WEEK
+from weekly_meter_fixtures import call as _call
+from weekly_meter_fixtures import hit as _hit
+from weekly_meter_fixtures import meter_for as _meter
 
 
 def test_no_data_renders_an_empty_state_with_a_reason() -> None:

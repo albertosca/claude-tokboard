@@ -143,6 +143,8 @@ from .records import (
     record_token_total,
 )
 from .transcript_ingest import TOKEN_FIELDS, append_record, parse_transcript
+from .weekly_meter_view import describe_weekly_meter, load_weekly_meter_view
+from .weekly_windows import compute_weekly_meter
 
 __all__ = [
     "AGENT_LABELS_FILE",
@@ -200,12 +202,14 @@ __all__ = [
     "compute_project_totals",
     "compute_quota_totals",
     "compute_token_type_totals",
+    "compute_weekly_meter",
     "cumulative_rows",
     "daily_totals",
     "dedupe_by_key",
     "dedupe_sessions",
     "dedupe_subagents",
     "describe_backfill_state",
+    "describe_weekly_meter",
     "expand_records_to_daily_deltas",
     "file_kind_problem",
     "filter_by_days",
@@ -234,6 +238,7 @@ __all__ = [
     "load_label_cache",
     "load_project_roots",
     "load_records",
+    "load_weekly_meter_view",
     "log_transcript",
     "model_display_label",
     "model_totals_as_of",

@@ -7,10 +7,13 @@ about a number, a label or the state wording.
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
+from .calls_store import CALLS_FILE_NAME, LIMIT_HITS_FILE_NAME, read_calls, read_limit_hits
 from .format import format_tokens
 from .i18n import session_date, t, tn
+from .weekly_windows import compute_weekly_meter
 
 # Rows in the recent-windows table.
 RECENT_WINDOWS = 8
@@ -75,6 +78,7 @@ def describe_weekly_meter(meter: dict[str, Any], lang: str) -> dict[str, Any]:
     base: dict[str, Any] = {
         "heading": t("meter.heading", lang),
         "name": t("meter.name", lang),
+        "lang": lang,
         "caveat": t("meter.caveat", lang),
         "five_hour": five_hour,
         "empty": state in ("no_data", "no_anchor"),
@@ -116,3 +120,13 @@ def describe_weekly_meter(meter: dict[str, Any], lang: str) -> dict[str, Any]:
         view["range_start_percent"] = _percent(observed["minimum"], scale)
         view["range_end_percent"] = _percent(observed["maximum"], scale)
     return view
+
+
+def load_weekly_meter_view(metrics_directory: Path, lang: str, now: datetime) -> dict[str, Any]:
+    """Read the stores and describe the meter: what each dashboard calls."""
+    meter = compute_weekly_meter(
+        read_calls(metrics_directory / CALLS_FILE_NAME),
+        read_limit_hits(metrics_directory / LIMIT_HITS_FILE_NAME),
+        now,
+    )
+    return describe_weekly_meter(meter, lang)
