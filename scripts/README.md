@@ -144,6 +144,30 @@ Runs `claude -p "/usage"` and prints its `Current session` and `Current week` pe
 python3 scripts/official-usage.py
 ```
 
+## growth-report.py
+
+Per ISO week: API calls, cache creation, commits and the two ratios (calls and cache creation per commit), to tell "more work" from "heavier process". The calls come from `calls.jsonl`; the commits come from the repositories you pass with `--repo` (repeatable; `git log --all`, by author date). Without `--repo` the commit columns are empty and it says so. Read-only.
+
+```
+python3 scripts/growth-report.py --repo /path/to/my-api --repo /path/to/blog-site
+```
+
+## instruction-size-history.py
+
+The size, month by month, of an instruction file tracked in git (for example a `CLAUDE.md`), with a flag on any month that grew by more than `--alert-percent` (default 25) over the previous one. Every request carries those files, so growth there is paid in every conversation. Sizes are bytes, about 4 per token. Read-only.
+
+```
+python3 scripts/instruction-size-history.py --file /path/to/CLAUDE.md
+```
+
+## fixed-context-probe.py
+
+Decomposes the fixed context of a request by sending nine minimal `claude -p` requests with parts switched off (skills, MCP servers, user and project settings, tools, system prompt) and printing the token difference between variants. **It makes nine real API calls with your account**, so it only lists the variants unless you pass `--run`. Run it from the project you want measured, right after changing a `CLAUDE.md`, plugin or hook. Writes nothing.
+
+```
+python3 scripts/fixed-context-probe.py --run
+```
+
 ## tool-results-report.py
 
 Prints how much tool output entered your conversations: the share by tool, the share of Bash output by kind of command (search, read, claude, git, tests, other), the part that came from subagents, and what a cap on a single result would have trimmed (`--bash-cap`, `--read-cap`, in characters; defaults 8,000 and 20,000). Sizes are characters, and the token figure is characters divided by 3, an estimate.
