@@ -136,6 +136,14 @@ Seeds `calls.jsonl` (one row per API response) and `limit-hits.jsonl` (one row p
 
 It only appends to those two files and never opens `sessions.jsonl`, `subagents.jsonl` or `memory-reads.jsonl`, so it takes no backup and has no `--cutoff`: a row is written only when its message id is absent from the store, which makes a second run write nothing. A message replayed into a second transcript by a resumed session is written once, at its per-field peak. After `--apply` it records each transcript's end offset in `calls_cursor.json`, so the hooks continue from there. A dry run (the default) writes nothing and prints the exact command to apply; `--projects-dir` and `--metrics-dir` point it at copies.
 
+## official-usage.py
+
+Runs `claude -p "/usage"` and prints its `Current session` and `Current week` percentages, then the raw report, so you can compare the plan's own figure with the weekly meter. Run it by hand: it makes a network request through the Claude Code binary (the plugin sends nothing), the report is approximate, covers this machine's sessions, and its text may change between versions (the script says so when it finds no meter lines). Nothing calls it and it writes nothing.
+
+```
+python3 scripts/official-usage.py
+```
+
 ## tool-results-report.py
 
 Prints how much tool output entered your conversations: the share by tool, the share of Bash output by kind of command (search, read, claude, git, tests, other), the part that came from subagents, and what a cap on a single result would have trimmed (`--bash-cap`, `--read-cap`, in characters; defaults 8,000 and 20,000). Sizes are characters, and the token figure is characters divided by 3, an estimate.
