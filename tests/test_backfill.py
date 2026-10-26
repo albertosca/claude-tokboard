@@ -948,6 +948,21 @@ def test_identical_copies_under_two_slugs_are_one_transcript_not_an_ambiguity(tm
     assert ambiguous == []
 
 
+def test_a_dangling_symlink_is_not_a_copy_and_does_not_abort_the_index(tmp_path):
+    projects = tmp_path / "projects"
+    real = _copy(projects, "slug-a", "sess-1", "dup", "one\n")
+    link_directory = projects / "slug-b" / "sess-1" / "subagents"
+    link_directory.mkdir(parents=True)
+    (link_directory / "agent-dup.jsonl").symlink_to(tmp_path / "moved-away" / "agent-dup.jsonl")
+
+    found = mr.find_subagent_transcripts(str(projects))
+    index, ambiguous = mr.index_subagent_transcripts(str(projects))
+
+    assert found == {"dup": [real]}
+    assert index == {"dup": real}
+    assert ambiguous == []
+
+
 def test_copies_that_differ_stay_ambiguous(tmp_path):
     projects = tmp_path / "projects"
     _copy(projects, "slug-a", "sess-1", "dup", "one\n")

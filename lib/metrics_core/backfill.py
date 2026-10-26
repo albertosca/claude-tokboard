@@ -172,6 +172,10 @@ def find_subagent_transcripts(projects_directory: str) -> dict[str, list[str]]:
     prefix = "agent-"
     found: dict[str, list[str]] = collections.defaultdict(list)
     for path in Path(projects_directory).glob("*/*/subagents/*.jsonl"):
+        # A symlink left dangling by a moved project directory is not a copy:
+        # hashing it raised FileNotFoundError and aborted the whole dry run.
+        if not path.is_file():
+            continue
         stem = path.name[: -len(".jsonl")]
         found[stem.removeprefix(prefix)].append(str(path))
     return {agent_id: sorted(paths) for agent_id, paths in found.items()}
