@@ -130,6 +130,15 @@ Two other fields have their own `--fields` mode, run only when named and never i
 
 All three modes share the same safety mechanics: they back up the target file first and verify the copy by sha256 before proceeding, write the corrected result to a new file and rename it into place only after validation (never editing in place), and carry over verbatim anything appended to the live, append-only metrics file while the run was in progress. Every mode is a dry run by default and writes nothing until `--apply` is passed.
 
+## backfill-subagent-last-call.py
+
+Since Claude Code 2.1.278 the last message of many subagent transcripts never gets its final usage, so the stored output of that agent is a floor. The parent session records each finished agent's result with a `usage` block that is exactly that last call, and this script raises `output_tokens` (and the matching `tokens_by_model` bucket) by the difference. It repairs only the last call: every earlier call without a final usage stays a floor and keeps counting in `incomplete_usage_messages`. A row is changed only when the parent block is provably one call, its other three fields equal the transcript's last message, and the stored row equals the transcript's own final total; every other row is left alone and the dry run says why, by reason. It reuses `backfill-token-dedup.py`'s verified backup and atomic rewrite, so `--apply` backs the file up first and is idempotent. Afterwards a repaired row no longer matches the transcript's total, so `backfill-token-dedup.py --kind subagents` leaves that unit untouched on purpose.
+
+```
+python3 scripts/backfill-subagent-last-call.py            # dry run
+python3 scripts/backfill-subagent-last-call.py --apply
+```
+
 ## backfill-calls.py
 
 Seeds `calls.jsonl` (one row per API response) and `limit-hits.jsonl` (one row per rate-limit rejection) from the transcripts still on disk. The hooks fill both files from the moment they are installed; this covers what the transcripts that remain can still say, and the dry run states the earliest day it can reach (`earliest day reachable`). Claude Code deletes old transcripts, so run it once after installing the version that adds the hooks.
