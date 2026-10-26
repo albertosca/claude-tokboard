@@ -1544,9 +1544,10 @@ def render_html(
     # guaranteed chronological across sessions - see
     # order_models_by_first_appearance) - that order is what makes a
     # model's slot permanent as the history grows.
-    model_slots = metrics_core_module.assign_model_slots(
+    model_slots = metrics_core_module.assign_persistent_model_slots(
         metrics_core_module.order_models_by_first_appearance(daily_chart_records),
         MODEL_COLOR_SLOTS,
+        Path(metrics_core_module.METRICS_FILE).parent,
     )
 
     # Over the whole history too: a branch keeps its colour in every period.

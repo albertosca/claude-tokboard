@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 import re
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 
 from .i18n import session_date
@@ -100,7 +100,9 @@ def _lowest_free_slot(taken: set[int], slots: int, *, start: int) -> int | None:
     return next((candidate for candidate in range(start, slots) if candidate not in taken), None)
 
 
-def assign_model_slots(models: Iterable[str], slots: int) -> dict[str, ModelColorSlot]:
+def assign_model_slots(
+    models: Iterable[str], slots: int, pinned: Mapping[str, int] | None = None
+) -> dict[str, ModelColorSlot]:
     """A colour slot per model id, permanent once given.
 
     Both dashboards used to colour the "by model" chart by each model's
@@ -161,6 +163,13 @@ def assign_model_slots(models: Iterable[str], slots: int) -> dict[str, ModelColo
     Once every slot is taken, the palette is reused rather than left
     unclaimed - see ModelColorSlot.is_overflow.
 
+    `pinned` (model -> palette index, see model_slots_store) is what earlier
+    renders already showed: those models keep their slot whatever the history
+    now says, and their slots are closed to newcomers even when the model is
+    absent from `models`. This is what makes a colour survive a back-dated
+    model or a shrunken history (backlog 2026-09-28 #1). Pinned entries out of
+    range or sharing a slot are ignored.
+
     If the author deletes part of the history, the next render only knows
     about what remains: a model's "first appearance" is recomputed from
     the survivors, so a model that used to appear second can become first
@@ -183,9 +192,16 @@ def assign_model_slots(models: Iterable[str], slots: int) -> dict[str, ModelColo
 
     assignment: dict[str, ModelColorSlot] = {}
     taken: set[int] = set()
+    for model, index in (pinned or {}).items():
+        if 0 <= index < slots and index not in taken:
+            taken.add(index)
+            if model in first_seen_order:
+                assignment[model] = ModelColorSlot(palette_index=index, is_overflow=False)
     family_slot_count = min(len(_MODEL_FAMILIES), slots)
     overflow_count = 0
     for model in ordered:
+        if model in assignment:
+            continue
         rank = _family_rank(model)
         if rank < family_slot_count and rank not in taken:
             assignment[model] = ModelColorSlot(palette_index=rank, is_overflow=False)

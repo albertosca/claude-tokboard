@@ -1265,3 +1265,18 @@ def test_a_model_past_the_last_colour_reuses_an_earlier_one_and_is_marked():
     )
     unattributed_colour = _legend_colour(raw, mr.t("no_model", "pt"))
     assert unattributed_colour not in colours, "no model must stay a colour no real model wears"
+
+
+def test_the_dashboard_pins_the_model_colours_it_settled_next_to_the_sessions_file(
+    monkeypatch, tmp_path
+):
+    import json
+
+    isolate_tui_from_the_real_filesystem(monkeypatch, tmp_path)
+    _write_sessions(tmp_path, _RANKINGS_DIFFER)
+    arguments = tui.build_arg_parser().parse_args(["--label-budget", "0"])
+
+    tui.load_data(arguments, metrics_core_module=mr)
+
+    pinned = json.loads((tmp_path / ".claude" / "metrics" / "model_slots.json").read_text())
+    assert set(pinned[str(len(tui.PANE_COLORS))]) == {OPUS, SONNET, EARLY, LATE}

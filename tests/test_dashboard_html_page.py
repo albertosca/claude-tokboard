@@ -1059,3 +1059,24 @@ def test_period_chips_never_wrap_or_shrink_so_the_pinned_filter_can_scroll():
     chip_rule = chip_rule[: chip_rule.index("}")]
     assert "white-space: nowrap;" in chip_rule
     assert "flex-shrink: 0;" in chip_rule
+
+
+def test_render_html_pins_the_model_colours_it_drew_next_to_the_sessions_file(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(mr, "METRICS_FILE", str(tmp_path / "sessions.jsonl"))
+    keyword_arguments = _empty_render_html_kwargs()
+    keyword_arguments["daily_chart_records"] = [
+        _session_record(
+            "s-1",
+            "/work/proj-a",
+            tokens=10,
+            timestamp_start="2026-08-01T10:00:00Z",
+            tokens_by_model={"local-a": {"input_tokens": 10}},
+        )
+    ]
+
+    dashboard_html.render_html(**keyword_arguments, lang="en")
+
+    pinned = json.loads((tmp_path / "model_slots.json").read_text())
+    assert list(pinned[str(dashboard_html.MODEL_COLOR_SLOTS)]) == ["local-a"]

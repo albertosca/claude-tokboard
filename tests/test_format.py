@@ -369,3 +369,14 @@ def test_nice_axis_ticks_survives_an_all_zero_chart() -> None:
 )
 def test_uses_older_tokenizer_names_the_releases_before_the_switch(model: str, older: bool) -> None:
     assert uses_older_tokenizer(model) is older
+
+
+def test_assign_model_slots_ignores_pinned_entries_out_of_range_or_sharing_a_slot() -> None:
+    slots = mr.assign_model_slots(
+        ["local-a", "local-b", "local-c"], 4, pinned={"local-a": 9, "local-b": 3, "local-c": 3}
+    )
+
+    assert slots["local-b"].palette_index == 3
+    assert slots["local-a"].palette_index != 9
+    assert slots["local-c"].palette_index != 3
+    assert len({slot.palette_index for slot in slots.values()}) == 3

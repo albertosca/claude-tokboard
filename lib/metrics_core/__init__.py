@@ -107,6 +107,7 @@ from .labels import (
     save_label_cache,
     warm_summary_source,
 )
+from .model_slots_store import assign_persistent_model_slots
 from .paths import (
     CONFIG_FILE,
     WORKTREE_MARKERS,
@@ -199,6 +200,7 @@ __all__ = [
     "assign_branch_slots",
     "assign_group_colors",
     "assign_model_slots",
+    "assign_persistent_model_slots",
     "assign_project_slots",
     "at_cut",
     "branch_bucket",

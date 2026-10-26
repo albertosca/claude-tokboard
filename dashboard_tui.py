@@ -281,9 +281,10 @@ def load_base_data(
     # guaranteed chronological across sessions - see
     # order_models_by_first_appearance) - that order is what makes a
     # model's slot permanent as the history grows.
-    model_slots = metrics_core_module.assign_model_slots(
+    model_slots = metrics_core_module.assign_persistent_model_slots(
         metrics_core_module.order_models_by_first_appearance(daily_chart_records),
         len(PANE_COLORS),
+        Path(metrics_core_module.METRICS_FILE).parent,
     )
 
     # The same eight project colour slots the HTML dashboard uses, ranked
