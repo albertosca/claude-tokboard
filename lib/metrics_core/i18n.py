@@ -108,6 +108,10 @@ MESSAGES: dict[str, dict[str, str]] = {
     "meter.col.accumulated": {"en": "Accumulated", "pt": "Acumulado"},
     "meter.col.tiers": {"en": "5-minute / 1-hour", "pt": "5 minutos / 1 hora"},
     "meter.col.families": {"en": "By model family", "pt": "Por família de modelo"},
+    "meter.older_tokenizer": {
+        "en": "{percent}% older tokenizer",
+        "pt": "{percent}% tokenizador antigo",
+    },
     "meter.col.outcome": {"en": "Outcome", "pt": "Resultado"},
     "meter.outcome.rejected": {
         "en": "Rejected at {accumulated}",

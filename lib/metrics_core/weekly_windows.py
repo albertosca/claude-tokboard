@@ -15,7 +15,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from .format import model_family
+from .format import model_family, uses_older_tokenizer
 
 WEEK_SECONDS = 7 * 24 * 3600
 FIVE_HOUR_SECONDS = 5 * 3600
@@ -26,6 +26,10 @@ MINIMUM_RANGE_POINTS = 2
 LATEST_USABLE_RESET = 4_102_444_800
 # Two rejections whose reset times differ by less than this are one week.
 RESET_JITTER_SECONDS = 3600
+
+
+# (moment, cache_5m, cache_1h, family, older_tokenizer)
+_PlacedCall = tuple[float, int, int, str, bool]
 
 
 def _epoch(timestamp: Any) -> float | None:
@@ -52,15 +56,16 @@ def _creation(call: dict[str, Any], field: str) -> int:
     return value if isinstance(value, int) and not isinstance(value, bool) and value > 0 else 0
 
 
-def _placed_calls(calls: list[dict[str, Any]]) -> list[tuple[float, int, int, str]]:
+def _placed_calls(calls: list[dict[str, Any]]) -> list[_PlacedCall]:
     placed = []
     for call in calls:
         moment = _epoch(call.get("timestamp"))
         if moment is not None:
             model = call.get("model")
             family = model_family(model) if isinstance(model, str) else "other"
+            older = isinstance(model, str) and uses_older_tokenizer(model)
             placed.append(
-                (moment, _creation(call, "cache_5m"), _creation(call, "cache_1h"), family)
+                (moment, _creation(call, "cache_5m"), _creation(call, "cache_1h"), family, older)
             )
     return placed
 
@@ -111,12 +116,10 @@ def _window_ends(
     return sorted(ends.items())
 
 
-def _five_hour(
-    placed: list[tuple[float, int, int, str]], hits: list[dict[str, Any]], now: float
-) -> dict[str, int]:
+def _five_hour(placed: list[_PlacedCall], hits: list[dict[str, Any]], now: float) -> dict[str, int]:
     accumulated = sum(
         five_minute + one_hour
-        for moment, five_minute, one_hour, _ in placed
+        for moment, five_minute, one_hour, _, _ in placed
         if now - FIVE_HOUR_SECONDS <= moment <= now
     )
     rejected = set()
@@ -133,7 +136,7 @@ def _five_hour(
     return {"accumulated": accumulated, "rejected_windows": len(rejected)}
 
 
-def _by_family(calls: list[tuple[float, int, int, str]]) -> dict[str, int]:
+def _by_family(calls: list[_PlacedCall]) -> dict[str, int]:
     """Cache creation per model family inside one window, largest first.
 
     Kept per window so the per-model weights of the limit can be fitted again
@@ -141,7 +144,7 @@ def _by_family(calls: list[tuple[float, int, int, str]]) -> dict[str, int]:
     is left out.
     """
     totals: dict[str, int] = {}
-    for _, five_minute, one_hour, family in calls:
+    for _, five_minute, one_hour, family, _ in calls:
         totals[family] = totals.get(family, 0) + five_minute + one_hour
     return dict(
         sorted(((family, total) for family, total in totals.items() if total), key=_largest_first)
@@ -153,7 +156,7 @@ def _largest_first(item: tuple[str, int]) -> tuple[int, str]:
 
 
 def _build_window(
-    placed: list[tuple[float, int, int, str]],
+    placed: list[_PlacedCall],
     end: int,
     inferred: bool,
     earliest_call: float,
@@ -171,6 +174,7 @@ def _build_window(
         "rejected": end in first_rejections,
         "first_rejection_accumulated": None,
         "families": _by_family(inside),
+        "older_tokenizer": sum(call[1] + call[2] for call in inside if call[4]),
     }
     window["accumulated"] = window["cache_5m"] + window["cache_1h"]
     if end in first_rejections:

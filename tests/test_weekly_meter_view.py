@@ -126,6 +126,7 @@ def test_a_row_names_the_families_largest_first_and_dashes_an_empty_window() -> 
         "rejected": False,
         "first_rejection_accumulated": None,
         "families": {"opus": 93_200_000, "sonnet": 12_000_000, "other": 500},
+        "older_tokenizer": 0,
     }
 
     english = weekly_meter_view._row(window, None, "en")
@@ -134,4 +135,34 @@ def test_a_row_names_the_families_largest_first_and_dashes_an_empty_window() -> 
 
     assert english["families"] == "opus 93.2M · sonnet 12.0M · others 500"
     assert portuguese["families"] == "opus 93.2M · sonnet 12.0M · outros 500"
+    assert empty["families"] == "-"
+
+
+def test_a_row_flags_the_share_from_the_older_tokenizer_only_when_there_is_some() -> None:
+    window = {
+        "start": 0,
+        "end": 7 * 24 * 3600,
+        "inferred": False,
+        "covered": True,
+        "cache_5m": 400,
+        "cache_1h": 0,
+        "accumulated": 400,
+        "rejected": False,
+        "first_rejection_accumulated": None,
+        "families": {"haiku": 400},
+        "older_tokenizer": 100,
+    }
+
+    flagged = weekly_meter_view._row(window, None, "en")["families"]
+    portuguese = weekly_meter_view._row(window, None, "pt")["families"]
+    tiny = weekly_meter_view._row(
+        {**window, "accumulated": 100_000, "older_tokenizer": 1}, None, "en"
+    )
+    clean = weekly_meter_view._row({**window, "older_tokenizer": 0}, None, "en")
+    empty = weekly_meter_view._row({**window, "families": {}, "older_tokenizer": 0}, None, "en")
+
+    assert flagged == "haiku 400 · 25% older tokenizer"
+    assert portuguese == "haiku 400 · 25% tokenizador antigo"
+    assert tiny["families"].endswith("1% older tokenizer")
+    assert clean["families"] == "haiku 400"
     assert empty["families"] == "-"

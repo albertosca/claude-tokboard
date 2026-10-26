@@ -280,3 +280,20 @@ def test_a_call_with_a_non_string_model_counts_as_another_family() -> None:
 
     window = next(window for window in meter["windows"] if window["end"] == end)
     assert window["families"] == {"other": 9}
+
+
+def test_each_window_counts_the_cache_creation_of_older_tokenizer_models() -> None:
+    end = ANCHOR
+    start = end - WEEK
+    calls = [
+        _call(start + 3600, five_minute=100, model="claude-haiku-4-5-20251001"),
+        _call(start + 7200, one_hour=50, model="claude-sonnet-4-6"),
+        _call(start + 10800, five_minute=400, model="claude-opus-5-5"),
+        _call(start + 14400, five_minute=9, model=None),
+    ]
+
+    meter = weekly_windows.compute_weekly_meter(calls, [_hit(end - 3600, end)], _now(end + 60))
+
+    window = next(window for window in meter["windows"] if window["end"] == end)
+    assert window["older_tokenizer"] == 150
+    assert window["accumulated"] == 559

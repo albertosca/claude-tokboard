@@ -44,6 +44,33 @@ def model_family(model: str) -> str:
     return match.group(1) if match else "other"
 
 
+# The last (major, minor) of each family that still used the older tokenizer,
+# which turns the same text into about three quarters as many tokens (backlog
+# 2026-10-07 #8: 9,490 against 12,602 for one 30,000-character sample, x1.33).
+# Everything newer, and any family not listed, counts as the newer tokenizer.
+_OLDER_TOKENIZER_LAST_VERSION = {"haiku": (4, 5), "sonnet": (4, 6), "opus": (4, 6)}
+_VERSION_AFTER_FAMILY = re.compile(r"-(\d{1,2})(?:-(\d{1,2}))?(?=-|$)")
+_VERSION_BEFORE_FAMILY = re.compile(r"^claude-(\d{1,2})(?:-(\d{1,2}))?-")
+
+
+def uses_older_tokenizer(model: str) -> bool:
+    """True when the model is a family release known to use the older tokenizer.
+
+    A model whose family or version cannot be read is NOT claimed as older:
+    the caller would rather miss one than invent a discount.
+    """
+    family = model_family(model)
+    last_version = _OLDER_TOKENIZER_LAST_VERSION.get(family)
+    if last_version is None:
+        return False
+    before = _VERSION_BEFORE_FAMILY.match(model)
+    after = _VERSION_AFTER_FAMILY.search(model[model.index(family) + len(family) :])
+    found = before or after
+    if found is None:
+        return False
+    return (int(found.group(1)), int(found.group(2) or 0)) <= last_version
+
+
 def _family_rank(model: str) -> int:
     """The model's family's place in _MODEL_FAMILIES, or one past the end."""
     match = _MODEL_FAMILY.search(model)

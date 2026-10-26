@@ -7,6 +7,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import metrics_core as mr
+import pytest
+from metrics_core.format import uses_older_tokenizer
 
 REPO = Path(__file__).resolve().parent.parent
 
@@ -342,3 +344,28 @@ def test_nice_axis_ticks_steps_are_one_two_two_and_a_half_or_five_times_a_power_
 
 def test_nice_axis_ticks_survives_an_all_zero_chart() -> None:
     assert mr.nice_axis_ticks(0) == [0, 1]
+
+
+@pytest.mark.parametrize(
+    ("model", "older"),
+    [
+        ("claude-haiku-4-5-20251001", True),
+        ("claude-3-5-haiku-20241022", True),
+        ("claude-3-opus-20240229", True),
+        ("claude-opus-4-20250514", True),
+        ("claude-opus-4-1-20250805", True),
+        ("claude-opus-4-6", True),
+        ("claude-sonnet-4-6", True),
+        ("claude-opus-4-8", False),
+        ("claude-opus-5", False),
+        ("claude-opus-5-5", False),
+        ("claude-sonnet-5", False),
+        ("claude-sonnet-5-5", False),
+        ("claude-haiku-5-5", False),
+        ("claude-fable-5-1", False),
+        ("some-new-model", False),
+        ("claude-haiku", False),
+    ],
+)
+def test_uses_older_tokenizer_names_the_releases_before_the_switch(model: str, older: bool) -> None:
+    assert uses_older_tokenizer(model) is older

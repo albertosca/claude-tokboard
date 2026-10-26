@@ -49,6 +49,9 @@ def _families(window: dict[str, Any], lang: str) -> str:
         f"{t('others', lang) if family == 'other' else family} {format_tokens(total)}"
         for family, total in window["families"].items()
     ]
+    if parts and window["older_tokenizer"]:
+        share = round(100 * window["older_tokenizer"] / window["accumulated"])
+        parts.append(t("meter.older_tokenizer", lang, percent=max(1, share)))
     return " · ".join(parts) if parts else "-"
 
 
