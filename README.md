@@ -10,7 +10,9 @@
 
 A raw token count mixes cheap cache reads with the tokens that count against rate limits. tokboard logs every Claude Code session and subagent in the background and shows you both numbers - in your browser or in your terminal, without anything leaving your machine.
 
-![The HTML dashboard: a stacked trend chart by project, with tabs for token type and model, above a session table grouped by project](assets/dashboard-en.png)
+Ran out of weekly limit and can't tell why? tokboard also splits your cache creation by cause - cold starts, rewrites after an idle pause, incremental growth - and tracks the current week against the range where past weeks hit the limit.
+
+![The HTML dashboard: a stacked trend chart by project, with tabs for token type, model and branch, above the weekly-limit meter, the cache-creation causes, tokens per branch and a session table grouped by project](assets/dashboard-en.png)
 
 <sub>The HTML dashboard. All screenshots are rendered from the repo's synthetic test data - no real sessions.</sub>
 
@@ -25,7 +27,7 @@ A raw token count mixes cheap cache reads with the tokens that count against rat
 - **Tokens per branch.** For every project that used more than one git branch, a panel shows what each branch cost, the session list narrows to a single branch, and the trend chart can be sliced by branch - in the browser and in the terminal.
 - **Click to highlight.** Click a legend entry or a bar to spotlight one project, token type or model across the chart.
 
-![The terminal app: a session table with a detail panel, then the trend chart cycling through its three slicings of a day](assets/tui-en.gif)
+![The terminal app: a session table with a detail panel, then the trend chart cycling through its four slicings of a day](assets/tui-en.gif)
 
 <sub>The terminal app - same data, keyboard-driven: <kbd>g</kbd> charts/sessions, <kbd>t</kbd> chart mode, <kbd>p</kbd> period, <kbd>q</kbd> quit.</sub>
 
@@ -130,7 +132,7 @@ From 2.2.0, the tools count is per distinct tool call - about 4x higher than bef
 
 From 2.3.0, a row's token total prefixed with "≥" is that same floor made visible: some of its messages never got a final usage entry, so the real total may be higher than shown. `python3 scripts/backfill-token-dedup.py --fields incomplete_usage` can backfill that marker onto rows logged before this version. A row whose transcript is no longer on disk never gets it, for good: without the transcript there is no way to tell whether its usage was incomplete.
 
-From 2.5.0, both hooks also log one row per API response (`calls.jsonl`) and one per rate-limit rejection (`limit-hits.jsonl`), which feed the weekly-limit meter. They start empty; `python3 scripts/backfill-calls.py` seeds them from the transcripts Claude Code still keeps (a dry run until given `--apply`, and it prints the earliest day it can reach). Claude Code deletes old transcripts, so run it once after upgrading.
+From 2.5.0, both hooks also log one row per API response (`calls.jsonl`) and one per rate-limit rejection (`limit-hits.jsonl`), which feed the weekly-limit meter. They start empty; `python3 scripts/backfill-calls.py` seeds them from the transcripts Claude Code still keeps (a dry run until given `--apply`, and it prints the earliest day it can reach). Claude Code deletes old transcripts, so run it once after upgrading. Also in 2.5.0, `python3 scripts/backfill-subagent-last-call.py` raises a subagent row's output by the one final call that the parent session's result still records (a dry run until given `--apply`); earlier calls without a final usage stay a floor.
 
 ## Contributing
 

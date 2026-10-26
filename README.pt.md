@@ -10,7 +10,9 @@
 
 Uma contagem crua de tokens mistura leitura de cache, que é barata, com os tokens que contam para o rate limit. O tokboard registra cada sessão e cada subagente do Claude Code em segundo plano e mostra os dois números - no navegador ou no terminal, sem nada sair da sua máquina.
 
-![O dashboard HTML: gráfico de barras empilhadas por projeto, com abas por tipo de token e por modelo, acima de uma tabela de sessões agrupada por projeto](assets/dashboard-pt.png)
+Estourou o limite semanal e não sabe por quê? O tokboard também divide o seu cache creation por causa - partida a frio, reescrita após uma pausa, crescimento incremental - e acompanha a semana atual contra a faixa em que as semanas passadas bateram no limite.
+
+![O dashboard HTML: gráfico de barras empilhadas por projeto, com abas por tipo de token, modelo e branch, acima do medidor do limite semanal, das causas de criação de cache, dos tokens por branch e de uma tabela de sessões agrupada por projeto](assets/dashboard-pt.png)
 
 <sub>O dashboard HTML. Todas as imagens são geradas a partir dos dados sintéticos de teste do próprio repositório - nenhuma sessão real.</sub>
 
@@ -25,7 +27,7 @@ Uma contagem crua de tokens mistura leitura de cache, que é barata, com os toke
 - **Tokens por branch.** Para cada projeto que usou mais de uma branch do git, um painel mostra quanto cada uma custou, a lista de sessões se restringe a uma só branch e o gráfico de tendência pode ser fatiado por branch - no navegador e no terminal.
 - **Clique para destacar.** Clique numa entrada da legenda ou numa barra para destacar um projeto, tipo de token ou modelo no gráfico inteiro.
 
-![O app de terminal: tabela de sessões com painel de detalhe, e depois o gráfico de tendência passando pelos três recortes de um dia](assets/tui-pt.gif)
+![O app de terminal: tabela de sessões com painel de detalhe, e depois o gráfico de tendência passando pelos quatro recortes de um dia](assets/tui-pt.gif)
 
 <sub>O app de terminal - os mesmos dados, pelo teclado: <kbd>g</kbd> gráficos/sessões, <kbd>t</kbd> modo do gráfico, <kbd>p</kbd> período, <kbd>q</kbd> sair.</sub>
 
@@ -130,7 +132,7 @@ A partir da 2.2.0, a contagem de ferramentas passa a ser por chamada distinta - 
 
 A partir da 2.3.0, um total de tokens marcado com "≥" torna esse piso visível: algumas das mensagens daquela linha nunca receberam o registro final de consumo, então o total real pode ser maior que o mostrado. `python3 scripts/backfill-token-dedup.py --fields incomplete_usage` consegue preencher essa marca nas linhas gravadas antes desta versão. Uma linha cuja transcrição já não está no disco nunca recebe a marca, e isso não tem volta: sem a transcrição, não há como saber se o consumo ficou incompleto.
 
-A partir da 2.5.0, os dois hooks também registram uma linha por resposta da API (`calls.jsonl`) e uma por rejeição de rate limit (`limit-hits.jsonl`), que alimentam o medidor do limite semanal. Os arquivos começam vazios; `python3 scripts/backfill-calls.py` os preenche com os transcripts que o Claude Code ainda guarda (simulação até receber `--apply`, e ele mostra o dia mais antigo que consegue alcançar). O Claude Code apaga transcripts antigos, então rode uma vez depois de atualizar.
+A partir da 2.5.0, os dois hooks também registram uma linha por resposta da API (`calls.jsonl`) e uma por rejeição de rate limit (`limit-hits.jsonl`), que alimentam o medidor do limite semanal. Os arquivos começam vazios; `python3 scripts/backfill-calls.py` os preenche com os transcripts que o Claude Code ainda guarda (simulação até receber `--apply`, e ele mostra o dia mais antigo que consegue alcançar). O Claude Code apaga transcripts antigos, então rode uma vez depois de atualizar. Ainda na 2.5.0, `python3 scripts/backfill-subagent-last-call.py` aumenta o output de uma linha de subagente com a última chamada, que o resultado da sessão pai ainda registra (simulação até receber `--apply`); as chamadas anteriores sem consumo final continuam sendo um piso.
 
 ## Contribuindo
 
