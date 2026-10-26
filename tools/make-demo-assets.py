@@ -34,7 +34,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
@@ -48,13 +48,14 @@ CHROME = Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
 BEATS: list[tuple[list[str], float]] = [
     (["g"], 2.6),  # chart, sliced by project
     (["t"], 2.4),  # by token type
-    (["t"], 2.8),  # by model
+    (["t"], 2.4),  # by model
+    (["t"], 2.8),  # by branch
     (["g"], 1.4),  # over to the session table
     (["down", "down", "down"], 0.7),
     (["enter"], 1.0),  # expand a project's group
     (["down"], 0.5),  # onto an actual session row, not the group node
     (["enter"], 2.6),  # its detail panel fills
-    (["g"], 1.4),  # back to the chart, still sliced by model
+    (["g"], 1.4),  # back to the chart, still sliced by branch
     # One "p", last: every press raises its own notification, so cycling
     # back round to the default period would stack five of them on screen.
     # Last also means the session table above still shows every period.
@@ -64,14 +65,21 @@ BEATS: list[tuple[list[str], float]] = [
 # Project names the committed fixture invents. At least one has to show up
 # in every frame, or the frame did not render the data it claims to.
 FIXTURE_PROJECTS = ("alpha", "beta", "gamma", "delta", "epsilon", "zeta", "eta")
-TERMINAL_SIZE = (132, 32)
+# 70 rows, not 32 (2026-10-26): the overview tab now opens on the weekly-limit
+# meter and the cache-cause tables, and the trend chart sits below them. At 32
+# rows frame 0 showed no chart at all; the chart's legend needs about 56 and
+# the "last bar" line under its axis about 70.
+TERMINAL_SIZE = (132, 70)
 GIF_WIDTH = 1100
 # The last 12 bytes of every complete PNG: the zero-length IEND chunk.
 PNG_END = b"\x00\x00\x00\x00IEND\xaeB`\x82"
 # 1700 wide, not 1400 (2026-09-23): the session table sits in a pane 62%
 # of the page wide, and at 1400 it clipped its last columns mid-word
 # ("compos."). At 1700 the pane fits every column through "duration".
-PAGE_SIZE = (1700, 620)
+# 1470 high (2026-10-26, was 620): with the weekly-limit meter, the
+# cache-causes tables and the per-branch panel filled in, the page runs to
+# about 1450 px, and 620 cut the screenshot off right under the meter's heading.
+PAGE_SIZE = (1700, 1470)
 
 
 def seed_home(home: Path) -> None:
@@ -85,6 +93,12 @@ def seed_home(home: Path) -> None:
 # per-model map on only two rows on purpose (the tests need the "no model"
 # band reachable), which left the README's by-model frames one grey band.
 DEMO_MODELS = ("claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5")
+
+# The shared fixture has no git_branch either. Handed out in turn over the
+# sessions in time order, so consecutive sessions differ: the branch column
+# fills, the "By branch" chart has bands, and a project with two or more
+# sessions lands on two branches, which is what the per-branch panel needs.
+DEMO_BRANCHES = ("main", "feature/export", "fix/redirect")
 
 
 def split_by_model(record: dict[str, object]) -> dict[str, dict[str, int]]:
@@ -158,8 +172,9 @@ def stage_showcase(home: Path, now: datetime) -> None:
             raise SystemExit(f"refusing to write outside the throwaway HOME: {path}")
 
     rows = [json.loads(line) for line in sessions.read_text().splitlines() if line.strip()]
-    for row in rows:
+    for position, row in enumerate(sorted(rows, key=lambda session: session["timestamp_start"])):
         row["tokens_by_model"] = split_by_model(row)
+        row["git_branch"] = DEMO_BRANCHES[position % len(DEMO_BRANCHES)]
     sessions.write_text("".join(json.dumps(row) + "\n" for row in rows))
 
     sys.path[:0] = [str(REPO / "lib")]
@@ -180,6 +195,124 @@ def stage_showcase(home: Path, now: datetime) -> None:
         earliest_corrected=None,
         path=str(state),
     )
+
+
+# Cache creation, in tokens, that each past weekly window had piled up when it
+# first rejected (newest window first), and what the open window holds so far.
+# Same scale as the fixture's own sessions on purpose: the page's quota line
+# sums their cache creation over the whole history (192), and one window
+# holding more than that would make the screenshot contradict itself.
+REJECTION_TARGETS = (52, 56, 48)
+REJECTION_HOURS_BEFORE_RESET = (30, 44, 36)
+OPEN_WINDOW_TARGET = 27
+CONVERSATIONS_PER_WINDOW = 3
+# One conversation: a cold start, two incremental calls, an idle pause longer
+# than the 1-hour cache, then the resume that rewrites it and two more calls.
+CALL_OFFSET_MINUTES = (0, 3, 6, 100, 104, 108)
+CALL_WEIGHTS = (6, 1, 1, 4, 1, 1)
+CALL_MODELS = ("claude-opus-5", "claude-sonnet-5")
+SUBAGENT_MODEL = "claude-haiku-4-5"
+
+
+def _window_calls(
+    generator: random.Random,
+    window_index: int,
+    window_start: datetime,
+    last_moment: datetime,
+    target: int,
+) -> list[dict[str, object]]:
+    """Calls for one weekly window, adding up to `target` cache-creation tokens.
+
+    The first conversation starts exactly at the window's start: a window only
+    counts toward the meter's range when the earliest stored call is no later
+    than its start, so the oldest window needs a call there. A short span
+    (the open window right after a reset) squeezes the offsets instead of
+    running past `last_moment`.
+    """
+    span_minutes = (last_moment - window_start).total_seconds() / 60
+    slot = span_minutes / CONVERSATIONS_PER_WINDOW
+    squeeze = min(1.0, span_minutes / (CONVERSATIONS_PER_WINDOW * (CALL_OFFSET_MINUTES[-1] + 10)))
+    weights = CALL_WEIGHTS * CONVERSATIONS_PER_WINDOW
+    shares = [target * weight // sum(weights) for weight in weights]
+    shares[0] += target - sum(shares)
+    rows: list[dict[str, object]] = []
+    for conversation_index in range(CONVERSATIONS_PER_WINDOW):
+        subagent = conversation_index == CONVERSATIONS_PER_WINDOW - 1
+        model = SUBAGENT_MODEL if subagent else generator.choice(CALL_MODELS)
+        conversation = f"demo-conversation-{window_index}-{conversation_index}"
+        for call_index, offset in enumerate(CALL_OFFSET_MINUTES):
+            moment = window_start + timedelta(minutes=conversation_index * slot + offset * squeeze)
+            created = shares[conversation_index * len(CALL_OFFSET_MINUTES) + call_index]
+            rows.append(
+                {
+                    "session_id": conversation,
+                    "conversation": conversation,
+                    "message_id": f"demo-message-{window_index}-{conversation_index}-{call_index}",
+                    "timestamp": moment.strftime("%Y-%m-%dT%H:%M:%S.000Z"),
+                    "model": model,
+                    "sidechain": 1 if subagent else 0,
+                    "claude_code_version": "2.1.310" if window_index <= 1 else "2.1.300",
+                    "input": 1,
+                    "output": generator.randint(1, 2),
+                    "cache_read": generator.randint(2, 6),
+                    # Subagents write the 5-minute tier, main conversations the 1-hour one.
+                    "cache_5m": created if subagent else 0,
+                    "cache_1h": 0 if subagent else created,
+                }
+            )
+    return rows
+
+
+def stage_calls(home: Path, now: datetime) -> None:
+    """Give the throwaway HOME a per-call store, so the weekly-limit meter and
+    the cache-causes panel show something instead of "No calls stored yet".
+
+    The shared fixture has no calls.jsonl or limit-hits.jsonl on purpose
+    (tests rely on their absence). Three past weekly windows each end in a
+    rejection, which gives the meter its range, and the open window holds a
+    part of that range. Deterministic: seeded, and every moment is derived
+    from `now` on the Monday 05:00 UTC reset grid. Every path is checked to be
+    inside `home`.
+    """
+    metrics = home / ".claude" / "metrics"
+    calls_path = metrics / "calls.jsonl"
+    hits_path = metrics / "limit-hits.jsonl"
+    for path in (calls_path, hits_path):
+        if home.resolve() not in path.resolve().parents:
+            raise SystemExit(f"refusing to write outside the throwaway HOME: {path}")
+
+    generator = random.Random("demo-calls")
+    now_utc = now.astimezone(timezone.utc)
+    next_reset = now_utc.replace(hour=5, minute=0, second=0, microsecond=0)
+    next_reset += timedelta(days=(7 - next_reset.weekday()) % 7)
+    if next_reset <= now_utc:
+        next_reset += timedelta(days=7)
+
+    calls: list[dict[str, object]] = []
+    hits: list[dict[str, object]] = []
+    for window_index in range(len(REJECTION_TARGETS) + 1):
+        window_end = next_reset - timedelta(weeks=window_index)
+        window_start = window_end - timedelta(weeks=1)
+        if window_index == 0:
+            target = OPEN_WINDOW_TARGET
+            last_moment = now_utc - timedelta(minutes=20)
+        else:
+            target = REJECTION_TARGETS[window_index - 1]
+            rejection = window_end - timedelta(hours=REJECTION_HOURS_BEFORE_RESET[window_index - 1])
+            last_moment = rejection - timedelta(minutes=5)
+            hits.append(
+                {
+                    "timestamp": rejection.strftime("%Y-%m-%dT%H:%M:%S.000Z"),
+                    "rate_limit_type": "seven_day",
+                    "resets_at": int(window_end.timestamp()),
+                    "status": "rejected",
+                }
+            )
+        calls.extend(_window_calls(generator, window_index, window_start, last_moment, target))
+
+    calls.sort(key=lambda row: str(row["timestamp"]))
+    calls_path.write_text("".join(json.dumps(row) + "\n" for row in calls))
+    hits_path.write_text("".join(json.dumps(row) + "\n" for row in hits))
 
 
 def mr_metrics() -> str:
@@ -254,7 +387,9 @@ def rasterize(source: Path, destination: Path, width: int, height: int) -> None:
                 # this is how long the run waits on a process that is
                 # probably already done. Short is safe: an unwritten or
                 # truncated PNG still fails the IEND check below, loudly.
-                timeout=20,
+                # 90s since 2026-10-26: the 1470px page with the meter and
+                # tables did not finish inside 20s at load average ~11.
+                timeout=90,
             )
     finally:
         shutil.rmtree(profile, ignore_errors=True)
@@ -380,8 +515,13 @@ def _plain_text(svg: str) -> str:
     export joins every rendered word with U+00A0 (not a plain space) and
     may entity-escape characters inside <text> nodes, so unescaping first
     is what makes the word-boundary regex above see real boundaries
-    instead of failing to match across an escaped run of characters."""
-    return html.unescape(re.sub(r"<[^>]+>", " ", svg)).replace("\xa0", " ")
+    instead of failing to match across an escaped run of characters.
+
+    A <style> block goes first, content and all: Textual's export embeds the
+    font-face CSS ("src: local(...)") there, and it is never drawn - a real
+    project named "src" would otherwise be refused over it."""
+    without_style = re.sub(r"<style\b.*?</style>", " ", svg, flags=re.DOTALL)
+    return html.unescape(re.sub(r"<[^>]+>", " ", without_style)).replace("\xa0", " ")
 
 
 def refuse_if_it_shows_real_data(work: Path, count: int, lang: str) -> None:
@@ -425,6 +565,18 @@ def refuse_if_it_shows_real_data(work: Path, count: int, lang: str) -> None:
             flush=True,
         )
     real -= vocabulary
+
+    # An all-digit name ("2026") matches the year in every date a frame
+    # renders, and no frame can be told apart from data by a number: the
+    # same reason a vocabulary word is dropped. Counted, never named.
+    numbers = {name for name in real if name.isdigit()}
+    if numbers:
+        print(
+            f"guard: {len(numbers)} all-digit real name(s) skipped "
+            "(indistinguishable from the numbers a frame renders)",
+            flush=True,
+        )
+    real -= numbers
 
     for frame_index in range(count):
         svg = (work / f"f{frame_index:02d}.svg").read_text()
@@ -501,6 +653,7 @@ def main() -> None:
         work.mkdir()
         seed_home(home)
         stage_showcase(home, datetime.now().astimezone())
+        stage_calls(home, datetime.now().astimezone())
         config_path = home / ".claude" / "metrics" / "config.json"
         for lang in ("en", "pt"):
             config_path.write_text(json.dumps({"language": lang}))

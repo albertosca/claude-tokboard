@@ -135,3 +135,47 @@ class TestRefuseIfItShowsRealData:
 
         with pytest.raises(SystemExit, match=r"did it render\?"):
             tool.refuse_if_it_shows_real_data(work, 1, "en")
+
+    def test_css_inside_a_style_block_is_not_text_a_person_sees(
+        self, tool: types.ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        # Textual's SVG export embeds a <style> block ("src: local(...)").
+        # A real project named "src" must not be refused over CSS that is
+        # never drawn - and must still be refused when it IS drawn.
+        _seed_real_names(tool, monkeypatch, tmp_path, "src")
+        work = tmp_path / "work"
+        work.mkdir()
+        style = "<style>@font-face { src: local(FiraCode-Regular) }</style>"
+        (work / "f00.svg").write_text(f'<svg>{style}<text x="0" y="0">alpha</text></svg>')
+
+        tool.refuse_if_it_shows_real_data(work, 1, "en")  # must not raise
+
+        (work / "f00.svg").write_text(f'<svg>{style}<text x="0" y="0">alpha src</text></svg>')
+        with pytest.raises(SystemExit, match=r"frame 0 shows 1 real project name"):
+            tool.refuse_if_it_shows_real_data(work, 1, "en")
+
+    def test_an_all_digit_name_is_skipped_by_count_never_by_name(
+        self,
+        tool: types.ModuleType,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        # A project directory named "2026" matches the year in every date
+        # the frame renders ("ended before 2026-09-05"). A number cannot be
+        # told apart from data on screen, the same reason a name that is
+        # UI vocabulary is dropped - while a name with letters still counts.
+        _seed_real_names(tool, monkeypatch, tmp_path, "2026", "zzz-real")
+        work = tmp_path / "work"
+        work.mkdir()
+        _write_frame(work, 0, "alpha ended before 2026-09-05")
+
+        tool.refuse_if_it_shows_real_data(work, 1, "en")  # must not raise
+
+        out = capsys.readouterr().out
+        assert "1 all-digit real name(s) skipped" in out
+        assert "2026" not in out  # the count is printed, never the name
+
+        _write_frame(work, 0, "alpha zzz-real 2026-09-05")
+        with pytest.raises(SystemExit, match=r"frame 0 shows 1 real project name"):
+            tool.refuse_if_it_shows_real_data(work, 1, "en")
