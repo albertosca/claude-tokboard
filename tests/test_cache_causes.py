@@ -272,3 +272,63 @@ def test_idle_sessions_are_capped() -> None:
     assert len(rows) == cache_causes.SESSIONS_SHOWN
     assert rows[0]["tokens"] == 1_000 * (cache_causes.SESSIONS_SHOWN + 3)
     assert rows[0]["project"] == ""
+
+
+def _short(calls: list[dict[str, Any]], mapping: dict[str, str]) -> list[dict[str, Any]]:
+    result: list[dict[str, Any]] = cache_causes.compute_cache_causes(calls, _meter(), mapping)[
+        "short_by_project"
+    ]
+    return result
+
+
+def test_short_conversations_are_counted_per_project_with_their_creation() -> None:
+    calls: list[dict[str, Any]] = []
+    for index in range(5):
+        calls.append(_call(f"judge-{index}", 0, created=50_000))
+    for index in range(2):
+        calls.append(_call(f"long-{index}", 0, created=10_000))
+        for step in range(1, cache_causes.SHORT_CONVERSATION_CALLS + 1):
+            calls.append(_call(f"long-{index}", step * 10, created=1_000))
+    mapping = {f"judge-{index}": "my-api" for index in range(5)}
+    mapping |= {f"long-{index}": "my-api" for index in range(2)}
+
+    rows = _short(calls, mapping)
+
+    assert rows == [{"project": "my-api", "conversations": 7, "short": 5, "creation": 250_000}]
+
+
+def test_a_conversation_of_exactly_the_limit_is_short_and_one_more_call_is_not() -> None:
+    limit = cache_causes.SHORT_CONVERSATION_CALLS
+    calls: list[dict[str, Any]] = []
+    for index in range(5):
+        calls += [_call(f"edge-{index}", step * 10, created=100) for step in range(limit)]
+        calls += [_call(f"over-{index}", step * 10, created=100) for step in range(limit + 1)]
+    mapping = {f"{name}-{index}": "my-api" for name in ("edge", "over") for index in range(5)}
+
+    rows = _short(calls, mapping)
+
+    assert [(row["short"], row["conversations"]) for row in rows] == [(5, 10)]
+
+
+def test_short_conversations_skip_subagents_unmapped_and_thin_projects() -> None:
+    calls = [_call(f"run-{index}", 0, created=70_000, sidechain=1) for index in range(6)]
+    calls += [_call(f"lost-{index}", 0, created=70_000) for index in range(6)]
+    calls += [_call(f"thin-{index}", 0, created=70_000) for index in range(4)]
+    mapping = {f"run-{index}": "my-api" for index in range(6)}
+    mapping |= {f"thin-{index}": "blog-site" for index in range(4)}
+
+    assert _short(calls, mapping) == []
+
+
+def test_short_conversations_list_the_costliest_projects_first_and_cap_the_list() -> None:
+    calls: list[dict[str, Any]] = []
+    mapping: dict[str, str] = {}
+    for project in range(cache_causes.PROJECTS_SHOWN + 2):
+        for index in range(5):
+            calls.append(_call(f"p{project}-{index}", 0, created=1_000 * (project + 1)))
+            mapping[f"p{project}-{index}"] = f"project-{project:02d}"
+
+    rows = _short(calls, mapping)
+
+    assert len(rows) == cache_causes.PROJECTS_SHOWN
+    assert rows[0]["project"] == f"project-{cache_causes.PROJECTS_SHOWN + 1:02d}"

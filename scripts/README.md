@@ -136,6 +136,16 @@ Seeds `calls.jsonl` (one row per API response) and `limit-hits.jsonl` (one row p
 
 It only appends to those two files and never opens `sessions.jsonl`, `subagents.jsonl` or `memory-reads.jsonl`, so it takes no backup and has no `--cutoff`: a row is written only when its message id is absent from the store, which makes a second run write nothing. A message replayed into a second transcript by a resumed session is written once, at its per-field peak. After `--apply` it records each transcript's end offset in `calls_cursor.json`, so the hooks continue from there. A dry run (the default) writes nothing and prints the exact command to apply; `--projects-dir` and `--metrics-dir` point it at copies.
 
+## tool-results-report.py
+
+Prints how much tool output entered your conversations: the share by tool, the share of Bash output by kind of command (search, read, claude, git, tests, other), the part that came from subagents, and what a cap on a single result would have trimmed (`--bash-cap`, `--read-cap`, in characters; defaults 8,000 and 20,000). Sizes are characters, and the token figure is characters divided by 3, an estimate.
+
+It reads the transcripts under `--projects-dir` (default `~/.claude/projects`), counts each tool call once even when a resumed session replays it, and writes nothing: no file, and nothing in `~/.claude/metrics`. It is a report and not a dashboard panel because only the transcripts hold tool output.
+
+```
+python3 scripts/tool-results-report.py
+```
+
 ## verify-detectors.py
 
 Re-proves that `tests/` actually catches the two Criticals it was built for, instead of leaving that proof sitting in a session transcript that eventually rots. Both defects shipped past five reviews because every check that existed asserted the markup *contained* an attribute, which is true whether the thing the attribute controls works or not:

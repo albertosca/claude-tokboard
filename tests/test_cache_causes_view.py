@@ -176,3 +176,15 @@ def test_the_loader_joins_calls_to_projects_through_the_session_records(tmp_path
     assert view["causes"]["first_by_project"] == [
         {"project": "my-api", "conversations": "10", "median": "40.0k"}
     ]
+
+
+def test_the_short_conversation_rows_carry_count_share_and_creation() -> None:
+    causes = causes_for(jump=True)
+
+    english = cache_causes_view.describe_cache_causes(causes, "en")["short_by_project"]
+    portuguese = cache_causes_view.describe_cache_causes(causes, "pt")["short_by_project"]
+
+    assert {row["project"] for row in english} == {"my-api", "blog-site"}
+    assert all(row["short"] == "5" and row["share"] == "100%" for row in english)
+    assert sorted(row["creation"] for row in english) == ["300.0k", "400.0k"]
+    assert len(portuguese) == len(english)

@@ -14,12 +14,12 @@ def _view(lang: str = "en", jump: bool = False, tier: str = "cache_1h") -> dict[
     return cache_causes_view.describe_cache_causes(causes_for(tier, jump), lang)
 
 
-def test_the_panel_is_a_labelled_section_with_five_captioned_tables() -> None:
+def test_the_panel_is_a_labelled_section_with_six_captioned_tables() -> None:
     page = dashboard_html.render_cache_causes(_view(jump=True))
 
     assert 'aria-labelledby="cache-causes-heading"' in page
     assert 'id="cache-causes-heading"' in page
-    assert page.count("<caption>") == 5
+    assert page.count("<caption>") == 6
     assert page.count('<th scope="col">') >= 10
 
 
@@ -63,6 +63,7 @@ def test_an_empty_view_renders_nothing() -> None:
             "first_requests": first,
             "first_by_project": [],
             "idle_sessions": [],
+            "short_by_project": [],
         },
         "en",
     )
@@ -103,8 +104,8 @@ def test_a_meter_view_without_causes_renders_no_causes_panel() -> None:
 def test_each_table_scrolls_inside_its_own_labelled_region() -> None:
     page = dashboard_html.render_cache_causes(_view(jump=True))
 
-    assert page.count('class="table-scroll" role="region"') == 5
-    assert page.count('tabindex="0"') == 5
+    assert page.count('class="table-scroll" role="region"') == 6
+    assert page.count('tabindex="0"') == 6
     assert "table-scroll { overflow-x: auto" in dashboard_html_assets.STYLE
 
 
@@ -115,4 +116,4 @@ def test_no_windows_table_when_there_are_no_windows() -> None:
 
     page = dashboard_html.render_cache_causes(view)
 
-    assert page.count("<caption>") == 4
+    assert page.count("<caption>") == 5

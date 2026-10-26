@@ -620,7 +620,7 @@ class WeeklyMeterPanel(Static):
             lines.append(
                 Text(
                     f"{row['window']:<{label_width}} {row['accumulated']:>8}  "
-                    f"{row['tiers']}  {row['outcome']}"
+                    f"{row['tiers']}  {row['families']}  {row['outcome']}"
                 )
             )
         lines += self.causes_lines()
@@ -673,6 +673,13 @@ class WeeklyMeterPanel(Static):
                     f"{row['project']}  "
                     f"{label('conversations')} {row['conversations']}  "
                     f"{label('median')} {row['median']}"
+                )
+            )
+        for row in causes["short_by_project"]:
+            lines.append(
+                Text(
+                    f"{row['project']}  {label('short')} {row['short']} ({row['share']})  "
+                    f"{label('short_creation')} {row['creation']}"
                 )
             )
         for row in causes["idle_sessions"]:

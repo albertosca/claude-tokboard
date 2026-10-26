@@ -89,6 +89,7 @@ def describe_cache_causes(causes: dict[str, Any], lang: str) -> dict[str, Any]:
             or first["versions"]
             or causes["first_by_project"]
             or causes["idle_sessions"]
+            or causes["short_by_project"]
         ),
         "heading": t("causes.heading", lang),
         "note": t("causes.note", lang),
@@ -126,6 +127,15 @@ def describe_cache_causes(causes: dict[str, Any], lang: str) -> dict[str, Any]:
                 "resumes": str(entry["resumes"]),
             }
             for entry in causes["idle_sessions"]
+        ],
+        "short_by_project": [
+            {
+                "project": entry["project"],
+                "short": str(entry["short"]),
+                "share": f"{_percent(entry['short'], entry['conversations'])}%",
+                "creation": format_tokens(entry["creation"]),
+            }
+            for entry in causes["short_by_project"]
         ],
         "first_jump": jump,
     }

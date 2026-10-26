@@ -1360,7 +1360,7 @@ def render_weekly_meter(view: dict[str, Any]) -> str:
 
 def _render_meter_table(view: dict[str, Any]) -> str:
     lang = view["lang"]
-    columns = ("window", "accumulated", "tiers", "outcome")
+    columns = ("window", "accumulated", "tiers", "families", "outcome")
     head = "".join(
         f'<th scope="col">{html.escape(metrics_core_module.t(f"meter.col.{column}", lang))}</th>'
         for column in columns
@@ -1476,11 +1476,25 @@ def render_cache_causes(view: dict[str, Any]) -> str:
         if view["idle_sessions"]
         else ""
     )
+    short = (
+        _render_table(
+            str(metrics_core_module.t("causes.short_caption", lang)),
+            [
+                (label("project"), "project"),
+                (label("short"), "short"),
+                (label("short_share"), "share"),
+                (label("short_creation"), "creation"),
+            ],
+            view["short_by_project"],
+        )
+        if view["short_by_project"]
+        else ""
+    )
     return (
         '<section class="weekly-meter cache-causes" aria-labelledby="cache-causes-heading">'
         f'<h2 id="cache-causes-heading">{html.escape(view["heading"])}</h2>'
         f'<p class="meter-caveat">{html.escape(view["note"])}</p>'
-        f"{alert}{windows}{sizes}{first}{by_project}{idle}{jump}</section>"
+        f"{alert}{windows}{sizes}{first}{by_project}{short}{idle}{jump}</section>"
     )
 
 

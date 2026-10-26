@@ -43,6 +43,15 @@ def _tiers(five_minute: int, one_hour: int, lang: str) -> str:
     )
 
 
+def _families(window: dict[str, Any], lang: str) -> str:
+    """ "opus 93.2M · sonnet 12M": the window's cache creation by model family."""
+    parts = [
+        f"{t('others', lang) if family == 'other' else family} {format_tokens(total)}"
+        for family, total in window["families"].items()
+    ]
+    return " · ".join(parts) if parts else "-"
+
+
 def _row(window: dict[str, Any], current: dict[str, Any] | None, lang: str) -> dict[str, str]:
     if window is current:
         outcome = t("meter.outcome.open", lang)
@@ -63,6 +72,7 @@ def _row(window: dict[str, Any], current: dict[str, Any] | None, lang: str) -> d
         "window": label,
         "accumulated": format_tokens(window["accumulated"]),
         "tiers": _tiers(window["cache_5m"], window["cache_1h"], lang),
+        "families": _families(window, lang),
         "outcome": outcome,
     }
 

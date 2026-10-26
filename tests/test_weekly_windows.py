@@ -250,3 +250,33 @@ def test_two_rejections_with_reset_times_a_minute_apart_are_one_week() -> None:
     meter = weekly_windows.compute_weekly_meter(calls, hits, _now(ANCHOR + 100))
 
     assert meter["range"]["points"] == 2
+
+
+def test_each_window_splits_its_cache_creation_by_model_family() -> None:
+    end = ANCHOR
+    start = end - WEEK
+    calls = [
+        _call(start + 3600, five_minute=30, one_hour=10, model="claude-sonnet-5-5"),
+        _call(start + 7200, five_minute=100, model="claude-opus-5-5"),
+        _call(start + 10800, one_hour=60, model="claude-opus-4-8"),
+        _call(start + 14400, five_minute=5, model="some-new-model"),
+        _call(start + 18000, five_minute=7),
+        _call(start + 21600, five_minute=0, model="claude-haiku-4-5"),
+    ]
+
+    meter = weekly_windows.compute_weekly_meter(calls, [_hit(end - 3600, end)], _now(end + 60))
+
+    window = next(window for window in meter["windows"] if window["end"] == end)
+    assert window["families"] == {"opus": 160, "sonnet": 40, "other": 12}
+    assert list(window["families"]) == ["opus", "sonnet", "other"]
+    assert sum(window["families"].values()) == window["accumulated"]
+
+
+def test_a_call_with_a_non_string_model_counts_as_another_family() -> None:
+    end = ANCHOR
+    calls = [_call(end - WEEK + 3600, five_minute=9, model=None)]
+
+    meter = weekly_windows.compute_weekly_meter(calls, [_hit(end - 3600, end)], _now(end + 60))
+
+    window = next(window for window in meter["windows"] if window["end"] == end)
+    assert window["families"] == {"other": 9}

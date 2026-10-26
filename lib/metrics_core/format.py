@@ -38,6 +38,12 @@ _MODEL_FAMILIES = ("opus", "sonnet", "haiku", "fable")
 _MODEL_FAMILY = re.compile(r"(?:^|-)(" + "|".join(_MODEL_FAMILIES) + r")(?:-|$)")
 
 
+def model_family(model: str) -> str:
+    """The model's family word (opus, sonnet, haiku, fable), or "other"."""
+    match = _MODEL_FAMILY.search(model)
+    return match.group(1) if match else "other"
+
+
 def _family_rank(model: str) -> int:
     """The model's family's place in _MODEL_FAMILIES, or one past the end."""
     match = _MODEL_FAMILY.search(model)

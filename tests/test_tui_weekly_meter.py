@@ -42,7 +42,7 @@ def test_the_panel_prints_the_same_numbers_the_html_page_does() -> None:
 
     shared = [view["value_text"], view["tiers"], view["status"], view["range"], view["five_hour"]]
     for row in view["rows"]:
-        shared += [row["window"], row["accumulated"], row["tiers"], row["outcome"]]
+        shared += [row["window"], row["accumulated"], row["tiers"], row["families"], row["outcome"]]
     for fragment in shared:
         assert fragment in text, fragment
         assert fragment in page, fragment
@@ -137,6 +137,9 @@ def test_the_panel_prints_the_causes_the_html_page_does() -> None:
     for row in view["causes"]["first_by_project"]:
         shared += [row["project"], row["conversations"], row["median"]]
     assert view["causes"]["first_by_project"]
+    for row in view["causes"]["short_by_project"]:
+        shared += [row["project"], row["short"], row["share"], row["creation"]]
+    assert view["causes"]["short_by_project"]
     for row in view["causes"]["idle_sessions"]:
         shared += [row["session"], row["tokens"], row["resumes"]]
     assert view["causes"]["idle_sessions"]

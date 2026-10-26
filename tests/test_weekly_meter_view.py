@@ -81,7 +81,8 @@ def test_rows_list_recent_windows_newest_first_with_their_outcome() -> None:
     assert outcomes[0] == "In progress"
     assert "Rejected at 9.0k" in outcomes[1]
     assert "Rejected at 4.0k" in outcomes[2]
-    assert all(set(row) == {"window", "accumulated", "tiers", "outcome"} for row in view["rows"])
+    columns = {"window", "accumulated", "tiers", "families", "outcome"}
+    assert all(set(row) == columns for row in view["rows"])
 
 
 def test_the_table_keeps_only_the_most_recent_windows() -> None:
@@ -111,3 +112,26 @@ def test_a_window_with_no_rejection_reads_as_clear() -> None:
     )
 
     assert "No rejection" in [row["outcome"] for row in view["rows"]]
+
+
+def test_a_row_names_the_families_largest_first_and_dashes_an_empty_window() -> None:
+    window = {
+        "start": 0,
+        "end": 7 * 24 * 3600,
+        "inferred": False,
+        "covered": True,
+        "cache_5m": 0,
+        "cache_1h": 0,
+        "accumulated": 0,
+        "rejected": False,
+        "first_rejection_accumulated": None,
+        "families": {"opus": 93_200_000, "sonnet": 12_000_000, "other": 500},
+    }
+
+    english = weekly_meter_view._row(window, None, "en")
+    portuguese = weekly_meter_view._row(window, None, "pt")
+    empty = weekly_meter_view._row({**window, "families": {}}, None, "en")
+
+    assert english["families"] == "opus 93.2M · sonnet 12.0M · others 500"
+    assert portuguese["families"] == "opus 93.2M · sonnet 12.0M · outros 500"
+    assert empty["families"] == "-"

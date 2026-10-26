@@ -107,6 +107,7 @@ MESSAGES: dict[str, dict[str, str]] = {
     "meter.col.window": {"en": "Window", "pt": "Janela"},
     "meter.col.accumulated": {"en": "Accumulated", "pt": "Acumulado"},
     "meter.col.tiers": {"en": "5-minute / 1-hour", "pt": "5 minutos / 1 hora"},
+    "meter.col.families": {"en": "By model family", "pt": "Por família de modelo"},
     "meter.col.outcome": {"en": "Outcome", "pt": "Resultado"},
     "meter.outcome.rejected": {
         "en": "Rejected at {accumulated}",
@@ -176,6 +177,19 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "Sessions that rewrote the most cache after an idle pause",
         "pt": "Sessões que mais reescreveram cache depois de uma pausa",
     },
+    "causes.short_caption": {
+        "en": "Main conversations of at most 3 calls, by project: the start-up cost they paid",
+        "pt": (
+            "Conversas principais de no máximo 3 chamadas, por projeto: "
+            "o custo de partida que pagaram"
+        ),
+    },
+    "causes.col.short": {"en": "Short conversations", "pt": "Conversas curtas"},
+    "causes.col.short_share": {
+        "en": "Of the project's conversations",
+        "pt": "Das conversas do projeto",
+    },
+    "causes.col.short_creation": {"en": "Cache creation", "pt": "Cache criado"},
     "causes.col.session": {"en": "Session", "pt": "Sessão"},
     "causes.col.idle_tokens": {"en": "Rewritten after idle", "pt": "Reescrito após pausa"},
     "causes.col.resumes": {"en": "Resumes", "pt": "Retomadas"},

@@ -15,6 +15,8 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
+from .format import model_family
+
 WEEK_SECONDS = 7 * 24 * 3600
 FIVE_HOUR_SECONDS = 5 * 3600
 # Fewer rejected windows than this and the panel says it cannot estimate a cap.
@@ -50,12 +52,16 @@ def _creation(call: dict[str, Any], field: str) -> int:
     return value if isinstance(value, int) and not isinstance(value, bool) and value > 0 else 0
 
 
-def _placed_calls(calls: list[dict[str, Any]]) -> list[tuple[float, int, int]]:
+def _placed_calls(calls: list[dict[str, Any]]) -> list[tuple[float, int, int, str]]:
     placed = []
     for call in calls:
         moment = _epoch(call.get("timestamp"))
         if moment is not None:
-            placed.append((moment, _creation(call, "cache_5m"), _creation(call, "cache_1h")))
+            model = call.get("model")
+            family = model_family(model) if isinstance(model, str) else "other"
+            placed.append(
+                (moment, _creation(call, "cache_5m"), _creation(call, "cache_1h"), family)
+            )
     return placed
 
 
@@ -106,11 +112,11 @@ def _window_ends(
 
 
 def _five_hour(
-    placed: list[tuple[float, int, int]], hits: list[dict[str, Any]], now: float
+    placed: list[tuple[float, int, int, str]], hits: list[dict[str, Any]], now: float
 ) -> dict[str, int]:
     accumulated = sum(
         five_minute + one_hour
-        for moment, five_minute, one_hour in placed
+        for moment, five_minute, one_hour, _ in placed
         if now - FIVE_HOUR_SECONDS <= moment <= now
     )
     rejected = set()
@@ -127,8 +133,27 @@ def _five_hour(
     return {"accumulated": accumulated, "rejected_windows": len(rejected)}
 
 
+def _by_family(calls: list[tuple[float, int, int, str]]) -> dict[str, int]:
+    """Cache creation per model family inside one window, largest first.
+
+    Kept per window so the per-model weights of the limit can be fitted again
+    as windows accumulate (backlog 2026-10-07 #16); a family with no creation
+    is left out.
+    """
+    totals: dict[str, int] = {}
+    for _, five_minute, one_hour, family in calls:
+        totals[family] = totals.get(family, 0) + five_minute + one_hour
+    return dict(
+        sorted(((family, total) for family, total in totals.items() if total), key=_largest_first)
+    )
+
+
+def _largest_first(item: tuple[str, int]) -> tuple[int, str]:
+    return (-item[1], item[0])
+
+
 def _build_window(
-    placed: list[tuple[float, int, int]],
+    placed: list[tuple[float, int, int, str]],
     end: int,
     inferred: bool,
     earliest_call: float,
@@ -145,6 +170,7 @@ def _build_window(
         "cache_1h": sum(call[2] for call in inside),
         "rejected": end in first_rejections,
         "first_rejection_accumulated": None,
+        "families": _by_family(inside),
     }
     window["accumulated"] = window["cache_5m"] + window["cache_1h"]
     if end in first_rejections:

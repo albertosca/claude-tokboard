@@ -36,6 +36,9 @@ FIRST_REQUEST_JUMP = 0.20
 MINIMUM_VERSION_CONVERSATIONS = 5
 # Projects listed in the first-request-by-project table, largest median first.
 PROJECTS_SHOWN = 8
+# A main conversation with at most this many calls paid its start-up cost for
+# almost nothing (backlog 2026-10-07 #7: a judge battery asked one question each).
+SHORT_CONVERSATION_CALLS = 3
 # Sessions listed in the rewritten-after-idle table.
 SESSIONS_SHOWN = 5
 
@@ -214,6 +217,33 @@ def _first_requests_by_project(
     return rows[:PROJECTS_SHOWN]
 
 
+def _short_by_project(
+    items: list[dict[str, Any]], project_of: dict[str, str]
+) -> list[dict[str, Any]]:
+    """Per project, the main conversations of at most SHORT_CONVERSATION_CALLS
+    calls and the cache creation they cost, for the projects with enough of
+    them. A conversation whose project is unknown is left out."""
+    totals: dict[str, dict[str, int]] = {}
+    for item in items:
+        project = project_of.get(item["conversation"])
+        if item["sidechain"] or not project:
+            continue
+        entry = totals.setdefault(project, {"conversations": 0, "short": 0, "creation": 0})
+        short = item["calls"] <= SHORT_CONVERSATION_CALLS
+        if item["position"] == 0:
+            entry["conversations"] += 1
+            entry["short"] += short
+        if short:
+            entry["creation"] += item["creation"]
+    rows: list[dict[str, Any]] = [
+        {"project": project, **entry}
+        for project, entry in totals.items()
+        if entry["short"] >= MINIMUM_VERSION_CONVERSATIONS
+    ]
+    rows.sort(key=lambda row: (-row["creation"], row["project"]))
+    return rows[:PROJECTS_SHOWN]
+
+
 def _idle_sessions(items: list[dict[str, Any]], project_of: dict[str, str]) -> list[dict[str, Any]]:
     """Main conversations ranked by the tokens they rewrote after an idle
     pause: what resuming an old session cost."""
@@ -276,4 +306,5 @@ def compute_cache_causes(
         "first_requests": _first_requests(items),
         "first_by_project": _first_requests_by_project(items, project_of or {}),
         "idle_sessions": _idle_sessions(items, project_of or {}),
+        "short_by_project": _short_by_project(items, project_of or {}),
     }

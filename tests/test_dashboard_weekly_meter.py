@@ -44,6 +44,7 @@ def test_the_panel_names_the_lower_bound_and_lists_recent_windows() -> None:
     page = dashboard_html.render_weekly_meter(_view([4_000, 9_000], current=3_000))
 
     assert "only the Claude Code sessions on this machine are counted" in page
+    assert '<th scope="col">By model family</th>' in page
     assert '<th scope="col">Outcome</th>' in page
     assert page.count("<tr>") == 1 + len(_view([4_000, 9_000], current=3_000)["rows"])
     assert "Rejected at 9.0k" in page
@@ -73,6 +74,7 @@ def test_portuguese_page_uses_portuguese_strings() -> None:
     page = dashboard_html.render_weekly_meter(_view([4_000, 9_000], current=3_000, lang="pt"))
 
     assert "Hipótese, 2 pontos" in page
+    assert '<th scope="col">Por família de modelo</th>' in page
     assert '<th scope="col">Resultado</th>' in page
 
 
