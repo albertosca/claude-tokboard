@@ -479,3 +479,36 @@ def test_the_measurement_used_the_fixture_and_not_the_real_data(cycle_timings):
         f"the app saw {cycle_timings['records_per_period']['tudo']} sessions under 'tudo' - "
         "that is not the fixture, so HOME was not isolated"
     )
+
+
+def test_cpython_raises_no_audit_event_for_the_waits_that_blocking_events_cannot_name() -> None:
+    # Backlog 2026-09-24 #8: BLOCKING_EVENTS "is not exhaustive". Measured, it
+    # cannot be made so: a pipe read, a socket recv and an Event.wait raise no
+    # audit event at all, so the wall-clock backstop is the only guard for them.
+    import os
+    import socket
+
+    seen: list[str] = []
+    watching = {"on": False}
+
+    def watch(event: str, _args: tuple[Any, ...]) -> None:
+        if watching["on"] and threading.get_ident() == owner:
+            seen.append(event)
+
+    owner = threading.get_ident()
+    sys.addaudithook(watch)
+    read_end, write_end = os.pipe()
+    left, right = socket.socketpair()
+    os.write(write_end, b"x")
+    right.send(b"x")
+    watching["on"] = True
+    os.read(read_end, 1)
+    left.recv(1)
+    threading.Event().wait(0.001)
+    watching["on"] = False
+    for descriptor in (read_end, write_end):
+        os.close(descriptor)
+    left.close()
+    right.close()
+
+    assert seen == []
