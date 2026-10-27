@@ -1,0 +1,47 @@
+site_name: tokboard
+site_url: https://albertosca.github.io/claude-tokboard/pt/
+site_description: Veja para onde vão seus tokens do Claude Code - por dia, projeto, tipo de token e modelo.
+repo_url: https://github.com/albertosca/claude-tokboard
+docs_dir: .docs-src/pt
+site_dir: .docs-build/pt
+theme:
+  name: material
+  language: pt
+  custom_dir: overrides
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      toggle:
+        icon: material/weather-night
+        name: Mudar para o modo escuro
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      toggle:
+        icon: material/weather-sunny
+        name: Mudar para o modo claro
+  features:
+    - navigation.tabs
+extra:
+  alternate:
+    - name: English
+      link: https://albertosca.github.io/claude-tokboard/
+      lang: en
+    - name: Português
+      link: https://albertosca.github.io/claude-tokboard/pt/
+      lang: pt
+nav:
+  - Início: index.md
+  - Primeiros passos:
+      - Instalação: install.md
+      - Primeiro contato: first-look.md
+  - Guias:
+      - Tipos de token e a linha de cota: concepts.md
+      - O medidor do limite semanal: weekly-meter.md
+      - O painel HTML: dashboard.md
+      - O app de terminal: tui.md
+      - Configurações: settings.md
+  - Referência:
+      - Seus dados: your-data.md
+      - Como funciona: how-it-works.md
+      - Atualização: upgrading.md
+  - FAQ: faq.md

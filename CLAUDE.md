@@ -66,6 +66,10 @@ To see a change: `python3 dashboard_html.py --html` (writes `~/.claude/metrics/d
 - **Every command a script prints goes through `metrics_core.script_invocation()`**, shell-quoted - pasteable from any directory. Tests run the printed command as a process.
 - **Subagent output since Claude Code 2.1.278 is a permanent floor.** The only other source of subagent usage, the parent transcript's `queued_command` attachment, holds a single `totalTokens` with no input/output/cache split - already searched; the "≥" marker is the answer.
 
+## The docs site
+
+`guide/en` and `guide/pt` are the pages of the bilingual site (Zensical, built by `scripts/build-docs.sh`, deployed by `.github/workflows/docs.yml`). Keep both languages in step, short paragraphs, and run the script after editing: `--strict` fails on a broken link. The screenshots are not in `guide/`; the script copies them from `assets/`. The deploy job stays off until the `DOCS_DEPLOY` repository variable is `true` (see `docs/PUBLISHING.md`).
+
 ## Where things are written down
 
 `docs/superpowers/` holds the project log, backlog, specs and plans. It is a symlink into a private repository and is gitignored here: it exists in the author's checkout and in no clone of this one. Paths under it that the code mentions resolve for him only - deliberately.

@@ -49,6 +49,20 @@ visibility -> Make public**.
 
 - [x] The CI and Lint badges at the top of `README.md` are green on `main` - they keep working once the repo is public, no extra step needed.
 
+## The docs site
+
+The guides live in `guide/en` and `guide/pt` and build into a bilingual site with `bash scripts/build-docs.sh` (strict: a broken link fails the build). The `Docs` workflow runs that build on every push to `main`, but only deploys once Pages is on.
+
+GitHub Pages cannot be enabled on a private repository on a free plan, so switch it on after making the repo public:
+
+```bash
+gh api -X POST repos/albertosca/claude-tokboard/pages -f build_type=workflow
+gh variable set DOCS_DEPLOY --body true --repo albertosca/claude-tokboard
+gh repo edit albertosca/claude-tokboard --homepage https://albertosca.github.io/claude-tokboard/
+```
+
+Then re-run the `Docs` workflow (**Actions -> Docs -> Run workflow**) and open the URL to check both languages. Until then the homepage field stays empty and the README's guides link answers 404.
+
 ## After
 
 Nothing else is required. The description and topics are already set. Sharing the link is still open: the original launch spec suggested direct link-sharing plus a plugin-developer community if one exists, and that was never decided.

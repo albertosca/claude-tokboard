@@ -15,3 +15,6 @@ node_modules/
 # The project installs with pip (requirements-*.txt); a uv lockfile is a local
 # by-product of running uv here, not something the repo pins.
 uv.lock
+.docs-src/
+.docs-build/
+site/

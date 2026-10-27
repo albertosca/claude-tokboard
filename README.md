@@ -16,6 +16,8 @@ Ran out of weekly limit and can't tell why? tokboard also splits your cache crea
 
 <sub>The HTML dashboard. All screenshots are rendered from the repo's synthetic test data - no real sessions.</sub>
 
+Step-by-step guides: [albertosca.github.io/claude-tokboard](https://albertosca.github.io/claude-tokboard/).
+
 ## What you get
 
 - **A quota view, not just a volume view.** A separate line estimates how much of your rate limit a period used: input and cache writes on one side, output on the other, cache reads left out - the weighting Anthropic documents for its API. Claude Code doesn't publish its own formula, so the line is labelled approximate.

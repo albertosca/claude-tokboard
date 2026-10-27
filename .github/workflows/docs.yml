@@ -1,0 +1,54 @@
+name: Docs
+
+# Builds the bilingual site (guide/) on every push to main and every pull
+# request that touches it. Deploying to GitHub Pages is a separate job that
+# only runs once the repository variable DOCS_DEPLOY is "true": Pages cannot be
+# enabled on a private repository on a free plan, and a deploy attempted
+# before it is enabled would only turn the run red. docs/PUBLISHING.md has the
+# switch-on steps.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - 'guide/**'
+      - 'assets/*.png'
+      - 'assets/*.gif'
+      - 'overrides/**'
+      - 'zensical.*.yml'
+      - 'scripts/build-docs.sh'
+      - '.github/workflows/docs.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.3.0
+      - name: Build (strict)
+        run: bash scripts/build-docs.sh
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: site
+
+  deploy:
+    if: github.event_name != 'pull_request' && vars.DOCS_DEPLOY == 'true'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v5

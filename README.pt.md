@@ -16,6 +16,8 @@ Estourou o limite semanal e não sabe por quê? O tokboard também divide o seu 
 
 <sub>O dashboard HTML. Todas as imagens são geradas a partir dos dados sintéticos de teste do próprio repositório - nenhuma sessão real.</sub>
 
+Guias passo a passo: [albertosca.github.io/claude-tokboard/pt](https://albertosca.github.io/claude-tokboard/pt/).
+
 ## O que você ganha
 
 - **Uma visão de cota, não só de volume.** Uma linha à parte estima quanto do seu rate limit o período consumiu: entrada e escrita de cache de um lado, saída do outro, leitura de cache fora da conta - o peso que a Anthropic documenta para a API dela. O Claude Code não publica a própria fórmula, então a linha vem marcada como aproximada.
