@@ -18,23 +18,6 @@ Estourou o limite semanal e não sabe por quê? O tokboard também divide o seu 
 
 Guias passo a passo: [albertosca.github.io/claude-tokboard/pt](https://albertosca.github.io/claude-tokboard/pt/).
 
-## O que você ganha
-
-- **Uma visão de cota, não só de volume.** Uma linha à parte estima quanto do seu rate limit o período consumiu: entrada e escrita de cache de um lado, saída do outro, leitura de cache fora da conta - o peso que a Anthropic documenta para a API dela. O Claude Code não publica a própria fórmula, então a linha vem marcada como aproximada.
-- **Um dia, quatro recortes.** O gráfico de tendência divide o total de cada dia por projeto, por tipo de token, por modelo ou por branch do git. Um dia tem a mesma altura em todas as abas, então trocar de aba refatia o dia em vez de mudar a escala.
-- **Uma última barra honesta.** No navegador, o período que ainda está em andamento sempre mostra quanto dele já passou, hachurado, para que uma semana pela metade nunca pareça uma queda ali; o app de terminal diz o mesmo numa linha sob o eixo do gráfico ("última barra: 37% da semana até agora"), encurtada para caber num terminal estreito.
-- **Cada sessão, com os seus subagentes.** As sessões ficam agrupadas por projeto, cada uma com seus subagentes, duração e tokens detalhados, e dá para filtrar por período.
-- **Um medidor do limite semanal.** Os dashboards mostram o cache creation acumulado na janela semanal atual, com as camadas de 5 minutos e de 1 hora separadas, contra a faixa vista nas primeiras rejeições das semanas passadas. É uma hipótese, rotulada como tal com o número de pontos por trás - a Anthropic não publica como o limite semanal é contado.
-- **De onde vem o cache creation.** Cada janela semanal o divide em partida a frio, reescrita após uma pausa e crescimento incremental, e mostra quais sessões mais reescreveram após ficar ociosas.
-- **Tokens por branch.** Para cada projeto que usou mais de uma branch do git, um painel mostra quanto cada uma custou, a lista de sessões se restringe a uma só branch e o gráfico de tendência pode ser fatiado por branch - no navegador e no terminal.
-- **Clique para destacar.** Clique numa entrada da legenda ou numa barra para destacar um projeto, tipo de token ou modelo no gráfico inteiro.
-
-![O app de terminal: tabela de sessões com painel de detalhe, e depois o gráfico de tendência passando pelos quatro recortes de um dia](assets/tui-pt.gif)
-
-<sub>O app de terminal - os mesmos dados, pelo teclado: <kbd>g</kbd> gráficos/sessões, <kbd>t</kbd> modo do gráfico, <kbd>p</kbd> período, <kbd>q</kbd> sair.</sub>
-
-> A interface fala inglês e português do Brasil, seguindo o locale do seu terminal - ou defina "language": "en" ou "pt" (ou uma tag como pt-BR) em ~/.claude/metrics/config.json. Os tipos de token - input, output, cache read, cache creation - ficam em inglês nos dois idiomas, porque são os nomes que a própria API da Anthropic usa.
-
 ## Instalação
 
 No terminal:
@@ -67,6 +50,15 @@ O app de terminal precisa de `python3` 3.10 ou mais novo, com o módulo `venv`.
 A instalação automática precisa do pacote `python3-venv`, que nem sempre vem instalado. Rode `sudo apt install python3-venv` (ou o `python3.X-venv` específico que o erro indicar) e tente de novo. O `/tokboard` não é afetado.
 </details>
 
+### Atualizando
+
+```bash
+claude plugin marketplace update tokboard
+claude plugin update tokboard@tokboard
+```
+
+Reinicie o Claude Code depois. Vindo de antes da 2.5.0? Rode `python3 scripts/backfill-calls.py` uma vez para preencher o medidor do limite semanal (simulação até receber `--apply`). As notas de cada versão estão no [guia de atualização](https://albertosca.github.io/claude-tokboard/pt/upgrading/).
+
 ## Como funciona
 
 ```mermaid
@@ -82,6 +74,33 @@ flowchart LR
 ```
 
 Dois hooks acrescentam uma linha a um log local ao fim de cada turno e de cada subagente. Os dois dashboards leem esses logs pela mesma biblioteca, então um número quer dizer a mesma coisa em qualquer um deles.
+
+## O que você ganha
+
+| O quê | Como ajuda |
+|---|---|
+| **Uma visão de cota** | Uma linha à parte estima quanto do seu rate limit o período consumiu: entrada e escrita de cache de um lado, saída do outro, leitura de cache fora da conta - o peso que a Anthropic documenta para a API dela. O Claude Code não publica a própria fórmula, então a linha vem marcada como aproximada. |
+| **Quatro recortes** | O gráfico de tendência divide cada dia por projeto, tipo de token, modelo ou branch do git. Um dia mantém a altura em todas as abas, então trocar de aba refatia o dia em vez de mudar a escala. |
+| **Uma última barra honesta** | O período em andamento aparece hachurado, mostrando quanto dele já passou, para uma semana pela metade nunca parecer uma queda. O terminal diz o mesmo numa linha sob o eixo ("última barra: 37% da semana até agora"). |
+| **Cada sessão** | Agrupadas por projeto, cada uma com seus subagentes, duração e tokens detalhados, filtráveis por período. |
+| **Um medidor do limite semanal** | O cache creation acumulado na janela semanal atual, com as camadas de 5 minutos e de 1 hora separadas, contra a faixa vista nas primeiras rejeições das semanas passadas. É uma hipótese, rotulada com o número de pontos por trás - a Anthropic não publica como o limite semanal é contado. |
+| **Causas do cache creation** | Cada janela semanal o divide em partida a frio, reescrita após uma pausa e crescimento incremental, e mostra quais sessões mais reescreveram após ficar ociosas. |
+| **Tokens por branch** | Para cada projeto que usou mais de uma branch: quanto cada uma custou, a lista de sessões restrita a uma só e o gráfico de tendência fatiado por branch - no navegador e no terminal. |
+| **Clique para destacar** | Clique numa entrada da legenda ou numa barra para destacar um projeto, tipo de token ou modelo no gráfico inteiro. |
+
+![O app de terminal: tabela de sessões com painel de detalhe, e depois o gráfico de tendência passando pelos quatro recortes de um dia](assets/tui-pt.gif)
+
+<sub>O app de terminal - os mesmos dados, pelo teclado: <kbd>g</kbd> gráficos/sessões, <kbd>t</kbd> modo do gráfico, <kbd>p</kbd> período, <kbd>q</kbd> sair.</sub>
+
+> A interface fala inglês e português do Brasil, seguindo o locale do seu terminal - ou defina "language": "en" ou "pt" (ou uma tag como pt-BR) em ~/.claude/metrics/config.json. Os tipos de token - input, output, cache read, cache creation - ficam em inglês nos dois idiomas, porque são os nomes que a própria API da Anthropic usa.
+
+## Como é feito
+
+- **Uma camada de dados, duas interfaces.** Os dois dashboards leem de `lib/metrics_core/`, em Python só com a biblioteca padrão - cada número é calculado uma vez e testado uma vez.
+- **100% de cobertura de linhas e de ramos, obrigatória.** Uma única linha sem teste reprova o CI.
+- **A página é testada sendo usada.** Os testes de renderização dirigem o dashboard real gerado dentro do jsdom - clicando, filtrando, destacando - e verificam os estilos computados, não o markup.
+- **Checagem estática rigorosa.** `ruff` com dez famílias de regras e `mypy --strict` a cada push na main e em todo pull request.
+- **Cuidado com os seus dados.** Os scripts que corrigem logs antigos só simulam, a menos que recebam `--apply`; antes de escrever, fazem backup do arquivo e conferem a cópia por sha256. O de tokens por modelo ainda confronta a reconstrução com os registros que o hook gravou nativamente, e se recusa a rodar se houver divergência.
 
 ## Configurações opcionais
 
@@ -110,31 +129,6 @@ Toda pasta diretamente dentro de uma raiz listada é um projeto, por mais fundo 
 - Tudo fica em `~/.claude/metrics/`: os logs de sessões e subagentes, o cache de rótulos e o dashboard gerado.
 - Nada sai da sua máquina - a não ser que você ligue os rótulos por IA, que mandam cada sessão rotulada para o Claude resumir.
 - Desinstalar para o registro de sessões novas e mantém o que já está lá.
-
-## Como é feito
-
-- **Uma camada de dados, duas interfaces.** Os dois dashboards leem de `lib/metrics_core/`, em Python só com a biblioteca padrão - cada número é calculado uma vez e testado uma vez.
-- **100% de cobertura de linhas e de ramos, obrigatória.** Uma única linha sem teste reprova o CI.
-- **A página é testada sendo usada.** Os testes de renderização dirigem o dashboard real gerado dentro do jsdom - clicando, filtrando, destacando - e verificam os estilos computados, não o markup.
-- **Checagem estática rigorosa.** `ruff` com dez famílias de regras e `mypy --strict` a cada push na main e em todo pull request.
-- **Cuidado com os seus dados.** Os scripts que corrigem logs antigos só simulam, a menos que recebam `--apply`; antes de escrever, fazem backup do arquivo e conferem a cópia por sha256. O de tokens por modelo ainda confronta a reconstrução com os registros que o hook gravou nativamente, e se recusa a rodar se houver divergência.
-
-## Atualizando
-
-```bash
-claude plugin marketplace update tokboard
-claude plugin update tokboard@tokboard
-```
-
-Depois, reinicie o Claude Code para carregar a versão nova.
-
-A partir da 2.1.0, os rótulos de tarefa de IA ficam em cache por idioma. Na primeira vez que a 2.1.0 ou mais nova grava em `~/.claude/metrics/task_labels.json` ou `agent_labels.json`, ela converte o arquivo para o formato novo e guarda o original ao lado, como `task_labels.json.pre-i18n` ou `agent_labels.json.pre-i18n`. Para voltar a uma versão anterior à 2.1.0, copie esses arquivos por cima dos novos: isso restaura seus rótulos de tarefa de IA no formato que a versão antiga lê.
-
-A partir da 2.2.0, a contagem de ferramentas passa a ser por chamada distinta - cerca de 4x maior que antes para o mesmo trabalho -, enquanto as linhas antigas mantêm a contagem de quando foram gravadas; também a partir da 2.2.0, o consumo de subagente registrado pelo Claude Code 2.1.278 ou mais recente é um piso, porque o Claude Code nem sempre grava o consumo final de uma mensagem de subagente.
-
-A partir da 2.3.0, um total de tokens marcado com "≥" torna esse piso visível: algumas das mensagens daquela linha nunca receberam o registro final de consumo, então o total real pode ser maior que o mostrado. `python3 scripts/backfill-token-dedup.py --fields incomplete_usage` consegue preencher essa marca nas linhas gravadas antes desta versão. Uma linha cuja transcrição já não está no disco nunca recebe a marca, e isso não tem volta: sem a transcrição, não há como saber se o consumo ficou incompleto.
-
-A partir da 2.5.0, os dois hooks também registram uma linha por resposta da API (`calls.jsonl`) e uma por rejeição de rate limit (`limit-hits.jsonl`), que alimentam o medidor do limite semanal. Os arquivos começam vazios; `python3 scripts/backfill-calls.py` os preenche com os transcripts que o Claude Code ainda guarda (simulação até receber `--apply`, e ele mostra o dia mais antigo que consegue alcançar). O Claude Code apaga transcripts antigos, então rode uma vez depois de atualizar. Ainda na 2.5.0, `python3 scripts/backfill-subagent-last-call.py` aumenta o output de uma linha de subagente com a última chamada, que o resultado da sessão pai ainda registra (simulação até receber `--apply`); as chamadas anteriores sem consumo final continuam sendo um piso.
 
 ## Contribuindo
 

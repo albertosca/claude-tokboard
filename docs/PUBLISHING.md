@@ -49,6 +49,18 @@ visibility -> Make public**.
 
 - [x] The CI and Lint badges at the top of `README.md` are green on `main` - they keep working once the repo is public, no extra step needed.
 
+## Protect `main`
+
+GitHub refuses branch protection on a private repository on a free plan (HTTP 403, measured 2026-10-27), so this waits for the visibility switch too. Right after making the repo public:
+
+```bash
+gh api -X PUT repos/albertosca/claude-tokboard/branches/main/protection --input - <<'JSON'
+{"required_status_checks":null,"enforce_admins":false,"required_pull_request_reviews":null,"restrictions":null,"allow_force_pushes":false,"allow_deletions":false}
+JSON
+```
+
+That forbids force-pushes and deletion of `main` and leaves direct pushes by the owner working. Tighten it (required CI and Lint checks, pull requests) only if you want to stop pushing straight to `main`.
+
 ## The docs site
 
 The guides live in `guide/en` and `guide/pt` and build into a bilingual site with `bash scripts/build-docs.sh` (strict: a broken link fails the build). The `Docs` workflow runs that build on every push to `main`, but only deploys once Pages is on.
