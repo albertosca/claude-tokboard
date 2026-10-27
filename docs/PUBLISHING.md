@@ -45,7 +45,7 @@ visibility -> Make public**.
 
 - [x] **The leak detector reads its denylist from the reader's own metrics** (`tests/test_fixture_isolation.py`), so no real project name is committed anywhere. With no real data - as in CI - it skips visibly instead of passing.
 
-- [ ] You're fine with your email in the commit metadata (declined for scrubbing on 2026-08-05, informed choice - noted here so it is a decision, not a discovery).
+- [x] You're fine with your email in the commit metadata (declined for scrubbing on 2026-08-05, informed choice - accepted again on 2026-10-26 - noted here so it is a decision, not a discovery).
 
 - [x] The CI and Lint badges at the top of `README.md` are green on `main` - they keep working once the repo is public, no extra step needed.
 
