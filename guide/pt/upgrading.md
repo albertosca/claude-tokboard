@@ -13,6 +13,18 @@ A versão nova carrega na reinicialização.
 
 ## O que mudou, versão por versão
 
+### 2.6.0
+
+Nada é obrigatório. O medidor do limite semanal e os gráficos ganham alguns detalhes, e os hooks gravam os mesmos arquivos de antes.
+
+Opcional: dá para aumentar o output de uma linha de subagente pela única chamada final que a sessão pai ainda registra:
+
+```bash
+python3 scripts/backfill-subagent-last-call.py --apply
+```
+
+É uma simulação até receber `--apply`. As chamadas anteriores sem uso final continuam sendo um piso.
+
 ### 2.5.0
 
 Os dois hooks agora gravam dois arquivos novos:
@@ -29,14 +41,6 @@ python3 scripts/backfill-calls.py --apply
 ```
 
 Rode primeiro a simulação, sem `--apply`. O Claude Code apaga transcrições antigas, então faça isso logo depois de atualizar.
-
-Ainda na 2.5.0, dá para aumentar o output de uma linha de subagente pela única chamada final que a sessão pai ainda registra:
-
-```bash
-python3 scripts/backfill-subagent-last-call.py --apply
-```
-
-É uma simulação até receber `--apply`. As chamadas anteriores sem uso final continuam sendo um piso.
 
 ### 2.3.0
 

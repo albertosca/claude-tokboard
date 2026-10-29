@@ -13,6 +13,18 @@ The new version loads on restart.
 
 ## What changed, version by version
 
+### 2.6.0
+
+Nothing is required. The weekly-limit meter and the charts gain a few details, and the hooks log the same files as before.
+
+Optional: you can raise a subagent row's output by the one final call that the parent session still records:
+
+```bash
+python3 scripts/backfill-subagent-last-call.py --apply
+```
+
+It is a dry run until given `--apply`. Earlier calls without a final usage stay a floor.
+
 ### 2.5.0
 
 Both hooks now log two new files:
@@ -29,14 +41,6 @@ python3 scripts/backfill-calls.py --apply
 ```
 
 Run the dry run first, without `--apply`. Claude Code deletes old transcripts, so do this right after upgrading.
-
-Also in 2.5.0, you can raise a subagent row's output by the one final call that the parent session still records:
-
-```bash
-python3 scripts/backfill-subagent-last-call.py --apply
-```
-
-It is a dry run until given `--apply`. Earlier calls without a final usage stay a floor.
 
 ### 2.3.0
 
