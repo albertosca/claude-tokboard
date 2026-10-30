@@ -292,3 +292,15 @@ def test_the_window_column_is_as_wide_as_the_longest_label() -> None:
     assert row_lines[0].index(view["rows"][0]["accumulated"]) == row_lines[1].index(
         view["rows"][1]["accumulated"]
     )
+
+
+def test_the_causes_card_skips_the_headline_line_when_there_is_none() -> None:
+    causes = _causes()
+    causes["headline"] = ""
+
+    rendered = tui.CacheCausesPanel(causes).render()
+    assert isinstance(rendered, Text)
+    lines = rendered.plain.splitlines()
+
+    assert lines[0] == causes["heading"]
+    assert lines[1] == ""
