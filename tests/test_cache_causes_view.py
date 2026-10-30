@@ -188,3 +188,65 @@ def test_the_short_conversation_rows_carry_count_share_and_creation() -> None:
     assert all(row["short"] == "5" and row["share"] == "100%" for row in english)
     assert sorted(row["creation"] for row in english) == ["300.0k", "400.0k"]
     assert len(portuguese) == len(english)
+
+
+def test_shares_sum_to_exactly_one_hundred() -> None:
+    shares = cache_causes_view._shares({"cold_start": 1, "rewrite": 1, "incremental": 1})
+
+    assert shares == {"cold_start": 34, "rewrite": 33, "incremental": 33}
+
+
+def test_shares_of_nothing_are_all_zero() -> None:
+    zero = {"cold_start": 0, "rewrite": 0, "incremental": 0}
+
+    assert cache_causes_view._shares(zero) == zero
+
+
+def test_the_headline_names_the_dominant_cause_of_the_latest_window() -> None:
+    view = cache_causes_view.describe_cache_causes(causes_for(), "en")
+
+    assert view["headline"] == (
+        "Latest window: 72% of the cache creation came from cache that was lost and rewritten."
+    )
+
+
+def test_the_headline_is_translated() -> None:
+    view = cache_causes_view.describe_cache_causes(causes_for(), "pt")
+
+    assert view["headline"].startswith("Janela mais recente: 72%")
+    assert "reescrito" in view["headline"]
+
+
+def test_a_window_with_no_cache_creation_has_no_headline_and_zero_shares() -> None:
+    causes = causes_for()
+    window = causes["windows"][0]
+    window["total"] = 0
+    window["causes"] = dict.fromkeys(window["causes"], 0)
+    window["rewrite_after_idle"] = 0
+
+    view = cache_causes_view.describe_cache_causes(causes, "en")
+
+    assert view["headline"] == ""
+    assert [segment["percent"] for segment in view["bars"][0]["segments"]] == [0, 0, 0]
+
+
+def test_each_bar_carries_a_text_alternative_with_every_share() -> None:
+    view = cache_causes_view.describe_cache_causes(causes_for(), "en")
+
+    alt = view["bars"][0]["alt"]
+    assert "conversation starts 28%" in alt
+    assert "cache that was lost and rewritten 72%" in alt
+    assert "normal growth 0%" in alt
+    assert [segment["cause"] for segment in view["bars"][0]["segments"]] == [
+        "cold_start",
+        "rewrite",
+        "incremental",
+    ]
+
+
+def test_disclosure_titles_carry_their_row_counts() -> None:
+    view = cache_causes_view.describe_cache_causes(causes_for(jump=True), "en")
+
+    assert view["titles"]["sizes"] == "Subagent runs by number of calls (all stored history) (3)"
+    assert view["titles"]["windows"].endswith("(1)")
+    assert view["terms_title"] == "What these terms mean"

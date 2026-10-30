@@ -123,6 +123,36 @@ MESSAGES: dict[str, dict[str, str]] = {
     "meter.outcome.open": {"en": "In progress", "pt": "Em andamento"},
     "meter.outcome.partial": {"en": " · partial data", "pt": " · dados parciais"},
     "meter.table_caption": {"en": "Recent weekly windows", "pt": "Janelas semanais recentes"},
+    "meter.headline.clear": {
+        "en": "{value} of cache creation so far in this weekly window; "
+        "no limit has been hit in it.",
+        "pt": "{value} de cache creation até agora nesta janela semanal; "
+        "nenhum limite foi atingido nela.",
+    },
+    "meter.headline.rejected": {
+        "en": "{value} of cache creation so far in this weekly window; "
+        "a limit was hit in it at {accumulated}.",
+        "pt": "{value} de cache creation até agora nesta janela semanal; "
+        "um limite foi atingido nela em {accumulated}.",
+    },
+    "details.summary": {"en": "{name} ({count})", "pt": "{name} ({count})"},
+    "causes.headline": {
+        "en": "Latest window: {percent}% of the cache creation came from {cause}.",
+        "pt": "Janela mais recente: {percent}% do cache creation veio de {cause}.",
+    },
+    "causes.cause.cold_start": {"en": "conversation starts", "pt": "início de conversas"},
+    "causes.cause.rewrite": {
+        "en": "cache that was lost and rewritten",
+        "pt": "cache perdido e reescrito",
+    },
+    "causes.cause.incremental": {"en": "normal growth", "pt": "crescimento normal"},
+    "causes.bar_alt": {"en": "{window}: {parts}", "pt": "{window}: {parts}"},
+    "causes.terms_title": {"en": "What these terms mean", "pt": "O que significam esses termos"},
+    "tab.hypotheses": {"en": "Hypotheses", "pt": "Hipóteses"},
+    "hypotheses.empty": {
+        "en": "No weekly-limit data yet.",
+        "pt": "Ainda não há dados do limite semanal.",
+    },
     # Why the cache was written (cold start, rewrite, incremental).
     "causes.heading": {
         "en": "Where the cache creation came from",

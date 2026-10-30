@@ -100,13 +100,16 @@ def describe_weekly_meter(meter: dict[str, Any], lang: str) -> dict[str, Any]:
         "five_hour": five_hour,
         "empty": state in ("no_data", "no_anchor"),
         "state": state,
+        "headline": "",
+        "details_title": "",
         "rows": [],
         "range": None,
         "range_start_percent": None,
         "range_end_percent": None,
     }
     if base["empty"]:
-        return {**base, "status": t(f"meter.status.{state}", lang)}
+        status = t(f"meter.status.{state}", lang)
+        return {**base, "status": status, "headline": status}
 
     observed = meter["range"]
     current = meter["current"]
@@ -119,15 +122,29 @@ def describe_weekly_meter(meter: dict[str, Any], lang: str) -> dict[str, Any]:
         status = t(f"meter.status.{state}", lang)
         if observed is not None:
             status += f" ({points_label(observed['points'], lang)})"
+    rows = [_row(window, current, lang) for window in meter["windows"][:RECENT_WINDOWS]]
+    if current and current["rejected"]:
+        headline = t(
+            "meter.headline.rejected",
+            lang,
+            value=format_tokens(value),
+            accumulated=format_tokens(current["first_rejection_accumulated"] or 0),
+        )
+    else:
+        headline = t("meter.headline.clear", lang, value=format_tokens(value))
     view = {
         **base,
+        "headline": headline,
+        "details_title": t(
+            "details.summary", lang, name=t("meter.table_caption", lang), count=len(rows)
+        ),
         "status": status,
         "value": value,
         "value_text": format_tokens(value),
         "tiers": _tiers(current["cache_5m"], current["cache_1h"], lang) if current else "",
         "scale_maximum": scale,
         "fill_percent": _percent(value, scale),
-        "rows": [_row(window, current, lang) for window in meter["windows"][:RECENT_WINDOWS]],
+        "rows": rows,
     }
     if observed is not None:
         view["range"] = t(

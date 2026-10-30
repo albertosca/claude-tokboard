@@ -166,3 +166,38 @@ def test_a_row_flags_the_share_from_the_older_tokenizer_only_when_there_is_some(
     assert tiny["families"].endswith("1% older tokenizer")
     assert clean["families"] == "haiku 400"
     assert empty["families"] == "-"
+
+
+def test_the_headline_reports_the_window_total_and_never_a_cap() -> None:
+    view = weekly_meter_view.describe_weekly_meter(_meter([4_000, 9_000], current=5_000), "en")
+
+    assert view["headline"].startswith("5.0k of cache creation so far in this weekly window")
+    assert "no limit has been hit" in view["headline"]
+    for forbidden in ("will", "predict", "cap of", "at most", "4.0k", "9.0k"):
+        assert forbidden not in view["headline"]
+
+
+def test_a_rejected_current_window_says_where_the_limit_was_hit() -> None:
+    meter = _meter([4_000, 9_000], current=5_000)
+    meter["current"]["rejected"] = True
+    meter["current"]["first_rejection_accumulated"] = 4_500
+
+    view = weekly_meter_view.describe_weekly_meter(meter, "en")
+
+    assert view["headline"].endswith("a limit was hit in it at 4.5k.")
+
+
+def test_an_empty_meter_uses_its_status_as_the_headline() -> None:
+    meter = weekly_windows.compute_weekly_meter(
+        [], [], datetime.fromtimestamp(ANCHOR, tz=timezone.utc)
+    )
+
+    view = weekly_meter_view.describe_weekly_meter(meter, "en")
+
+    assert view["headline"] == view["status"] == "No calls stored yet"
+
+
+def test_the_windows_disclosure_title_counts_the_rows() -> None:
+    view = weekly_meter_view.describe_weekly_meter(_meter([4_000, 9_000], current=5_000), "en")
+
+    assert view["details_title"] == f"Recent weekly windows ({len(view['rows'])})"

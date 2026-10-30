@@ -49,6 +49,40 @@ def _window_row(window: dict[str, Any], lang: str) -> dict[str, str]:
     return row
 
 
+def _shares(amounts: dict[str, int]) -> dict[str, int]:
+    """Whole-number shares that sum to exactly 100 (largest remainder), or all
+    zero when there is nothing to share. Rounding each share alone can add up
+    to 99 or 101, which a stacked bar would show as a gap or an overflow."""
+    total = sum(amounts.values())
+    if total == 0:
+        return dict.fromkeys(amounts, 0)
+    shares = {cause: 100 * amount // total for cause, amount in amounts.items()}
+    by_remainder = sorted(
+        amounts, key=lambda cause: (-(100 * amounts[cause] % total), CAUSES.index(cause))
+    )
+    for cause in by_remainder[: 100 - sum(shares.values())]:
+        shares[cause] += 1
+    return shares
+
+
+def _bar(window: dict[str, Any], row: dict[str, str], lang: str) -> dict[str, Any]:
+    shares = _shares({cause: window["causes"][cause] for cause in CAUSES})
+    segments = [
+        {
+            "cause": cause,
+            "label": str(t(f"causes.cause.{cause}", lang)),
+            "percent": shares[cause],
+        }
+        for cause in CAUSES
+    ]
+    parts = ", ".join(f"{segment['label']} {segment['percent']}%" for segment in segments)
+    return {
+        "window": row["window"],
+        "segments": segments,
+        "alt": t("causes.bar_alt", lang, window=row["window"], parts=parts),
+    }
+
+
 def _size_label(index: int, lang: str) -> str:
     bound = SUBAGENT_SIZE_BOUNDS[index]
     if index == 0:
@@ -81,7 +115,13 @@ def describe_cache_causes(causes: dict[str, Any], lang: str) -> dict[str, Any]:
             before=f"{first['jump']['from']} ({format_tokens(by_version[first['jump']['from']])})",
             after=f"{first['jump']['to']} ({format_tokens(by_version[first['jump']['to']])})",
         )
-    return {
+    rows = [_window_row(window, lang) for window in shown]
+    bars = [_bar(window, rows[index], lang) for index, window in enumerate(shown)]
+    headline = ""
+    if shown and shown[0]["total"]:
+        dominant = max(bars[0]["segments"], key=lambda segment: segment["percent"])
+        headline = t("causes.headline", lang, percent=dominant["percent"], cause=dominant["label"])
+    view: dict[str, Any] = {
         "lang": lang,
         "empty": not (
             shown
@@ -94,7 +134,7 @@ def describe_cache_causes(causes: dict[str, Any], lang: str) -> dict[str, Any]:
         "heading": t("causes.heading", lang),
         "note": t("causes.note", lang),
         "alert": alert,
-        "windows": [_window_row(window, lang) for window in shown],
+        "windows": rows,
         "sizes": [
             {
                 "size": _size_label(index, lang),
@@ -138,4 +178,20 @@ def describe_cache_causes(causes: dict[str, Any], lang: str) -> dict[str, Any]:
             for entry in causes["short_by_project"]
         ],
         "first_jump": jump,
+        "headline": headline,
+        "bars": bars,
+        "cause_labels": {cause: str(t(f"causes.cause.{cause}", lang)) for cause in CAUSES},
+        "terms_title": t("causes.terms_title", lang),
     }
+    view["titles"] = {
+        key: t("details.summary", lang, name=t(caption_key, lang), count=len(view[rows_key]))
+        for key, caption_key, rows_key in (
+            ("windows", "causes.table_caption", "windows"),
+            ("sizes", "causes.sizes_caption", "sizes"),
+            ("first", "causes.first_caption", "first_requests"),
+            ("by_project", "causes.by_project_caption", "first_by_project"),
+            ("idle", "causes.idle_caption", "idle_sessions"),
+            ("short", "causes.short_caption", "short_by_project"),
+        )
+    }
+    return view
