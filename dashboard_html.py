@@ -1322,15 +1322,21 @@ def render_period_filter(*, lang: str) -> str:
     return f'<div class="period-filter">{"".join(chips)}{render_backfill_note(lang=lang)}</div>'
 
 
+def _render_disclosure(title: str, body: str) -> str:
+    """A closed native disclosure: the body stays out of sight until asked for,
+    and the summary names the question and how many rows answer it."""
+    return f'<details class="meter-details"><summary>{html.escape(title)}</summary>{body}</details>'
+
+
 def render_weekly_meter(view: dict[str, Any]) -> str:
-    """The weekly-limit panel. `view` is metrics_core.describe_weekly_meter's
+    """The weekly-limit card. `view` is metrics_core.describe_weekly_meter's
     dict: the TUI renders the same one, so the numbers cannot differ."""
     heading = f'<h2 id="weekly-meter-heading">{html.escape(view["heading"])}</h2>'
+    headline = f'<p class="card-headline">{html.escape(view["headline"])}</p>'
     caveat = f'<p class="meter-caveat">{html.escape(view["caveat"])}</p>'
     opening = '<section class="weekly-meter" aria-labelledby="weekly-meter-heading">'
     if view["empty"]:
-        status = f'<p class="meter-status">{html.escape(view["status"])}</p>'
-        return f"{opening}{heading}{status}{caveat}</section>"
+        return f"{opening}{heading}{headline}{caveat}</section>"
     band = ""
     if view["range_start_percent"] is not None:
         width = view["range_end_percent"] - view["range_start_percent"]
@@ -1347,15 +1353,20 @@ def render_weekly_meter(view: dict[str, Any]) -> str:
         f'aria-valuetext="{html.escape(value_text, quote=True)}">'
         f'<div class="meter-fill" style="width:{view["fill_percent"]}%"></div>{band}</div>'
     )
-    range_line = f'<p class="meter-range">{html.escape(view["range"])}</p>' if view["range"] else ""
-    lines = (
-        f'<p class="meter-value"><b>{html.escape(view["value_text"])}</b> '
-        f"{html.escape(view['tiers'])}</p>"
-        f'<p class="meter-status meter-{view["state"]}">{html.escape(view["status"])}</p>'
-        f"{range_line}"
-        f'<p class="meter-five-hour">{html.escape(view["five_hour"])}</p>'
+    range_item = (
+        f'<li class="meter-range">{html.escape(view["range"])}</li>' if view["range"] else ""
     )
-    return f"{opening}{heading}{track}{lines}{caveat}{_render_meter_table(view)}</section>"
+    facts = (
+        '<ul class="meter-facts">'
+        f'<li class="meter-value"><b>{html.escape(view["value_text"])}</b> '
+        f"{html.escape(view['tiers'])}</li>"
+        f'<li class="meter-status meter-{view["state"]}">{html.escape(view["status"])}</li>'
+        f"{range_item}"
+        f'<li class="meter-five-hour">{html.escape(view["five_hour"])}</li>'
+        "</ul>"
+    )
+    windows = _render_disclosure(view["details_title"], _render_meter_table(view))
+    return f"{opening}{heading}{headline}{track}{facts}{caveat}{windows}</section>"
 
 
 def _render_meter_table(view: dict[str, Any]) -> str:
@@ -1371,23 +1382,56 @@ def _render_meter_table(view: dict[str, Any]) -> str:
     )
     caption = html.escape(metrics_core_module.t("meter.table_caption", lang))
     return (
-        f'<table class="meter-table"><caption>{caption}</caption>'
+        f'<table class="meter-table"><caption class="visually-hidden">{caption}</caption>'
         f"<thead><tr>{head}</tr></thead><tbody>{body}</tbody></table>"
     )
 
 
-def _render_table(caption: str, columns: list[tuple[str, str]], rows: list[dict[str, str]]) -> str:
-    """A captioned table; `columns` is (header text, row key) pairs."""
+def _render_table(
+    caption: str,
+    columns: list[tuple[str, str]],
+    rows: list[dict[str, str]],
+    *,
+    caption_hidden: bool = False,
+) -> str:
+    """A captioned table; `columns` is (header text, row key) pairs. A hidden
+    caption stays the table's accessible name when a disclosure summary above
+    it already shows the same words."""
     head = "".join(f'<th scope="col">{html.escape(header)}</th>' for header, _ in columns)
     body = "".join(
         "<tr>" + "".join(f"<td>{html.escape(row[key])}</td>" for _, key in columns) + "</tr>"
         for row in rows
     )
+    caption_open = '<caption class="visually-hidden">' if caption_hidden else "<caption>"
     return (
         f'<div class="table-scroll" role="region" aria-label="{html.escape(caption)}" tabindex="0">'
-        f'<table class="meter-table"><caption>{html.escape(caption)}</caption>'
+        f'<table class="meter-table">{caption_open}{html.escape(caption)}</caption>'
         f"<thead><tr>{head}</tr></thead><tbody>{body}</tbody></table></div>"
     )
+
+
+def _render_cause_bars(view: dict[str, Any]) -> str:
+    """One stacked bar per recent window, in a monochrome ramp of emphasis (not
+    the series colors, which mean token types elsewhere on the page). Each bar
+    has a text alternative listing every share, and one legend names the
+    segments."""
+    rows = "".join(
+        '<li class="cause-row">'
+        f'<span class="cause-window">{html.escape(bar["window"])}</span>'
+        f'<div class="cause-bar" role="img" aria-label="{html.escape(bar["alt"], quote=True)}">'
+        + "".join(
+            f'<span class="cause-seg cause-seg-{segment["cause"]}" '
+            f'style="width:{segment["percent"]}%"></span>'
+            for segment in bar["segments"]
+        )
+        + "</div></li>"
+        for bar in view["bars"]
+    )
+    legend = "".join(
+        f'<li><span class="cause-swatch cause-seg-{cause}"></span>{html.escape(label)}</li>'
+        for cause, label in view["cause_labels"].items()
+    )
+    return f'<ul class="cause-bars">{rows}</ul><ul class="cause-legend">{legend}</ul>'
 
 
 def render_cache_causes(view: dict[str, Any]) -> str:
@@ -1400,17 +1444,13 @@ def render_cache_causes(view: dict[str, Any]) -> str:
     def label(key: str) -> str:
         return str(metrics_core_module.t(f"causes.col.{key}", lang))
 
-    alert = f'<p class="causes-alert">⚠ {html.escape(view["alert"])}</p>' if view["alert"] else ""
-    jump = (
-        f'<p class="causes-alert">⚠ {html.escape(view["first_jump"])}</p>'
-        if view["first_jump"]
-        else ""
-    )
-    windows = (
-        ""
-        if not view["windows"]
-        else _render_table(
-            str(metrics_core_module.t("causes.table_caption", lang)),
+    def caption(key: str) -> str:
+        return str(metrics_core_module.t(key, lang))
+
+    tables = [
+        (
+            "windows",
+            caption("causes.table_caption"),
             [
                 (label(key), key)
                 for key in (
@@ -1425,60 +1465,51 @@ def render_cache_causes(view: dict[str, Any]) -> str:
                 )
             ],
             view["windows"],
-        )
-    )
-    sizes = _render_table(
-        str(metrics_core_module.t("causes.sizes_caption", lang)),
-        [
-            (label("size"), "size"),
-            (label("runs"), "runs"),
-            (label("creation"), "creation"),
-            (label("rewrite_share"), "rewrite"),
-        ],
-        view["sizes"],
-    )
-    first = (
-        _render_table(
-            str(metrics_core_module.t("causes.first_caption", lang)),
+        ),
+        (
+            "sizes",
+            caption("causes.sizes_caption"),
+            [
+                (label("size"), "size"),
+                (label("runs"), "runs"),
+                (label("creation"), "creation"),
+                (label("rewrite_share"), "rewrite"),
+            ],
+            view["sizes"],
+        ),
+        (
+            "first",
+            caption("causes.first_caption"),
             [
                 (label("version"), "version"),
                 (label("conversations"), "conversations"),
                 (label("median"), "median"),
             ],
             view["first_requests"],
-        )
-        if view["first_requests"]
-        else ""
-    )
-    by_project = (
-        _render_table(
-            str(metrics_core_module.t("causes.by_project_caption", lang)),
+        ),
+        (
+            "by_project",
+            caption("causes.by_project_caption"),
             [
                 (label("project"), "project"),
                 (label("conversations"), "conversations"),
                 (label("median"), "median"),
             ],
             view["first_by_project"],
-        )
-        if view["first_by_project"]
-        else ""
-    )
-    idle = (
-        _render_table(
-            str(metrics_core_module.t("causes.idle_caption", lang)),
+        ),
+        (
+            "idle",
+            caption("causes.idle_caption"),
             [
                 (label("session"), "session"),
                 (label("idle_tokens"), "tokens"),
                 (label("resumes"), "resumes"),
             ],
             view["idle_sessions"],
-        )
-        if view["idle_sessions"]
-        else ""
-    )
-    short = (
-        _render_table(
-            str(metrics_core_module.t("causes.short_caption", lang)),
+        ),
+        (
+            "short",
+            caption("causes.short_caption"),
             [
                 (label("project"), "project"),
                 (label("short"), "short"),
@@ -1486,15 +1517,34 @@ def render_cache_causes(view: dict[str, Any]) -> str:
                 (label("short_creation"), "creation"),
             ],
             view["short_by_project"],
+        ),
+    ]
+    disclosures = "".join(
+        _render_disclosure(
+            view["titles"][key], _render_table(table_caption, columns, rows, caption_hidden=True)
         )
-        if view["short_by_project"]
+        for key, table_caption, columns, rows in tables
+        if rows
+    )
+    warnings = [text for text in (view["alert"], view["first_jump"]) if text]
+    attention = (
+        '<div class="causes-attention" role="note">'
+        + "".join(f'<p class="causes-alert">⚠ {html.escape(text)}</p>' for text in warnings)
+        + "</div>"
+        if warnings
         else ""
+    )
+    headline = (
+        f'<p class="card-headline">{html.escape(view["headline"])}</p>' if view["headline"] else ""
+    )
+    bars = _render_cause_bars(view) if view["bars"] else ""
+    terms = _render_disclosure(
+        view["terms_title"], f'<p class="meter-caveat">{html.escape(view["note"])}</p>'
     )
     return (
         '<section class="weekly-meter cache-causes" aria-labelledby="cache-causes-heading">'
         f'<h2 id="cache-causes-heading">{html.escape(view["heading"])}</h2>'
-        f'<p class="meter-caveat">{html.escape(view["note"])}</p>'
-        f"{alert}{windows}{sizes}{first}{by_project}{short}{idle}{jump}</section>"
+        f"{headline}{attention}{bars}{disclosures}{terms}</section>"
     )
 
 

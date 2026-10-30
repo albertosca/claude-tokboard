@@ -429,6 +429,63 @@ STYLE = """
         font-weight: normal;
       }
       .meter-table th { color: var(--text-muted); }
+      .card-headline {
+        font-size: 15px;
+        line-height: 1.4;
+        color: var(--text-primary);
+        margin: 0 0 10px;
+        font-family: system-ui, sans-serif;
+      }
+      .meter-facts { list-style: none; margin: 8px 0; padding: 0; }
+      .meter-facts li { margin: 4px 0; }
+      .meter-details { margin-top: 8px; border-top: 1px solid var(--border); }
+      .meter-details > summary {
+        cursor: pointer;
+        padding: 8px 0;
+        min-height: 24px;
+        color: var(--text-secondary);
+      }
+      .meter-details > summary:focus-visible {
+        outline: 2px solid var(--text-primary);
+        outline-offset: 2px;
+      }
+      .causes-attention {
+        border: 1px solid var(--text-primary);
+        border-radius: 3px;
+        padding: 4px 10px;
+        margin: 8px 0;
+      }
+      .cause-bars, .cause-legend { list-style: none; margin: 8px 0; padding: 0; }
+      .cause-row {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 4px 12px;
+        margin: 6px 0;
+      }
+      .cause-window { flex: 0 1 220px; min-width: 0; overflow-wrap: anywhere; }
+      .cause-bar {
+        display: flex;
+        flex: 1 1 200px;
+        height: 16px;
+        border: 1px solid var(--text-muted);
+        border-radius: 3px;
+        overflow: hidden;
+        background: var(--surface-1);
+      }
+      .cause-seg { display: block; height: 100%; }
+      .cause-seg-cold_start { background: var(--text-muted); }
+      .cause-seg-rewrite { background: var(--text-primary); }
+      .cause-seg-incremental { background: var(--border); }
+      .cause-legend { display: flex; flex-wrap: wrap; gap: 4px 16px; }
+      .cause-swatch {
+        display: inline-block;
+        width: 12px;
+        height: 12px;
+        margin-right: 6px;
+        border: 1px solid var(--text-muted);
+        vertical-align: -1px;
+      }
       .quota-line {
         padding: 6px 10px 0;
         font-size: 11px;

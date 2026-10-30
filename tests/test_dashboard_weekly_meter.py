@@ -133,3 +133,26 @@ def test_the_page_carries_the_panel_only_when_given_a_view() -> None:
     assert "weekly-meter" not in without.split("</style>", 1)[1]
     assert 'class="weekly-meter"' in with_panel
     assert with_panel.index('class="weekly-meter"') < with_panel.index('class="main-row"')
+
+
+def test_the_meter_card_opens_with_the_headline_and_hides_the_windows_table() -> None:
+    view = _view([4_000, 9_000], current=5_000)
+    page = dashboard_html.render_weekly_meter(view)
+
+    assert f'<p class="card-headline">{view["headline"]}</p>' in page
+    assert page.index("card-headline") < page.index("meter-track")
+    assert "<details open" not in page
+    assert f"<summary>{view['details_title']}</summary>" in page
+    assert page.index("<details") < page.index("<table")
+
+
+def test_an_empty_meter_has_a_headline_and_no_disclosure() -> None:
+    empty = weekly_meter_view.describe_weekly_meter(
+        weekly_windows.compute_weekly_meter([], [], datetime.fromtimestamp(0, tz=timezone.utc)),
+        "en",
+    )
+    page = dashboard_html.render_weekly_meter(empty)
+
+    assert page.count("No calls stored yet") == 1
+    assert "card-headline" in page
+    assert "<details" not in page
