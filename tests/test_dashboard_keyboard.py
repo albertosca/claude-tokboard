@@ -96,7 +96,7 @@ def test_the_chart_mode_tabs_report_which_one_is_selected(keyboard_report: dict[
 
 
 def test_the_page_tabs_report_which_one_is_selected(keyboard_report: dict[str, Any]) -> None:
-    assert keyboard_report["pageTabsSelected"] == ["false", "true"]
+    assert keyboard_report["pageTabsSelected"] == ["false", "true", "false"]
 
 
 def test_a_pressed_legend_chip_is_the_only_one_marked_pressed(
@@ -188,4 +188,4 @@ def test_only_the_selected_tab_of_a_tablist_is_in_the_tab_order(
     # Roving tabindex: the arrow keys move between the tabs of a list, so
     # Tab itself must leave the list after one stop.
     assert keyboard_report["modeTabsTabindex"] == ["-1", "0", "-1", "-1"]
-    assert keyboard_report["pageTabsTabindex"] == ["-1", "0"]
+    assert keyboard_report["pageTabsTabindex"] == ["-1", "0", "-1"]

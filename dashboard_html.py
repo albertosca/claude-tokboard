@@ -1798,14 +1798,15 @@ def render_html(
         '<span class="tab-btn" id="tab-btn-panorama" '
         'role="tab" tabindex="-1" aria-selected="false" aria-controls="tab-panorama" '
         f"onclick=\"showTab('panorama')\">{metrics_core_module.t('tab.panorama', lang)}</span>"
+        '<span class="tab-btn" id="tab-btn-hypotheses" '
+        'role="tab" tabindex="-1" aria-selected="false" aria-controls="tab-hypotheses" '
+        f"onclick=\"showTab('hypotheses')\">{metrics_core_module.t('tab.hypotheses', lang)}</span>"
         "</div>"
     )
     causes_view = (weekly_meter or {}).get("causes")
     sessions_tab_html = (
         '<div class="tab-pane active" id="tab-sessions" role="tabpanel" '
         'aria-labelledby="tab-btn-sessions">'
-        f"{render_weekly_meter(weekly_meter) if weekly_meter else ''}"
-        f"{render_cache_causes(causes_view) if causes_view else ''}"
         f"{''.join(branch_blocks)}"
         '<div class="main-row">'
         f'<div class="session-list">{legend_blocks_html}'
@@ -1819,6 +1820,19 @@ def render_html(
     panorama_tab_html = (
         '<div class="tab-pane" id="tab-panorama" role="tabpanel" '
         f'aria-labelledby="tab-btn-panorama">{panorama_blocks_html}</div>'
+    )
+    # The meter and the causes are hypotheses about the weekly limit, not
+    # about sessions, so they have a tab of their own.
+    hypotheses_body = (
+        render_weekly_meter(weekly_meter)
+        + (render_cache_causes(causes_view) if causes_view else "")
+        if weekly_meter
+        else '<p class="meter-caveat">'
+        f"{html.escape(metrics_core_module.t('hypotheses.empty', lang))}</p>"
+    )
+    hypotheses_tab_html = (
+        '<div class="tab-pane" id="tab-hypotheses" role="tabpanel" '
+        f'aria-labelledby="tab-btn-hypotheses">{hypotheses_body}</div>'
     )
     # Opens with every token type AND every project color already
     # selected (2026-07-21: "tanto lá quanto na legenda... precisa
@@ -1857,6 +1871,7 @@ def render_html(
         f"{tabs_html}"
         f"{sessions_tab_html}"
         f"{panorama_tab_html}"
+        f"{hypotheses_tab_html}"
         "</main>"
         f"{SCRIPT}"
         "</body></html>"

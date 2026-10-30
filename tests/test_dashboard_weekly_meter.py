@@ -132,7 +132,7 @@ def test_the_page_carries_the_panel_only_when_given_a_view() -> None:
 
     assert "weekly-meter" not in without.split("</style>", 1)[1]
     assert 'class="weekly-meter"' in with_panel
-    assert with_panel.index('class="weekly-meter"') < with_panel.index('class="main-row"')
+    assert with_panel.index('id="tab-hypotheses"') < with_panel.index('class="weekly-meter"')
 
 
 def test_the_meter_card_opens_with_the_headline_and_hides_the_windows_table() -> None:
