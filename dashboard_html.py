@@ -1382,8 +1382,9 @@ def _render_meter_table(view: dict[str, Any]) -> str:
     )
     caption = html.escape(metrics_core_module.t("meter.table_caption", lang))
     return (
+        f'<div class="table-scroll" role="region" aria-label="{caption}" tabindex="0">'
         f'<table class="meter-table"><caption class="visually-hidden">{caption}</caption>'
-        f"<thead><tr>{head}</tr></thead><tbody>{body}</tbody></table>"
+        f"<thead><tr>{head}</tr></thead><tbody>{body}</tbody></table></div>"
     )
 
 

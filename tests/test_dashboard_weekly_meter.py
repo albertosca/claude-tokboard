@@ -156,3 +156,11 @@ def test_an_empty_meter_has_a_headline_and_no_disclosure() -> None:
     assert page.count("No calls stored yet") == 1
     assert "card-headline" in page
     assert "<details" not in page
+
+
+def test_the_windows_table_scrolls_sideways_on_its_own_instead_of_widening_the_page() -> None:
+    page = dashboard_html.render_weekly_meter(_view([4_000, 9_000], current=3_000))
+
+    assert page.index('class="table-scroll"') < page.index('<table class="meter-table"')
+    assert 'role="region"' in page
+    assert 'tabindex="0"' in page
