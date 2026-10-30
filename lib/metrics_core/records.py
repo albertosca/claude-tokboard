@@ -211,7 +211,8 @@ def normalize_project_paths(
     for record in records:
         project_path = record.get("project_path")
         if project_path and not is_ephemeral_path(project_path):
-            projects_by_slug[project_slug(project_path)].add(project_path)
+            for slug in project_slugs(project_path):
+                projects_by_slug[slug].add(project_path)
     for record in records:
         project_path = record.get("project_path")
         if project_path and is_ephemeral_path(project_path):
@@ -227,6 +228,14 @@ SCRATCHPAD_SLUG_PATTERN = re.compile(r"^(?:/private)?/tmp/claude-\d+/(-[^/]+)/")
 
 def project_slug(project_path: str) -> str:
     return re.sub(r"[^A-Za-z0-9]", "-", project_path.rstrip("/"))
+
+
+def project_slugs(project_path: str) -> set[str]:
+    """Every spelling of a project's slug: one dash per code point, and one
+    per UTF-16 unit (two for a character outside the Basic Multilingual
+    Plane, as a JavaScript string replace counts it)."""
+    units = "".join("--" if ord(character) > 0xFFFF else character for character in project_path)
+    return {project_slug(project_path), project_slug(units)}
 
 
 def project_named_by_scratchpad(path: str, projects_by_slug: dict[str, set[str]]) -> str | None:

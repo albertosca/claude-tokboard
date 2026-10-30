@@ -577,6 +577,14 @@ class SessionDetailPanel(VerticalScroll):
 METER_BAR_CELLS = 40
 
 
+def next_tab(active: str) -> str:
+    """The tab after `active`, wrapping; the first one for an unknown value
+    (TabbedContent.active is empty for a moment while it recomposes)."""
+    if active not in TABS:
+        return TABS[0]
+    return TABS[(TABS.index(active) + 1) % len(TABS)]
+
+
 def meter_bar(view: dict[str, Any]) -> str:
     """The meter as one line of block characters: filled cells up to the
     value, shaded cells across the observed range, so the range reads
@@ -1827,6 +1835,11 @@ class MetricsTUIApp(App[None]):
         # own default (first pane) and on_mount's unconditional Tree focus.
         self.active_tab_id = "tab-sessions"
         self.chart_mode = "pane"
+        # What the Hypotheses tab looked like when "p" last rebuilt the app:
+        # its content does not depend on the period, so the tables the reader
+        # opened and the place they were reading stay as they were.
+        self.open_collapsibles: set[str] = set()
+        self.hypotheses_scroll = 0.0
         for key, action, message in self._KEYS:
             self.bind(
                 key, action, description=self.metrics_core_module.t(message, self.data["lang"])
@@ -1913,21 +1926,37 @@ class MetricsTUIApp(App[None]):
         yield WeeklyMeterPanel(meter, self.metrics_core_module)
         if not meter["empty"] and meter["rows"]:
             yield Collapsible(
-                Static(meter_windows_text(meter)), title=meter["details_title"], collapsed=True
+                Static(meter_windows_text(meter)),
+                title=meter["details_title"],
+                collapsed=meter["details_title"] not in self.open_collapsibles,
             )
         causes = meter.get("causes")
         if causes and not causes["empty"]:
             yield CacheCausesPanel(causes)
             for title, body in cause_sections(causes, self.metrics_core_module):
-                yield Collapsible(Static(body), title=title, collapsed=True)
+                yield Collapsible(
+                    Static(body), title=title, collapsed=title not in self.open_collapsibles
+                )
             yield Collapsible(
                 Static(Text(causes["note"], style="dim")),
                 title=causes["terms_title"],
-                collapsed=True,
+                collapsed=causes["terms_title"] not in self.open_collapsibles,
             )
 
     def on_mount(self) -> None:
         self.query_one(Tree).focus()
+
+    def on_tabbed_content_tab_activated(self, event: TabbedContent.TabActivated) -> None:
+        """Follow the tab however it changed - "g" or a click on its label -
+        so a recompose reopens on the tab the reader is on."""
+        self.active_tab_id = event.pane.id or self.active_tab_id
+
+    def _remember_hypotheses_state(self) -> None:
+        self.open_collapsibles = {
+            str(item.title) for item in self.query(Collapsible) if not item.collapsed
+        }
+        scroller = self.query_one("#hypotheses-scroll")
+        self.hypotheses_scroll = scroller.scroll_y
 
     def _sync_legend_visibility(self) -> None:
         shown = legend_visibility(self.query_one(TrendChart).mode)
@@ -2017,7 +2046,7 @@ class MetricsTUIApp(App[None]):
         # Clearing focus first avoids the revert; confirmed via headless
         # reproduction during design (see this plan's Global Constraints).
         self.set_focus(None)
-        following = TABS[(TABS.index(tabbed.active) + 1) % len(TABS)]
+        following = next_tab(tabbed.active)
         tabbed.active = following
         if following == "tab-sessions":
             self.query_one(Tree).focus()
@@ -2042,6 +2071,7 @@ class MetricsTUIApp(App[None]):
         # action_toggle_tab does it: a focused widget inside a pane being
         # replaced makes Textual revert the change within one tick.
         self.set_focus(None)
+        self._remember_hypotheses_state()
         # Re-window data already in memory. This MUST NOT call load_data:
         # that re-reads both JSONL files, re-dedupes, re-labels and re-folds
         # subagent tokens, all of which produce the same answer for every
@@ -2098,6 +2128,7 @@ class MetricsTUIApp(App[None]):
         try:
             if self.active_tab_id == "tab-hypotheses":
                 widget: Widget = self.query_one("#hypotheses-scroll")
+                self.call_after_refresh(widget.scroll_to, y=self.hypotheses_scroll, animate=False)
             else:
                 widget = self.query_one(
                     Tree if self.active_tab_id == "tab-sessions" else TrendChart

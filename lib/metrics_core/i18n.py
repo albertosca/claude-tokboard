@@ -135,6 +135,16 @@ MESSAGES: dict[str, dict[str, str]] = {
         "pt": "{value} de cache creation até agora nesta janela semanal; "
         "um limite foi atingido nela em {accumulated}.",
     },
+    "meter.headline.partial": {
+        "en": "{value} of cache creation so far in this weekly window; "
+        "calls from the start of it were not recorded, so this may be low.",
+        "pt": "{value} de cache creation até agora nesta janela semanal; "
+        "as chamadas do começo dela não foram registradas, então pode estar baixo.",
+    },
+    "meter.headline.no_window": {
+        "en": "No weekly window is open right now.",
+        "pt": "Nenhuma janela semanal está aberta agora.",
+    },
     "details.summary": {"en": "{name} ({count})", "pt": "{name} ({count})"},
     "causes.headline": {
         "en": "Latest window: {percent}% of the cache creation came from {cause}.",

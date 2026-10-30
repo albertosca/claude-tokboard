@@ -1190,3 +1190,22 @@ def test_the_project_root_is_taken_before_the_heuristic_sees_the_paths():
         "/x/proj",
         "/x/proj/c/d",
     ]
+
+
+def test_a_scratchpad_is_matched_when_the_project_path_has_a_character_outside_the_bmp():
+    # A JavaScript string replace counts UTF-16 units, so one emoji in a
+    # folder name becomes two dashes in the slug Claude Code wrote.
+    scratchpad = "/private/tmp/claude-501/-Users-me-my--api/0f3c/scratchpad/sub"
+    records = [
+        {"project_path": "/Users/me/my\U0001f600api"},
+        {"project_path": scratchpad},
+    ]
+
+    result = mr.normalize_project_paths(records)
+
+    assert result[1]["project_path"] == "/Users/me/my\U0001f600api"
+
+
+def test_project_slugs_spells_both_dash_counts_for_an_astral_character():
+    assert records_module.project_slugs("/a\U0001f600b") == {"-a-b", "-a--b"}
+    assert records_module.project_slugs("/a-b") == {"-a-b"}

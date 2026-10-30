@@ -38,6 +38,8 @@ Press <kbd>t</kbd> to cycle through the four slicings of a day:
 
 The session table has a detail panel.
 
+In the terminal the tokens-per-branch panel sits on the **Overview** tab, with the quota line and the chart; the browser page puts it on **Sessions**.
+
 The weekly-limit meter and the cache-creation causes are on the **Hypotheses** tab, like the browser page. Their tables start closed: move to one and press <kbd>Enter</kbd> to open it.
 
 ## Small terminals

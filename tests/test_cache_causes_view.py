@@ -250,3 +250,18 @@ def test_disclosure_titles_carry_their_row_counts() -> None:
     assert view["titles"]["sizes"] == "Subagent runs by number of calls (all stored history) (3)"
     assert view["titles"]["windows"].endswith("(1)")
     assert view["terms_title"] == "What these terms mean"
+
+
+def test_the_headline_is_silent_for_a_window_with_incomplete_coverage() -> None:
+    causes = causes_for()
+    causes["windows"][0]["covered"] = False
+
+    assert cache_causes_view.describe_cache_causes(causes, "en")["headline"] == ""
+
+
+def test_the_headline_names_no_cause_when_two_tie_for_the_lead() -> None:
+    causes = causes_for()
+    window_causes = causes["windows"][0]["causes"]
+    window_causes.update({"cold_start": 100, "rewrite": 100, "incremental": 0})
+
+    assert cache_causes_view.describe_cache_causes(causes, "en")["headline"] == ""

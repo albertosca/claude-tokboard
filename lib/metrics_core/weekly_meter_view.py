@@ -130,6 +130,10 @@ def describe_weekly_meter(meter: dict[str, Any], lang: str) -> dict[str, Any]:
             value=format_tokens(value),
             accumulated=format_tokens(current["first_rejection_accumulated"] or 0),
         )
+    elif current is None:
+        headline = t("meter.headline.no_window", lang)
+    elif not current["covered"]:
+        headline = t("meter.headline.partial", lang, value=format_tokens(value))
     else:
         headline = t("meter.headline.clear", lang, value=format_tokens(value))
     view = {

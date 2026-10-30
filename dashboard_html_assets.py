@@ -476,7 +476,14 @@ STYLE = """
       .cause-seg { display: block; height: 100%; }
       .cause-seg-cold_start { background: var(--text-muted); }
       .cause-seg-rewrite { background: var(--text-primary); }
-      .cause-seg-incremental { background: var(--border); }
+      /* Hatched rather than a pale fill: --border on --surface-1 is about
+         1.3:1, under the 3:1 a graphic needs, and a hatch also tells it from
+         the two solid segments without relying on colour. */
+      .cause-seg-incremental {
+        background: repeating-linear-gradient(
+          45deg, var(--text-muted) 0 2px, transparent 2px 6px
+        );
+      }
       .cause-legend { display: flex; flex-wrap: wrap; gap: 4px 16px; }
       .cause-swatch {
         display: inline-block;

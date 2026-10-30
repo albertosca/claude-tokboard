@@ -118,9 +118,13 @@ def describe_cache_causes(causes: dict[str, Any], lang: str) -> dict[str, Any]:
     rows = [_window_row(window, lang) for window in shown]
     bars = [_bar(window, rows[index], lang) for index, window in enumerate(shown)]
     headline = ""
-    if shown and shown[0]["total"]:
-        dominant = max(bars[0]["segments"], key=lambda segment: segment["percent"])
-        headline = t("causes.headline", lang, percent=dominant["percent"], cause=dominant["label"])
+    if shown and shown[0]["total"] and shown[0]["covered"]:
+        ranked = sorted(bars[0]["segments"], key=lambda segment: -segment["percent"])
+        # A tie names no dominant cause: picking the first would be arbitrary.
+        if ranked[0]["percent"] > ranked[1]["percent"]:
+            headline = t(
+                "causes.headline", lang, percent=ranked[0]["percent"], cause=ranked[0]["label"]
+            )
     view: dict[str, Any] = {
         "lang": lang,
         "empty": not (

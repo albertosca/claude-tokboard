@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import asyncio
 import html
 import sys
@@ -11,7 +12,7 @@ from typing import Any
 
 import pytest
 from rich.text import Text
-from textual.widgets import Collapsible, Static
+from textual.widgets import Collapsible, Static, TabbedContent
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "lib"))
@@ -304,3 +305,74 @@ def test_the_causes_card_skips_the_headline_line_when_there_is_none() -> None:
 
     assert lines[0] == causes["heading"]
     assert lines[1] == ""
+
+
+def test_next_tab_wraps_and_falls_back_to_the_first_for_an_unknown_value() -> None:
+    assert [tui.next_tab(tab) for tab in tui.TABS] == [
+        "tab-panorama",
+        "tab-hypotheses",
+        "tab-sessions",
+    ]
+    assert tui.next_tab("") == "tab-sessions"
+
+
+def _hypotheses_app(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> tuple[tui.MetricsTUIApp, argparse.Namespace]:
+    seeded_tui_home(monkeypatch, tmp_path)
+    arguments = tui.build_arg_parser().parse_args(["--label-budget", "0"])
+    data = tui.load_data(arguments, metrics_core_module=mr)
+    data["weekly_meter"] = _view([4_000, 9_000], current=3_000)
+    data["weekly_meter"]["causes"] = _causes(jump=True)
+    # "p" re-windows from the base, so the meter has to be there too.
+    data["base"]["weekly_meter"] = data["weekly_meter"]
+    return tui.MetricsTUIApp(mr, data, arguments=arguments), arguments
+
+
+def test_a_tab_changed_without_g_is_the_one_the_period_key_reopens_on(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    app, _ = _hypotheses_app(monkeypatch, tmp_path)
+
+    async def drive() -> str:
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause()
+            app.set_focus(None)
+            app.query_one(TabbedContent).active = "tab-hypotheses"
+            await pilot.pause()
+            assert app.active_tab_id == "tab-hypotheses"
+            await pilot.press("p")
+            await pilot.pause()
+            await pilot.pause()
+            return app.query_one(TabbedContent).active
+
+    assert asyncio.run(drive()) == "tab-hypotheses"
+
+
+def test_the_period_key_keeps_the_opened_tables_and_the_scroll_position(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    app, _ = _hypotheses_app(monkeypatch, tmp_path)
+
+    async def drive() -> tuple[list[str], list[str], float]:
+        async with app.run_test(size=(100, 14)) as pilot:
+            await pilot.pause()
+            await pilot.press("g", "g")
+            await pilot.pause()
+            first = next(iter(app.query(Collapsible)))
+            first.collapsed = False
+            await pilot.pause()
+            app.query_one("#hypotheses-scroll").scroll_to(y=3, animate=False)
+            await pilot.pause()
+            before = [str(item.title) for item in app.query(Collapsible) if not item.collapsed]
+            await pilot.press("p")
+            for _ in range(4):
+                await pilot.pause()
+            after = [str(item.title) for item in app.query(Collapsible) if not item.collapsed]
+            return before, after, app.query_one("#hypotheses-scroll").scroll_y
+
+    before, after, scroll_offset = asyncio.run(drive())
+
+    assert len(before) == 1
+    assert after == before
+    assert scroll_offset == 3

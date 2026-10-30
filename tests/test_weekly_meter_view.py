@@ -201,3 +201,22 @@ def test_the_windows_disclosure_title_counts_the_rows() -> None:
     view = weekly_meter_view.describe_weekly_meter(_meter([4_000, 9_000], current=5_000), "en")
 
     assert view["details_title"] == f"Recent weekly windows ({len(view['rows'])})"
+
+
+def test_the_headline_does_not_claim_a_clear_week_over_partial_data() -> None:
+    meter = _meter([4_000, 9_000], current=3_000)
+    meter["current"]["covered"] = False
+
+    view = weekly_meter_view.describe_weekly_meter(meter, "en")
+
+    assert "no limit has been hit" not in view["headline"]
+    assert "were not recorded" in view["headline"]
+
+
+def test_the_headline_says_so_when_no_weekly_window_is_open() -> None:
+    meter = _meter([4_000, 9_000], current=3_000)
+    meter["current"] = None
+
+    view = weekly_meter_view.describe_weekly_meter(meter, "en")
+
+    assert view["headline"] == "No weekly window is open right now."
