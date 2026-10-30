@@ -47,7 +47,7 @@ def _trend_chip(project_path: str | None) -> str:
     # into its parent, and the chip reads "<basename>" unless the display
     # label disagrees with it, in which case it reads "<basename>:<label>".
     parent = mr.color_group_key(project_path)
-    raw_name = Path((parent or "").rstrip("/")).name or "sem projeto"
+    raw_name = Path((parent or "").rstrip("/")).name or "execuções temporárias"
     label = mr.project_display_label(parent, lang="pt")
     return raw_name if raw_name == label else f"{raw_name}:{label}"
 

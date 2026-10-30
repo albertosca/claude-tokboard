@@ -243,6 +243,68 @@ def test_normalize_project_paths_folds_ephemeral_paths_to_none():
     assert result[0]["project_path"] is None
 
 
+def test_normalize_project_paths_returns_a_scratchpad_session_to_the_project_it_names():
+    # Claude Code keeps a session's scratchpad under a directory named after
+    # the project's own path (slashes and dots turned into dashes), so a cwd
+    # that wandered into it still says which project it belongs to. 256 of
+    # the 958 sessions on a real history that landed in the "no project"
+    # bucket were exactly this.
+    scratchpad = "/private/tmp/claude-501/-Users-me-Programming-my-api/0f3c/scratchpad/sub"
+    records = [
+        {"project_path": "/Users/me/Programming/my-api"},
+        {"project_path": scratchpad},
+    ]
+    result = mr.normalize_project_paths(records)
+    assert [record["project_path"] for record in result] == [
+        "/Users/me/Programming/my-api",
+        "/Users/me/Programming/my-api",
+    ]
+
+
+def test_normalize_project_paths_matches_a_dotted_project_directory_by_its_slug():
+    # The slug turns "." into "-" as well, so "my.site" and "my-site" share
+    # one; the project the history actually recorded is the one that comes back.
+    scratchpad = "/private/tmp/claude-501/-Users-me-Programming-my-site/0f3c/scratchpad"
+    records = [
+        {"project_path": "/Users/me/Programming/my.site"},
+        {"project_path": scratchpad},
+    ]
+    result = mr.normalize_project_paths(records)
+    assert result[1]["project_path"] == "/Users/me/Programming/my.site"
+
+
+def test_normalize_project_paths_does_not_invent_a_project_for_an_unknown_slug():
+    # No session of this history ran in the project the slug names, so there
+    # is nothing to attach it to: it stays in the temporary bucket.
+    scratchpad = "/private/tmp/claude-501/-Users-me-Programming-never-seen/0f3c/scratchpad"
+    records = [{"project_path": "/Users/me/Programming/my-api"}, {"project_path": scratchpad}]
+    result = mr.normalize_project_paths(records)
+    assert result[1]["project_path"] is None
+
+
+def test_normalize_project_paths_leaves_an_ambiguous_slug_in_the_temporary_bucket():
+    # "a-b" is both /Users/me/a-b and /Users/me/a/b: a slug that two known
+    # projects share cannot be told apart, and a wrong guess would charge
+    # one project with the other's tokens.
+    scratchpad = "/private/tmp/claude-501/-Users-me-a-b/0f3c/scratchpad"
+    records = [
+        {"project_path": "/Users/me/a-b"},
+        {"project_path": "/Users/me/a/b"},
+        {"project_path": scratchpad},
+    ]
+    result = mr.normalize_project_paths(records)
+    assert result[2]["project_path"] is None
+
+
+def test_normalize_project_paths_leaves_a_throwaway_eval_directory_in_the_temporary_bucket():
+    # 698 skill-eval runs on the same history: a per-run directory under the
+    # macOS temp root that names no project anywhere.
+    eval_directory = "/private/var/folders/ab/cdef_123/T/evalcwd-Ab12Cd"
+    records = [{"project_path": "/Users/me/Programming/my-api"}, {"project_path": eval_directory}]
+    result = mr.normalize_project_paths(records)
+    assert result[1]["project_path"] is None
+
+
 def test_normalize_project_paths_excludes_worktree_paths_from_collapsing():
     # /Users/me/proj/.claude/worktrees/feature-x's immediate parent
     # (/Users/me/proj/.claude/worktrees) is included here AS ITS OWN

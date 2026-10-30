@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import collections
 import json
+import re
 from collections.abc import Sequence
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -202,13 +203,44 @@ def normalize_project_paths(
             record["project_path"] = canonical[project_path]
     # A session cwd'd into a scratchpad/tmp dir isn't a "project" (2026-07-21:
     # "tem um scratchpad que não faço ideia do que seja") - fold these into
-    # the same "sem projeto" bucket None already means, rather than giving
-    # every random ephemeral path its own legend entry.
+    # the one temporary bucket None means, rather than giving every random
+    # ephemeral path its own legend entry. Except a Claude Code scratchpad,
+    # whose path names the project it belongs to (2026-10-29: 256 of the 958
+    # sessions in that bucket on a real history): those go back to it.
+    projects_by_slug: dict[str, set[str]] = collections.defaultdict(set)
+    for record in records:
+        project_path = record.get("project_path")
+        if project_path and not is_ephemeral_path(project_path):
+            projects_by_slug[project_slug(project_path)].add(project_path)
     for record in records:
         project_path = record.get("project_path")
         if project_path and is_ephemeral_path(project_path):
-            record["project_path"] = None
+            record["project_path"] = project_named_by_scratchpad(project_path, projects_by_slug)
     return records
+
+
+# Claude Code keeps a session's scratchpad at
+# /tmp/claude-<uid>/<project slug>/<session id>/scratchpad, where the slug is
+# the project's own path with every non-alphanumeric character turned into a dash.
+SCRATCHPAD_SLUG_PATTERN = re.compile(r"^(?:/private)?/tmp/claude-\d+/(-[^/]+)/")
+
+
+def project_slug(project_path: str) -> str:
+    return re.sub(r"[^A-Za-z0-9]", "-", project_path.rstrip("/"))
+
+
+def project_named_by_scratchpad(path: str, projects_by_slug: dict[str, set[str]]) -> str | None:
+    """The project a scratchpad path names, or None when the path names none
+    or names one the history never ran in. A slug two known projects share
+    ("a-b" is both a-b and a/b) stays None as well: a wrong guess would charge
+    one project with the other's tokens."""
+    match = SCRATCHPAD_SLUG_PATTERN.match(path)
+    if match is None:
+        return None
+    candidates = projects_by_slug.get(match.group(1), set())
+    if len(candidates) != 1:
+        return None
+    return next(iter(candidates))
 
 
 # macOS gives every user a private TMPDIR under /var/folders (reached as

@@ -19,7 +19,9 @@ LANGUAGES = ("en", "pt")
 MESSAGES: dict[str, dict[str, str]] = {
     # Placeholder labels the data layer produces.
     "no_model": {"en": "no model", "pt": "sem modelo"},
-    "no_project": {"en": "no project", "pt": "sem projeto"},
+    # The bucket of cwds that name no project: throwaway directories (skill
+    # evals run from a per-run temp dir) and, in principle, a hook that got no cwd.
+    "no_project": {"en": "temporary runs", "pt": "execuções temporárias"},
     "others": {"en": "others", "pt": "outros"},
     # Plurals: tn() picks .one for exactly 1, .other for everything else.
     "sessions.one": {"en": "{n} session", "pt": "{n} sessão"},

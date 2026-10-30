@@ -53,8 +53,9 @@ def test_first_and_last_seen_skip_records_missing_either_field():
 
 
 def test_project_display_label_falls_back_when_there_is_no_path():
-    assert mr.project_display_label(None, lang="pt") == "sem projeto"
-    assert mr.project_display_label("", lang="pt") == "sem projeto"
+    assert mr.project_display_label(None, lang="pt") == "execuções temporárias"
+    assert mr.project_display_label("", lang="pt") == "execuções temporárias"
+    assert mr.project_display_label(None, lang="en") == "temporary runs"
 
 
 def test_project_display_label_is_the_basename():

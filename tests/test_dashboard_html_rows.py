@@ -502,11 +502,11 @@ def test_render_group_header_data_periods_lists_only_periods_with_scoped_session
     assert match.group(1) == "tudo"
 
 
-def test_render_group_header_no_project_path_uses_sem_projeto_label_and_no_title():
+def test_render_group_header_no_project_path_uses_the_temporary_runs_label_and_no_title():
     group = _group(None, [], css_class="group-color-none")
     period_windows = _ALL_NONE_PERIOD_WINDOWS
     out = dashboard_html.render_group_header(0, group, period_windows, lang="pt")
-    assert "sem projeto" in out
+    assert "execuções temporárias" in out
     assert "title=" not in out
 
 

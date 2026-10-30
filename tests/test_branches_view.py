@@ -94,4 +94,4 @@ def test_a_project_without_a_path_is_labelled() -> None:
 
     view = branches_view.describe_branches(breakdown, "pt")
 
-    assert view["projects"][0]["project"] == "sem projeto"
+    assert view["projects"][0]["project"] == "execuções temporárias"
