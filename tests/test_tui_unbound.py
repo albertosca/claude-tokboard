@@ -238,7 +238,7 @@ def test_m_toggles_project_ranking_expanded_state(
 
 
 # ---------------------------------------------------------------------------
-# the reverse tab switch (action_toggle_tab's else branch)
+# the wrap back to the first tab (action_toggle_tab)
 # ---------------------------------------------------------------------------
 
 
@@ -262,26 +262,31 @@ async def _drive_g_twice(monkeypatch: pytest.MonkeyPatch, home: Path) -> dict[st
         active_after_first_press = app.query_one(TabbedContent).active
         await pilot.press("g")
         await pilot.pause()
+        active_after_second_press = app.query_one(TabbedContent).active
+        await pilot.press("g")
+        await pilot.pause()
         return {
             "active_after_first_g": active_after_first_press,
-            "active_after_second_g": app.query_one(TabbedContent).active,
-            "active_tab_id_after_second_g": app.active_tab_id,
-            "focused_type_after_second_g": type(app.focused).__name__
+            "active_after_second_g": active_after_second_press,
+            "active_after_third_g": app.query_one(TabbedContent).active,
+            "active_tab_id_after_third_g": app.active_tab_id,
+            "focused_type_after_third_g": type(app.focused).__name__
             if app.focused is not None
             else None,
         }
 
 
-def test_second_g_switches_back_to_sessions_and_refocuses_the_tree(
+def test_g_cycles_sessions_panorama_hypotheses_and_back_refocusing_the_tree(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     result = _run(_drive_g_twice(monkeypatch, tmp_path))
     assert result["active_after_first_g"] == "tab-panorama"
-    assert result["active_after_second_g"] == "tab-sessions", (
-        "a second 'g' must return to the Sessões tab, not stay on or cycle past Panorama"
+    assert result["active_after_second_g"] == "tab-hypotheses"
+    assert result["active_after_third_g"] == "tab-sessions", (
+        "a third 'g' must wrap back to the Sessões tab"
     )
-    assert result["active_tab_id_after_second_g"] == "tab-sessions"
-    assert result["focused_type_after_second_g"] == "Tree", (
+    assert result["active_tab_id_after_third_g"] == "tab-sessions"
+    assert result["focused_type_after_third_g"] == "Tree", (
         "the reverse switch must refocus the session Tree, mirroring what "
         "the forward switch does for the tab it opens"
     )

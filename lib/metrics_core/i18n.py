@@ -369,7 +369,7 @@ MESSAGES: dict[str, dict[str, str]] = {
     "key.quit": {"en": "Quit", "pt": "Sair"},
     "key.chart_mode": {"en": "Chart mode", "pt": "Alterna modo do gráfico"},
     "key.more_projects": {"en": "More/fewer projects", "pt": "Mais/menos projetos"},
-    "key.toggle_tab": {"en": "Charts/Sessions", "pt": "Gráficos/Sessões"},
+    "key.toggle_tab": {"en": "Next tab", "pt": "Próxima aba"},
     "key.cycle_period": {"en": "period", "pt": "período"},
     "notify.period": {"en": "period: {name}", "pt": "período: {name}"},
     "key.branch_filter": {"en": "branch filter", "pt": "filtro de branch"},

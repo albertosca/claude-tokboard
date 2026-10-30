@@ -88,7 +88,7 @@ def english_screens(tmp_path_factory: pytest.TempPathFactory) -> dict[str, str]:
 
 
 def test_the_key_bar_is_english(english_screens: dict[str, str]) -> None:
-    for text in ("Quit", "Chart mode", "Charts/Sessions", "period"):
+    for text in ("Quit", "Chart mode", "Next tab", "period"):
         assert text in english_screens["sessions"], text
 
 

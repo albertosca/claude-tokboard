@@ -31,7 +31,8 @@ from textual.containers import Horizontal, VerticalScroll
 from textual.css.query import NoMatches
 from textual.message import Message
 from textual.reactive import reactive
-from textual.widgets import Footer, Static, TabbedContent, TabPane, Tree
+from textual.widget import Widget
+from textual.widgets import Collapsible, Footer, Static, TabbedContent, TabPane, Tree
 from textual_plotext import PlotextPlot
 
 if TYPE_CHECKING:
@@ -595,7 +596,9 @@ def meter_bar(view: dict[str, Any]) -> str:
 
 
 class WeeklyMeterPanel(Static):
-    """The weekly-limit panel: the same view dict the HTML page renders
+    """The weekly-limit card: heading, one headline, the bar and a few
+    labelled facts. The per-window rows are a Collapsible beside it
+    (meter_windows_text); the view dict is the one the HTML page renders
     (metrics_core.describe_weekly_meter), so the two cannot disagree."""
 
     def __init__(
@@ -607,90 +610,144 @@ class WeeklyMeterPanel(Static):
 
     def render(self) -> RenderResult:
         view = self.view
-        lines = [Text(view["heading"], style="bold")]
+        lines = [Text(view["heading"], style="bold"), Text(view["headline"], style="bold")]
         if view["empty"]:
-            lines += [Text(view["status"]), Text(view["caveat"], style="dim")]
+            lines.append(Text(view["caveat"], style="dim"))
             return Text("\n").join(lines)
         lines.append(Text(f"{meter_bar(view)}  {view['value_text']} {view['tiers']}"))
         lines.append(Text(view["status"]))
         if view["range"]:
             lines.append(Text(view["range"]))
         lines += [Text(view["five_hour"]), Text(view["caveat"], style="dim")]
-        label_width = max((len(row["window"]) for row in view["rows"]), default=0)
-        for row in view["rows"]:
-            lines.append(
-                Text(
-                    f"{row['window']:<{label_width}} {row['accumulated']:>8}  "
-                    f"{row['tiers']}  {row['families']}  {row['outcome']}"
-                )
-            )
-        lines += self.causes_lines()
         return Text("\n").join(lines)
 
-    def causes_lines(self) -> list[Text]:
-        """The cache-creation causes, from the same view dict the HTML page
-        renders (metrics_core.describe_cache_causes)."""
-        causes = self.view.get("causes")
-        if not causes or causes["empty"]:
-            return []
-        lang = causes["lang"]
 
-        def label(key: str) -> str:
-            return str(self.metrics_core_module.t(f"causes.col.{key}", lang))
+def meter_windows_text(view: dict[str, Any]) -> Text:
+    """The recent weekly windows, one aligned line each."""
+    label_width = max((len(row["window"]) for row in view["rows"]), default=0)
+    return Text("\n").join(
+        Text(
+            f"{row['window']:<{label_width}} {row['accumulated']:>8}  "
+            f"{row['tiers']}  {row['families']}  {row['outcome']}"
+        )
+        for row in view["rows"]
+    )
 
-        lines = [Text(""), Text(causes["heading"], style="bold"), Text(causes["note"], style="dim")]
-        for warning in (causes["alert"], causes["first_jump"]):
+
+CAUSE_BAR_GLYPHS = {"incremental": "░", "cold_start": "▒", "rewrite": "█"}
+
+
+def bar_cells(percents: list[int], width: int) -> list[int]:
+    """Cells per segment, largest remainder, summing to exactly `width`
+    (all zero when there is nothing to split)."""
+    total = sum(percents)
+    if not total:
+        return [0] * len(percents)
+    exact = [percent * width / total for percent in percents]
+    cells = [int(share) for share in exact]
+    by_remainder = sorted(
+        range(len(exact)), key=lambda index: exact[index] - cells[index], reverse=True
+    )
+    for index in by_remainder[: width - sum(cells)]:
+        cells[index] += 1
+    return cells
+
+
+def stacked_bar_text(bar: dict[str, Any], width: int = METER_BAR_CELLS) -> Text:
+    """One window's causes as a 100% bar of distinct glyphs (no colour
+    needed) followed by each segment named with its percentage."""
+    segments = bar["segments"]
+    cells = bar_cells([segment["percent"] for segment in segments], width)
+    glyphs = "".join(
+        CAUSE_BAR_GLYPHS[segment["cause"]] * cells[index] for index, segment in enumerate(segments)
+    )
+    parts = "  ".join(
+        f"{CAUSE_BAR_GLYPHS[segment['cause']]} {segment['label']} {segment['percent']}%"
+        for segment in segments
+    )
+    return Text(f"{bar['window']}\n{glyphs}\n{parts}")
+
+
+class CacheCausesPanel(Static):
+    """The cache-creation causes card: headline, attention lines and one
+    stacked bar per recent window. The tables are Collapsibles beside it
+    (cause_sections); the view dict is the one the HTML page renders
+    (metrics_core.describe_cache_causes)."""
+
+    def __init__(self, view: dict[str, Any], **keyword_arguments: Any) -> None:
+        super().__init__(**keyword_arguments)
+        self.view = view
+
+    def render(self) -> RenderResult:
+        view = self.view
+        lines = [Text(view["heading"], style="bold")]
+        if view["headline"]:
+            lines.append(Text(view["headline"], style="bold"))
+        for warning in (view["alert"], view["first_jump"]):
             if warning:
                 lines.append(Text(f"⚠ {warning}", style="bold"))
-        window_keys = ("total", "cold_start", "rewrite", "incremental", "after_idle")
-        window_width = max((len(row["window"]) for row in causes["windows"]), default=0)
-        for row in causes["windows"]:
-            fields = "  ".join(f"{label(key)} {row[key]}" for key in window_keys)
-            lines.append(Text(f"{row['window']:<{window_width}} {fields}"))
-            lines.append(
-                Text(
-                    f"  {label('main_short')} {row['main_short']}  "
-                    f"{label('subagent_short')} {row['subagent_short']}",
-                    style="dim",
-                )
-            )
-        size_keys = ("runs", "creation", "rewrite")
-        size_labels = {"runs": "runs", "creation": "creation", "rewrite": "rewrite_share"}
-        size_width = max((len(row["size"]) for row in causes["sizes"]), default=0)
-        for row in causes["sizes"]:
-            fields = "  ".join(f"{label(size_labels[key])} {row[key]}" for key in size_keys)
-            lines.append(Text(f"{row['size']:<{size_width}} {fields}"))
-        for row in causes["first_requests"]:
-            lines.append(
-                Text(
-                    f"{label('version')} {row['version']}  "
-                    f"{label('conversations')} {row['conversations']}  "
-                    f"{label('median')} {row['median']}"
-                )
-            )
-        for row in causes["first_by_project"]:
-            lines.append(
-                Text(
-                    f"{row['project']}  "
-                    f"{label('conversations')} {row['conversations']}  "
-                    f"{label('median')} {row['median']}"
-                )
-            )
-        for row in causes["short_by_project"]:
-            lines.append(
-                Text(
-                    f"{row['project']}  {label('short')} {row['short']} ({row['share']})  "
-                    f"{label('short_creation')} {row['creation']}"
-                )
-            )
-        for row in causes["idle_sessions"]:
-            lines.append(
-                Text(
-                    f"{row['session']}  {label('idle_tokens')} {row['tokens']}  "
-                    f"{label('resumes')} {row['resumes']}"
-                )
-            )
-        return lines
+        for bar in view["bars"]:
+            lines += [Text(""), stacked_bar_text(bar)]
+        return Text("\n").join(lines)
+
+
+def cause_sections(
+    causes: dict[str, Any], metrics_core_module: ModuleType
+) -> list[tuple[str, Text]]:
+    """(title, body) for every cause table that has rows, in the order the
+    HTML page lists them, from the same view dict."""
+    lang = causes["lang"]
+
+    def label(key: str) -> str:
+        return str(metrics_core_module.t(f"causes.col.{key}", lang))
+
+    def width_of(rows: list[dict[str, str]], key: str) -> int:
+        return max((len(row[key]) for row in rows), default=0)
+
+    windows = causes["windows"]
+    window_keys = ("total", "cold_start", "rewrite", "incremental", "after_idle")
+    window_width = width_of(windows, "window")
+    window_lines = []
+    for row in windows:
+        fields = "  ".join(f"{label(key)} {row[key]}" for key in window_keys)
+        window_lines.append(f"{row['window']:<{window_width}} {fields}")
+        window_lines.append(
+            f"  {label('main_short')} {row['main_short']}  "
+            f"{label('subagent_short')} {row['subagent_short']}"
+        )
+    size_labels = {"runs": "runs", "creation": "creation", "rewrite": "rewrite_share"}
+    size_width = width_of(causes["sizes"], "size")
+    tables = {
+        "windows": window_lines,
+        "sizes": [
+            f"{row['size']:<{size_width}} "
+            + "  ".join(f"{label(size_labels[key])} {row[key]}" for key in size_labels)
+            for row in causes["sizes"]
+        ],
+        "first": [
+            f"{label('version')} {row['version']}  "
+            f"{label('conversations')} {row['conversations']}  {label('median')} {row['median']}"
+            for row in causes["first_requests"]
+        ],
+        "by_project": [
+            f"{row['project']}  "
+            f"{label('conversations')} {row['conversations']}  {label('median')} {row['median']}"
+            for row in causes["first_by_project"]
+        ],
+        "idle": [
+            f"{row['session']}  {label('idle_tokens')} {row['tokens']}  "
+            f"{label('resumes')} {row['resumes']}"
+            for row in causes["idle_sessions"]
+        ],
+        "short": [
+            f"{row['project']}  {label('short')} {row['short']} ({row['share']})  "
+            f"{label('short_creation')} {row['creation']}"
+            for row in causes["short_by_project"]
+        ],
+    }
+    return [
+        (causes["titles"][key], Text("\n".join(lines))) for key, lines in tables.items() if lines
+    ]
 
 
 class BranchesPanel(Static):
@@ -1700,6 +1757,8 @@ def legend_visibility(mode: str) -> dict[str, bool]:
 # recomposed pane's widget to be mounted before giving up on focusing it.
 FOCUS_RESTORE_ATTEMPTS = 5
 
+TABS = ("tab-sessions", "tab-panorama", "tab-hypotheses")
+
 
 class MetricsTUIApp(App[None]):
     # Without this Textual titles the terminal window after the class, so
@@ -1800,8 +1859,6 @@ class MetricsTUIApp(App[None]):
                 # queued behind the recompose could leave one frame with all
                 # three legends showing (2026-09-23 review).
                 shown = legend_visibility(self.chart_mode)
-                if self.data.get("weekly_meter"):
-                    yield WeeklyMeterPanel(self.data["weekly_meter"], self.metrics_core_module)
                 if self.data.get("branches") and not self.data["branches"]["empty"]:
                     yield BranchesPanel(self.data["branches"])
                 quota = QuotaSummary(totals, self.metrics_core_module, lang=lang)
@@ -1838,7 +1895,36 @@ class MetricsTUIApp(App[None]):
                     self.data["open_projects"],
                     lang=lang,
                 )
+            with (
+                TabPane(self.metrics_core_module.t("tab.hypotheses", lang), id="tab-hypotheses"),
+                VerticalScroll(id="hypotheses-scroll"),
+            ):
+                yield from self._hypotheses_widgets()
         yield Footer()
+
+    def _hypotheses_widgets(self) -> ComposeResult:
+        """The weekly-limit card and the cache-causes card, each a headline
+        with its tables in closed Collapsibles - the same dicts the HTML
+        tab renders."""
+        meter = self.data.get("weekly_meter")
+        if not meter:
+            yield Static(self.metrics_core_module.t("hypotheses.empty", self.data["lang"]))
+            return
+        yield WeeklyMeterPanel(meter, self.metrics_core_module)
+        if not meter["empty"] and meter["rows"]:
+            yield Collapsible(
+                Static(meter_windows_text(meter)), title=meter["details_title"], collapsed=True
+            )
+        causes = meter.get("causes")
+        if causes and not causes["empty"]:
+            yield CacheCausesPanel(causes)
+            for title, body in cause_sections(causes, self.metrics_core_module):
+                yield Collapsible(Static(body), title=title, collapsed=True)
+            yield Collapsible(
+                Static(Text(causes["note"], style="dim")),
+                title=causes["terms_title"],
+                collapsed=True,
+            )
 
     def on_mount(self) -> None:
         self.query_one(Tree).focus()
@@ -1931,11 +2017,12 @@ class MetricsTUIApp(App[None]):
         # Clearing focus first avoids the revert; confirmed via headless
         # reproduction during design (see this plan's Global Constraints).
         self.set_focus(None)
-        if tabbed.active == "tab-sessions":
-            tabbed.active = "tab-panorama"
-        else:
-            tabbed.active = "tab-sessions"
+        following = TABS[(TABS.index(tabbed.active) + 1) % len(TABS)]
+        tabbed.active = following
+        if following == "tab-sessions":
             self.query_one(Tree).focus()
+        elif following == "tab-hypotheses":
+            self.query_one("#hypotheses-scroll").focus()
         # Kept in sync here so a later action_cycle_period recompose (which
         # builds a brand-new TabbedContent from scratch) knows which pane
         # to reopen on, instead of always defaulting to the first one.
@@ -2008,9 +2095,13 @@ class MetricsTUIApp(App[None]):
         for again after the next refresh, a bounded number of times, and
         if it never appears nothing happens: focus is a nicety, a crash is
         not."""
-        widget_type = Tree if self.active_tab_id == "tab-sessions" else TrendChart
         try:
-            widget = self.query_one(widget_type)
+            if self.active_tab_id == "tab-hypotheses":
+                widget: Widget = self.query_one("#hypotheses-scroll")
+            else:
+                widget = self.query_one(
+                    Tree if self.active_tab_id == "tab-sessions" else TrendChart
+                )
         except NoMatches:
             if attempts_left > 1:
                 self.call_after_refresh(self._restore_focus_after_period_cycle, attempts_left - 1)

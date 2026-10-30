@@ -11,6 +11,7 @@ from typing import Any
 
 import pytest
 from rich.text import Text
+from textual.widgets import Collapsible, Static
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "lib"))
@@ -41,11 +42,21 @@ def test_the_panel_prints_the_same_numbers_the_html_page_does() -> None:
     page = html.unescape(dashboard_html.render_weekly_meter(view))
 
     shared = [view["value_text"], view["tiers"], view["status"], view["range"], view["five_hour"]]
-    for row in view["rows"]:
-        shared += [row["window"], row["accumulated"], row["tiers"], row["families"], row["outcome"]]
     for fragment in shared:
         assert fragment in text, fragment
         assert fragment in page, fragment
+    windows = tui.meter_windows_text(view).plain
+    for row in view["rows"]:
+        for fragment in (
+            row["window"],
+            row["accumulated"],
+            row["tiers"],
+            row["families"],
+            row["outcome"],
+        ):
+            assert fragment in windows, fragment
+            assert fragment in page, fragment
+    assert view["headline"] in text
 
 
 def test_the_range_is_drawn_with_shaded_cells_and_spelled_out() -> None:
@@ -73,6 +84,7 @@ def test_the_empty_state_is_text_only() -> None:
     text = _panel_text(empty)
 
     assert "Nenhuma chamada registrada ainda" in text
+    assert empty["headline"] in text
     assert "█" not in text
 
 
@@ -80,7 +92,7 @@ def test_the_lower_bound_caveat_is_on_the_panel() -> None:
     assert "only the Claude Code sessions on this machine" in _panel_text(_view([4_000, 9_000]))
 
 
-def test_the_app_shows_the_panel_on_the_overview_tab_and_omits_it_without_a_view(
+def test_the_app_shows_the_panel_on_the_hypotheses_tab_and_omits_it_without_a_view(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     seeded_tui_home(monkeypatch, tmp_path)
@@ -95,9 +107,16 @@ def test_the_app_shows_the_panel_on_the_overview_tab_and_omits_it_without_a_view
         app = tui.MetricsTUIApp(mr, shown, arguments=arguments)
         async with app.run_test(size=(120, 40)) as pilot:
             await pilot.pause()
-            await pilot.press("g")
+            await pilot.press("g", "g")
             await pilot.pause()
-            return len(app.query(tui.WeeklyMeterPanel))
+            assert app.active_tab_id == "tab-hypotheses"
+            pane = app.query_one("#tab-hypotheses")
+            assert not app.query_one("#tab-panorama").query(tui.WeeklyMeterPanel)
+            if not with_view:
+                assert mr.t("hypotheses.empty", data["lang"]) in "".join(
+                    str(widget.render()) for widget in pane.query(Static)
+                )
+            return len(pane.query(tui.WeeklyMeterPanel))
 
     assert asyncio.run(drive(True)) == 1
     assert asyncio.run(drive(False)) == 0
@@ -116,65 +135,158 @@ def test_cycling_the_period_keeps_the_same_weekly_view(
     assert first["weekly_meter"] is second["weekly_meter"] is base["weekly_meter"]
 
 
-def test_the_panel_prints_the_causes_the_html_page_does() -> None:
+def _causes(*arguments: Any, **keyword_arguments: Any) -> dict[str, Any]:
     from cache_causes_fixtures import causes_for
     from metrics_core import cache_causes_view
 
-    view = _view([4_000, 9_000], current=3_000)
-    view["causes"] = cache_causes_view.describe_cache_causes(causes_for(jump=True), "en")
+    return cache_causes_view.describe_cache_causes(
+        causes_for(*arguments, **keyword_arguments), "en"
+    )
 
-    text = _panel_text(view)
-    page = html.unescape(dashboard_html.render_cache_causes(view["causes"]))
 
-    shared = [view["causes"]["heading"], view["causes"]["first_jump"]]
-    for row in view["causes"]["windows"]:
+def test_the_sections_print_the_causes_the_html_page_does() -> None:
+    causes = _causes(jump=True)
+    sections = tui.cause_sections(causes, mr)
+    text = "\n".join(body.plain for _, body in sections)
+    page = html.unescape(dashboard_html.render_cache_causes(causes))
+
+    shared = [causes["heading"]]
+    for row in causes["windows"]:
         shared += [row["window"], row["total"], row["cold_start"], row["rewrite"]]
         shared += [row["after_idle"], row["main_short"], row["subagent_short"]]
-    for row in view["causes"]["sizes"]:
+    for row in causes["sizes"]:
         shared += [row["size"], row["runs"], row["creation"], row["rewrite"]]
-    for row in view["causes"]["first_requests"]:
+    for row in causes["first_requests"]:
         shared += [row["version"], row["conversations"], row["median"]]
-    for row in view["causes"]["first_by_project"]:
+    for row in causes["first_by_project"]:
         shared += [row["project"], row["conversations"], row["median"]]
-    assert view["causes"]["first_by_project"]
-    for row in view["causes"]["short_by_project"]:
+    assert causes["first_by_project"]
+    for row in causes["short_by_project"]:
         shared += [row["project"], row["short"], row["share"], row["creation"]]
-    assert view["causes"]["short_by_project"]
-    for row in view["causes"]["idle_sessions"]:
+    assert causes["short_by_project"]
+    for row in causes["idle_sessions"]:
         shared += [row["session"], row["tokens"], row["resumes"]]
-    assert view["causes"]["idle_sessions"]
-    for fragment in shared:
+    assert causes["idle_sessions"]
+    for fragment in shared[1:]:
         assert fragment in text, fragment
         assert fragment in page, fragment
+    assert [title for title, _ in sections] == [
+        causes["titles"][key]
+        for key in ("windows", "sizes", "first", "by_project", "idle", "short")
+    ]
 
 
-def test_the_panel_without_causes_or_with_an_empty_one_adds_nothing() -> None:
-    from cache_causes_fixtures import causes_for
-    from metrics_core import cache_causes_view
+def test_a_cause_table_without_rows_has_no_section() -> None:
+    causes = _causes(jump=True)
+    causes["sizes"] = []
+    causes["idle_sessions"] = []
 
-    view = _view([4_000, 9_000], current=3_000)
-    base = _panel_text(view)
-    view["causes"] = cache_causes_view.describe_cache_causes(causes_for(), "en")
-    view["causes"]["empty"] = True
+    titles = [title for title, _ in tui.cause_sections(causes, mr)]
 
-    assert _panel_text(view) == base
+    assert causes["titles"]["sizes"] not in titles
+    assert causes["titles"]["idle"] not in titles
+    assert causes["titles"]["windows"] in titles
 
 
-def test_the_tier_alert_reaches_the_panel() -> None:
-    from cache_causes_fixtures import causes_for
-    from metrics_core import cache_causes_view
+def test_the_causes_card_leads_with_the_headline_the_attention_and_the_bars() -> None:
+    causes = _causes("cache_5m")
+    causes["first_jump"] = "The first request got larger after an upgrade."
 
-    view = _view([4_000, 9_000], current=3_000)
-    view["causes"] = cache_causes_view.describe_cache_causes(causes_for("cache_5m"), "en")
+    rendered = tui.CacheCausesPanel(causes).render()
+    assert isinstance(rendered, Text)
+    lines = rendered.plain.splitlines()
 
-    assert f"⚠ {view['causes']['alert']}" in _panel_text(view)
+    assert causes["alert"] and causes["first_jump"]
+    assert lines[0] == causes["heading"]
+    assert lines[1] == causes["headline"]
+    assert f"⚠ {causes['alert']}" in lines
+    assert f"⚠ {causes['first_jump']}" in lines
+    for bar in causes["bars"]:
+        assert bar["window"] in lines
+    assert not any(" | " in line for line in lines)
+
+
+@pytest.mark.parametrize("width", [1, 7, 40, 41])
+def test_the_stacked_bar_fills_exactly_the_width_and_names_each_segment(width: int) -> None:
+    bar = _causes()["bars"][0]
+
+    rendered = tui.stacked_bar_text(bar, width).plain
+    glyph_line = rendered.splitlines()[1]
+    legend = rendered.splitlines()[2]
+
+    assert len(glyph_line) == width
+    for segment in bar["segments"]:
+        assert f"{segment['label']} {segment['percent']}%" in legend
+
+
+def test_the_stacked_bar_draws_nothing_when_there_is_nothing_to_split() -> None:
+    bar = {
+        "window": "w",
+        "segments": [
+            {"cause": cause, "label": cause, "percent": 0}
+            for cause in ("cold_start", "rewrite", "incremental")
+        ],
+    }
+
+    assert tui.stacked_bar_text(bar, 10).plain.splitlines()[1] == ""
+
+
+def test_the_hypotheses_tab_starts_with_every_table_closed(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    seeded_tui_home(monkeypatch, tmp_path)
+    arguments = tui.build_arg_parser().parse_args(["--label-budget", "0"])
+    data = tui.load_data(arguments, metrics_core_module=mr)
+    data["weekly_meter"] = _view([4_000, 9_000], current=3_000)
+    data["weekly_meter"]["causes"] = _causes(jump=True)
+
+    async def drive() -> tuple[list[bool], list[str], str]:
+        app = tui.MetricsTUIApp(mr, data, arguments=arguments)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause()
+            await pilot.press("g", "g")
+            await pilot.pause()
+            collapsibles = list(app.query(Collapsible))
+            focused = app.focused
+            return (
+                [item.collapsed for item in collapsibles],
+                [str(item.title) for item in collapsibles],
+                "" if focused is None else str(focused.id),
+            )
+
+    collapsed, titles, focused = asyncio.run(drive())
+
+    assert collapsed and all(collapsed)
+    assert data["weekly_meter"]["details_title"] in titles
+    assert data["weekly_meter"]["causes"]["terms_title"] in titles
+    assert focused == "hypotheses-scroll"
+
+
+def test_the_period_key_on_the_hypotheses_tab_keeps_the_tab_and_its_focus(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    seeded_tui_home(monkeypatch, tmp_path)
+    arguments = tui.build_arg_parser().parse_args(["--label-budget", "0"])
+    data = tui.load_data(arguments, metrics_core_module=mr)
+
+    async def drive() -> tuple[str, str]:
+        app = tui.MetricsTUIApp(mr, data, arguments=arguments)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause()
+            await pilot.press("g", "g", "p")
+            await pilot.pause()
+            await pilot.pause()
+            focused = app.focused
+            return app.active_tab_id, "" if focused is None else str(focused.id)
+
+    assert asyncio.run(drive()) == ("tab-hypotheses", "hypotheses-scroll")
 
 
 def test_the_window_column_is_as_wide_as_the_longest_label() -> None:
     view = _view([4_000, 9_000], current=3_000)
     view["rows"][0]["window"] = "W" * 50
 
-    lines = _panel_text(view).splitlines()
+    lines = tui.meter_windows_text(view).plain.splitlines()
     row_lines = [line for line in lines if line.startswith(("W" * 50, view["rows"][1]["window"]))]
 
     assert row_lines[0].index(view["rows"][0]["accumulated"]) == row_lines[1].index(
