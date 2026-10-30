@@ -20,7 +20,7 @@ O app ocupa a tela toda. Ele não roda dentro do Claude Code.
 
 | Tecla | Ação |
 |---|---|
-| <kbd>g</kbd> | Alterna entre gráficos e sessões. |
+| <kbd>g</kbd> | Vai para a próxima aba: Sessões, Panorama, Hipóteses. |
 | <kbd>t</kbd> | Muda o modo do gráfico. |
 | <kbd>p</kbd> | Muda o período. |
 | <kbd>q</kbd> | Sai. |
@@ -38,7 +38,7 @@ Aperte <kbd>t</kbd> para passar pelos quatro recortes de um dia:
 
 A tabela de sessões tem um painel de detalhe.
 
-Ela também tem o medidor do limite semanal e as causas do cache creation, como a página do navegador.
+O medidor do limite semanal e as causas do cache creation ficam na aba **Hipóteses**, como na página do navegador. As tabelas começam fechadas: vá até uma e aperte <kbd>Enter</kbd> para abrir.
 
 ## Terminais pequenos
 

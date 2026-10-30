@@ -90,7 +90,7 @@ Two hooks append a line to a local log after every turn and every subagent. Both
 
 ![The terminal app: a session table with a detail panel, then the trend chart cycling through its four slicings of a day](assets/tui-en.gif)
 
-<sub>The terminal app - same data, keyboard-driven: <kbd>g</kbd> charts/sessions, <kbd>t</kbd> chart mode, <kbd>p</kbd> period, <kbd>q</kbd> quit.</sub>
+<sub>The terminal app - same data, keyboard-driven: <kbd>g</kbd> next tab, <kbd>t</kbd> chart mode, <kbd>p</kbd> period, <kbd>q</kbd> quit.</sub>
 
 > The interface speaks English and Brazilian Portuguese, following your terminal's locale - or set "language": "en" or "pt" (or a tag like pt-BR) in ~/.claude/metrics/config.json. The token types - input, output, cache read, cache creation - keep their English names in both languages, because those are the terms Anthropic's API uses for them.
 

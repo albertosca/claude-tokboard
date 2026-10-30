@@ -41,14 +41,14 @@ Click a legend entry or a bar.
 
 That project, token type or model is highlighted across the whole chart.
 
-## Step 5 - scroll down
+## Step 5 - open the other tabs
 
-Below the chart you find:
+The **Sessions** tab has **tokens per branch** and a **session table**, grouped by project.
+
+The **Hypotheses** tab has:
 
 - the **weekly-limit meter**;
-- where your **cache creation** comes from;
-- **tokens per branch**;
-- a **session table**, grouped by project.
+- where your **cache creation** comes from.
 
 Each of these has its own page:
 

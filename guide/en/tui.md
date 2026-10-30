@@ -20,7 +20,7 @@ The app is full-screen. It cannot run inside Claude Code.
 
 | Key | Action |
 |---|---|
-| <kbd>g</kbd> | Switch between charts and sessions. |
+| <kbd>g</kbd> | Go to the next tab: Sessions, Overview, Hypotheses. |
 | <kbd>t</kbd> | Change the chart mode. |
 | <kbd>p</kbd> | Change the period. |
 | <kbd>q</kbd> | Quit. |
@@ -38,7 +38,7 @@ Press <kbd>t</kbd> to cycle through the four slicings of a day:
 
 The session table has a detail panel.
 
-It also has the weekly-limit meter and the cache-creation causes, like the browser page.
+The weekly-limit meter and the cache-creation causes are on the **Hypotheses** tab, like the browser page. Their tables start closed: move to one and press <kbd>Enter</kbd> to open it.
 
 ## Small terminals
 

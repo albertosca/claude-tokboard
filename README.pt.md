@@ -90,7 +90,7 @@ Dois hooks acrescentam uma linha a um log local ao fim de cada turno e de cada s
 
 ![O app de terminal: tabela de sessões com painel de detalhe, e depois o gráfico de tendência passando pelos quatro recortes de um dia](assets/tui-pt.gif)
 
-<sub>O app de terminal - os mesmos dados, pelo teclado: <kbd>g</kbd> gráficos/sessões, <kbd>t</kbd> modo do gráfico, <kbd>p</kbd> período, <kbd>q</kbd> sair.</sub>
+<sub>O app de terminal - os mesmos dados, pelo teclado: <kbd>g</kbd> próxima aba, <kbd>t</kbd> modo do gráfico, <kbd>p</kbd> período, <kbd>q</kbd> sair.</sub>
 
 > A interface fala inglês e português do Brasil, seguindo o locale do seu terminal - ou defina "language": "en" ou "pt" (ou uma tag como pt-BR) em ~/.claude/metrics/config.json. Os tipos de token - input, output, cache read, cache creation - ficam em inglês nos dois idiomas, porque são os nomes que a própria API da Anthropic usa.
 

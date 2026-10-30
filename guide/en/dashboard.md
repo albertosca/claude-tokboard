@@ -6,14 +6,22 @@ Open it with `/tokboard`.
 
 ## What is on the page
 
-From top to bottom:
+Three tabs: **Sessions**, **Overview** and **Hypotheses**.
+
+**Sessions** holds, from top to bottom:
+
+1. **Tokens per branch**: for projects that used 2+ branches.
+2. **The session table**: every session, grouped by project.
+
+**Overview** holds:
 
 1. **The quota line**: how much of your rate limit a period used.
 2. **The trend chart**: one bar per day, with four slicings.
-3. **The weekly-limit meter**: see [the meter](weekly-meter.md).
-4. **Cache-creation causes**: cold start, rewrite after idle, growth.
-5. **Tokens per branch**: for projects that used 2+ branches.
-6. **The session table**: every session, grouped by project.
+
+**Hypotheses** holds two cards, each opening with one sentence in plain words and keeping its tables closed until you open them:
+
+1. **The weekly-limit meter**: see [the meter](weekly-meter.md).
+2. **Cache-creation causes**: a bar per recent window splitting cold start, rewrite after idle and growth.
 
 ## The trend chart
 

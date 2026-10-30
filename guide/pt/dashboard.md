@@ -6,14 +6,22 @@ Abra com `/tokboard`.
 
 ## O que tem na página
 
-De cima para baixo:
+Três abas: **Sessões**, **Panorama** e **Hipóteses**.
+
+**Sessões** tem, de cima para baixo:
+
+1. **Tokens por branch**: para projetos que usaram 2 ou mais branches.
+2. **A tabela de sessões**: todas as sessões, agrupadas por projeto.
+
+**Panorama** tem:
 
 1. **A linha de cota**: quanto do seu rate limit o período consumiu.
 2. **O gráfico de tendência**: uma barra por dia, com quatro recortes.
-3. **O medidor do limite semanal**: veja [o medidor](weekly-meter.md).
-4. **Causas do cache creation**: partida a frio, reescrita após pausa, crescimento.
-5. **Tokens por branch**: para projetos que usaram 2 ou mais branches.
-6. **A tabela de sessões**: todas as sessões, agrupadas por projeto.
+
+**Hipóteses** tem dois cartões, cada um abrindo com uma frase em linguagem simples e com as tabelas fechadas até você abri-las:
+
+1. **O medidor do limite semanal**: veja [o medidor](weekly-meter.md).
+2. **Causas do cache creation**: uma barra por janela recente dividindo partida a frio, reescrita após pausa e crescimento.
 
 ## O gráfico de tendência
 

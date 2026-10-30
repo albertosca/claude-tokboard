@@ -41,14 +41,14 @@ Clique numa entrada da legenda ou numa barra.
 
 Aquele projeto, tipo de token ou modelo fica destacado no gráfico inteiro.
 
-## Passo 5 - role a página
+## Passo 5 - abra as outras abas
 
-Abaixo do gráfico você encontra:
+A aba **Sessões** tem os **tokens por branch** e uma **tabela de sessões**, agrupada por projeto.
+
+A aba **Hipóteses** tem:
 
 - o **medidor do limite semanal**;
-- de onde vem o seu **cache creation**;
-- **tokens por branch**;
-- uma **tabela de sessões**, agrupada por projeto.
+- de onde vem o seu **cache creation**.
 
 Cada um tem a sua página:
 
