@@ -4,6 +4,7 @@ Claude Code plugin: logs session and token metrics through hooks, and renders th
 
 - `hooks/` - `hooks.json` runs `metrics-log.py` on `Stop` and `subagent-metrics-log.py` on `SubagentStop`; they append to `~/.claude/metrics/*.jsonl`. Both also log per-call usage and rate-limit rejections to `calls.jsonl` and `limit-hits.jsonl` through `metrics_core.calls_store`, with a byte cursor in `calls_cursor.json`.
 - `lib/metrics_core/` - the shared data layer (records, labels, periods, backfill, i18n). Not installed as a package: the entry points `sys.path.insert` `lib/`, and `mypy_path = "lib"` mirrors that.
+  The `*_view.py` modules (`weekly_meter_view`, `cache_causes_view`, `branches_view`) turn data into the strings both dashboards render, so a number or label is written once.
 - `dashboard_html.py` (+ `dashboard_html_assets.py`, its CSS/JS as string constants) and `dashboard_tui.py` - two independent consumers of `metrics_core`.
 - `commands/` - the `/tokboard` and `/tokboard-tui` slash commands. `scripts/` - repair and maintenance tools run by hand (`scripts/README.md`). `tools/` - dev-only (demo assets).
 
@@ -33,6 +34,8 @@ pytest tests/                    # full suite + the 100% coverage gate
 ruff check .
 ruff format --check .            # a separate CI step - `ruff check` does not cover it
 mypy --strict .
+bash scripts/build-docs.sh       # docs site, --strict: fails on a broken link
+node scripts/layout-probe.js <dashboard.html>   # only after touching sticky/z-index/overlap CSS
 ```
 
 For a subset: `pytest tests/test_x.py --no-cov` (see below for why `--no-cov`).
@@ -54,7 +57,7 @@ To see a change: `python3 dashboard_html.py --html` (writes `~/.claude/metrics/d
 - **The two dashboards duplicate logic.** A fix in one does not reach the other - every chart mode, for instance, is implemented twice. Change both, and test both.
 - **Code that runs only inside a `sys.addaudithook` callback is invisible to coverage.py** (measured: real calls, 0% reported, under both the CTracer and sys.monitoring cores). `tests/conftest.py`'s `_audit_real_claude_dir_guard` dispatcher, and every helper only reachable through it, is this shape. Don't pragma it: call the same private functions directly, with the argument shapes `test_real_metrics_isolation.py` proved CPython produces (`tests/test_conftest_guard_direct_dispatch.py`). Keep both kinds of test - the behavioral ones prove the real audit event shapes, the direct-call ones make conftest's 100% mean anything.
 - **The rendering tests run in jsdom, which performs no layout.** A green suite says nothing about sticky positioning, z-index or overlap. After touching those in `dashboard_html_assets.py`'s `STYLE`, run `scripts/layout-probe.js` (see `scripts/README.md`).
-- **The full suite takes ~30 s on an idle machine and 5+ minutes under load** (1940 tests, 315 s at load average 22). Give it a timeout well above the 120 s default, and check `uptime` before reading a timeout as a hang.
+- **The full suite takes 3-4 minutes on a quiet machine and 7+ under load** (2459 tests: 210 s at load average 3, 405 s when other work ran). Run it in the background, give it a timeout well above the 120 s default, and check `uptime` before reading a timeout as a hang.
 - **A green 100% gate on macOS does not mean a green CI: CI runs on Linux.** Any `sys.platform` branch in measured code (including `tests/conftest.py`) needs a test that forces each platform with `monkeypatch.setattr(sys, "platform", ...)`, or the gate fails on the other one only. Reproduce locally in a Linux container as a NON-root user (`docker run --user 1000:1000 ...`): as root, the chmod-000 "unreadable state" tests fail because root can read anything. Mount a `git archive` copy under the gitignored `.superpowers/`, never under `/private/tmp`: Docker Desktop's VM does not share it, and the mount comes up empty with no error.
 - **A branch chart segment is a project AND a branch**, keyed `<project>\x1f<branch>` (`branches.series_key_of`, labelled `project:branch` by `branch_series_label`). Keying by branch name alone merges two projects' `main`.
 - **`tools/make-demo-assets.py` takes ~8 minutes and rewrites `assets/`.** Run it once, after the layout is approved and after any layout change, then commit the four images.
