@@ -220,3 +220,40 @@ def test_the_headline_says_so_when_no_weekly_window_is_open() -> None:
     view = weekly_meter_view.describe_weekly_meter(meter, "en")
 
     assert view["headline"] == "No weekly window is open right now."
+
+
+def test_the_summary_has_one_line_for_the_meter_and_one_for_the_causes() -> None:
+    from cache_causes_fixtures import causes_for
+    from metrics_core import cache_causes_view
+
+    view = weekly_meter_view.describe_weekly_meter(_meter([4_000, 9_000], current=3_000), "en")
+    view["causes"] = cache_causes_view.describe_cache_causes(causes_for(), "en")
+
+    lines = weekly_meter_view.describe_hypotheses_summary(view, "en")
+
+    assert lines == [
+        f"Weekly limit: {view['headline']}",
+        f"Cache creation: {view['causes']['headline']}",
+    ]
+    pt_lines = weekly_meter_view.describe_hypotheses_summary(view, "pt")
+    assert pt_lines[0].startswith("Limite semanal: ")
+
+
+def test_the_summary_leaves_out_causes_that_are_missing_empty_or_without_a_headline() -> None:
+    view = weekly_meter_view.describe_weekly_meter(_meter([4_000, 9_000], current=3_000), "en")
+    only_meter = [f"Weekly limit: {view['headline']}"]
+
+    assert weekly_meter_view.describe_hypotheses_summary(view, "en") == only_meter
+    assert (
+        weekly_meter_view.describe_hypotheses_summary({**view, "causes": {"empty": True}}, "en")
+        == only_meter
+    )
+    silent = {"empty": False, "headline": ""}
+    assert (
+        weekly_meter_view.describe_hypotheses_summary({**view, "causes": silent}, "en")
+        == only_meter
+    )
+
+
+def test_the_summary_has_no_meter_line_when_the_meter_has_no_headline() -> None:
+    assert weekly_meter_view.describe_hypotheses_summary({"headline": ""}, "en") == []

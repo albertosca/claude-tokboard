@@ -493,6 +493,9 @@ STYLE = """
         border: 1px solid var(--text-muted);
         vertical-align: -1px;
       }
+      .hyp-summary { padding: 0 10px; font-size: 11px; font-family: monospace; }
+      .hyp-summary p { margin: 2px 0; color: var(--text-secondary); }
+      .hypotheses-details { margin: 0 10px 8px; }
       .quota-line {
         padding: 6px 10px 0;
         font-size: 11px;

@@ -162,6 +162,18 @@ def describe_weekly_meter(meter: dict[str, Any], lang: str) -> dict[str, Any]:
     return view
 
 
+def describe_hypotheses_summary(view: dict[str, Any], lang: str) -> list[str]:
+    """The lines shown under the quota line: the meter's headline, then the
+    causes' when it has one. The cards behind them hold everything else."""
+    lines = []
+    if view["headline"]:
+        lines.append(t("summary.meter", lang, headline=view["headline"]))
+    causes = view.get("causes")
+    if causes and not causes["empty"] and causes["headline"]:
+        lines.append(t("summary.causes", lang, headline=causes["headline"]))
+    return lines
+
+
 def _project_of(metrics_directory: Path, lang: str) -> dict[str, str]:
     """Conversation id to project label, through the session records: a call
     row carries the transcript's id, which is the session id."""

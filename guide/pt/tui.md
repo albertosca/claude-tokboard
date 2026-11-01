@@ -20,7 +20,7 @@ O app ocupa a tela toda. Ele não roda dentro do Claude Code.
 
 | Tecla | Ação |
 |---|---|
-| <kbd>g</kbd> | Vai para a próxima aba: Sessões, Panorama, Hipóteses. |
+| <kbd>g</kbd> | Vai para a próxima aba: Sessões, Panorama. |
 | <kbd>t</kbd> | Muda o modo do gráfico. |
 | <kbd>p</kbd> | Muda o período. |
 | <kbd>q</kbd> | Sai. |
@@ -40,7 +40,7 @@ A tabela de sessões tem um painel de detalhe.
 
 No terminal o painel de tokens por branch fica na aba **Panorama**, com a linha de cota e o gráfico; a página do navegador o põe em **Sessões**.
 
-O medidor do limite semanal e as causas do cache creation ficam na aba **Hipóteses**, como na página do navegador. As tabelas começam fechadas: vá até uma e aperte <kbd>Enter</kbd> para abrir.
+Na aba **Panorama**, duas linhas resumem o medidor do limite semanal e as causas do cache creation, e um bloco fechado de detalhes embaixo delas tem os cartões completos. Vá até ele e aperte <kbd>Enter</kbd> para abrir; as tabelas lá dentro também começam fechadas.
 
 ## Terminais pequenos
 

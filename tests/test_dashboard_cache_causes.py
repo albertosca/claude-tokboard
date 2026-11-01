@@ -81,14 +81,14 @@ def test_text_is_escaped() -> None:
     assert "&lt;script&gt;" in page
 
 
-def test_render_html_places_the_panel_after_the_meter_inside_the_hypotheses_tab() -> None:
+def test_render_html_places_the_panel_after_the_meter_inside_the_details_disclosure() -> None:
     from test_dashboard_html_page import _empty_render_html_kwargs
 
     weekly = weekly_meter_view.describe_weekly_meter(meter_for([4_000, 9_000], 3_000), "en")
     weekly["causes"] = _view()
     page = dashboard_html.render_html(**_empty_render_html_kwargs(), lang="en", weekly_meter=weekly)
 
-    assert page.index('id="tab-hypotheses"') < page.index('class="weekly-meter"')
+    assert page.index('hypotheses-details"') < page.index('class="weekly-meter"')
     assert page.index('class="weekly-meter"') < page.index('id="cache-causes-heading"')
 
 

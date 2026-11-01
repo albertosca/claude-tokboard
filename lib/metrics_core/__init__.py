@@ -155,7 +155,11 @@ from .records import (
     record_token_total,
 )
 from .transcript_ingest import TOKEN_FIELDS, append_record, parse_transcript
-from .weekly_meter_view import describe_weekly_meter, load_weekly_meter_view
+from .weekly_meter_view import (
+    describe_hypotheses_summary,
+    describe_weekly_meter,
+    load_weekly_meter_view,
+)
 from .weekly_windows import compute_weekly_meter
 
 __all__ = [
@@ -232,6 +236,7 @@ __all__ = [
     "describe_branch_filter",
     "describe_branches",
     "describe_cache_causes",
+    "describe_hypotheses_summary",
     "describe_weekly_meter",
     "expand_records_to_daily_deltas",
     "file_kind_problem",

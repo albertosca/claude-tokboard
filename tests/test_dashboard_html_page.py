@@ -325,7 +325,7 @@ def test_render_html_marks_exactly_one_default_period_active_per_block_family(
     ) -> str:
         return f"PANORAMA::{period_id}"
 
-    def fake_legend(totals: Any, *, lang: str) -> str:
+    def fake_legend(totals: Any, *, lang: str, summary_lines: Any = ()) -> str:
         call_index = len(call_order)
         call_order.append(call_index)
         return f"LEGEND::{mr.PERIODS[call_index].id}"

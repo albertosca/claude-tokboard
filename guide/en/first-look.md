@@ -45,10 +45,7 @@ That project, token type or model is highlighted across the whole chart.
 
 The **Sessions** tab has **tokens per branch** and a **session table**, grouped by project.
 
-The **Hypotheses** tab has:
-
-- the **weekly-limit meter**;
-- where your **cache creation** comes from.
+Under the quota line, two lines sum up the **weekly-limit meter** and where your **cache creation** comes from. A closed block of details beside them holds the full cards.
 
 Each of these has its own page:
 

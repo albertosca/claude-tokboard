@@ -158,10 +158,13 @@ MESSAGES: dict[str, dict[str, str]] = {
     "causes.cause.incremental": {"en": "normal growth", "pt": "crescimento normal"},
     "causes.bar_alt": {"en": "{window}: {parts}", "pt": "{window}: {parts}"},
     "causes.terms_title": {"en": "What these terms mean", "pt": "O que significam esses termos"},
-    "tab.hypotheses": {"en": "Hypotheses", "pt": "Hipóteses"},
-    "hypotheses.empty": {
-        "en": "No weekly-limit data yet.",
-        "pt": "Ainda não há dados do limite semanal.",
+    # The two lines under the quota line, and the closed block that holds the
+    # full cards behind them.
+    "summary.meter": {"en": "Weekly limit: {headline}", "pt": "Limite semanal: {headline}"},
+    "summary.causes": {"en": "Cache creation: {headline}", "pt": "Cache creation: {headline}"},
+    "summary.details": {
+        "en": "Weekly-limit and cache details",
+        "pt": "Detalhes do limite semanal e do cache",
     },
     # Why the cache was written (cold start, rewrite, incremental).
     "causes.heading": {

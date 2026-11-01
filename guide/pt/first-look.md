@@ -45,10 +45,7 @@ Aquele projeto, tipo de token ou modelo fica destacado no gráfico inteiro.
 
 A aba **Sessões** tem os **tokens por branch** e uma **tabela de sessões**, agrupada por projeto.
 
-A aba **Hipóteses** tem:
-
-- o **medidor do limite semanal**;
-- de onde vem o seu **cache creation**.
+Embaixo da linha de cota, duas linhas resumem o **medidor do limite semanal** e de onde vem o seu **cache creation**. Um bloco fechado de detalhes ao lado tem os cartões completos.
 
 Cada um tem a sua página:
 

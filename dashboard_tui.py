@@ -823,6 +823,19 @@ class QuotaSummary(Static):
         return line
 
 
+class HypothesesSummary(Static):
+    """What the weekly meter and the cache causes found, one line each - the
+    closed details below it hold the cards. Not part of QuotaSummary, which
+    only shows in the token-type chart mode: these lines belong to every mode."""
+
+    def __init__(self, lines: Sequence[str], **keyword_arguments: Any) -> None:
+        super().__init__(**keyword_arguments)
+        self.lines = list(lines)
+
+    def render(self) -> RenderResult:
+        return Text("\n").join(Text(line) for line in self.lines)
+
+
 LEGEND_CHIP_SEPARATOR = "   "
 
 
@@ -1765,7 +1778,7 @@ def legend_visibility(mode: str) -> dict[str, bool]:
 # recomposed pane's widget to be mounted before giving up on focusing it.
 FOCUS_RESTORE_ATTEMPTS = 5
 
-TABS = ("tab-sessions", "tab-panorama", "tab-hypotheses")
+TABS = ("tab-sessions", "tab-panorama")
 
 
 class MetricsTUIApp(App[None]):
@@ -1786,6 +1799,7 @@ class MetricsTUIApp(App[None]):
     TabbedContent { height: 1fr; }
     Tree { width: 62%; }
     SessionDetailPanel { width: 1fr; border-left: solid $panel; padding: 1; }
+    #hypotheses-scroll { height: auto; max-height: 18; }
     .backfill-note {
         color: $text-muted; height: 1; padding: 0 1;
         text-wrap: nowrap; text-overflow: ellipsis;
@@ -1874,9 +1888,24 @@ class MetricsTUIApp(App[None]):
                 shown = legend_visibility(self.chart_mode)
                 if self.data.get("branches") and not self.data["branches"]["empty"]:
                     yield BranchesPanel(self.data["branches"])
+                meter = self.data.get("weekly_meter")
                 quota = QuotaSummary(totals, self.metrics_core_module, lang=lang)
                 quota.display = shown["quota"]
                 yield quota
+                if meter:
+                    yield HypothesesSummary(
+                        self.metrics_core_module.describe_hypotheses_summary(meter, lang)
+                    )
+                    # The full cards, closed: the two summary lines above say
+                    # what they found, and the legend and chart keep their rows.
+                    details_title = self.metrics_core_module.t("summary.details", lang)
+                    details = Collapsible(
+                        title=details_title,
+                        collapsed=details_title not in self.open_collapsibles,
+                        id="hypotheses-details",
+                    )
+                    with details, VerticalScroll(id="hypotheses-scroll"):
+                        yield from self._hypotheses_widgets(meter)
                 composition = CompositionLegend(totals, self.metrics_core_module, lang=lang)
                 composition.display = shown["composition"]
                 yield composition
@@ -1908,21 +1937,12 @@ class MetricsTUIApp(App[None]):
                     self.data["open_projects"],
                     lang=lang,
                 )
-            with (
-                TabPane(self.metrics_core_module.t("tab.hypotheses", lang), id="tab-hypotheses"),
-                VerticalScroll(id="hypotheses-scroll"),
-            ):
-                yield from self._hypotheses_widgets()
         yield Footer()
 
-    def _hypotheses_widgets(self) -> ComposeResult:
+    def _hypotheses_widgets(self, meter: dict[str, Any]) -> ComposeResult:
         """The weekly-limit card and the cache-causes card, each a headline
         with its tables in closed Collapsibles - the same dicts the HTML
-        tab renders."""
-        meter = self.data.get("weekly_meter")
-        if not meter:
-            yield Static(self.metrics_core_module.t("hypotheses.empty", self.data["lang"]))
-            return
+        page renders."""
         yield WeeklyMeterPanel(meter, self.metrics_core_module)
         if not meter["empty"] and meter["rows"]:
             yield Collapsible(
@@ -1955,8 +1975,8 @@ class MetricsTUIApp(App[None]):
         self.open_collapsibles = {
             str(item.title) for item in self.query(Collapsible) if not item.collapsed
         }
-        scroller = self.query_one("#hypotheses-scroll")
-        self.hypotheses_scroll = scroller.scroll_y
+        for scroller in self.query("#hypotheses-scroll"):
+            self.hypotheses_scroll = scroller.scroll_y
 
     def _sync_legend_visibility(self) -> None:
         shown = legend_visibility(self.query_one(TrendChart).mode)
@@ -2050,8 +2070,6 @@ class MetricsTUIApp(App[None]):
         tabbed.active = following
         if following == "tab-sessions":
             self.query_one(Tree).focus()
-        elif following == "tab-hypotheses":
-            self.query_one("#hypotheses-scroll").focus()
         # Kept in sync here so a later action_cycle_period recompose (which
         # builds a brand-new TabbedContent from scratch) knows which pane
         # to reopen on, instead of always defaulting to the first one.
@@ -2126,13 +2144,14 @@ class MetricsTUIApp(App[None]):
         if it never appears nothing happens: focus is a nicety, a crash is
         not."""
         try:
-            if self.active_tab_id == "tab-hypotheses":
-                widget: Widget = self.query_one("#hypotheses-scroll")
-                self.call_after_refresh(widget.scroll_to, y=self.hypotheses_scroll, animate=False)
-            else:
-                widget = self.query_one(
-                    Tree if self.active_tab_id == "tab-sessions" else TrendChart
-                )
+            widget: Widget = self.query_one(
+                Tree if self.active_tab_id == "tab-sessions" else TrendChart
+            )
+            scroller = (
+                self.query("#hypotheses-scroll").first() if self.data["weekly_meter"] else None
+            )
+            if scroller is not None:
+                self.call_after_refresh(scroller.scroll_to, y=self.hypotheses_scroll, animate=False)
         except NoMatches:
             if attempts_left > 1:
                 self.call_after_refresh(self._restore_focus_after_period_cycle, attempts_left - 1)

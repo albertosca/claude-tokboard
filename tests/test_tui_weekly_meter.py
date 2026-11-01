@@ -12,7 +12,7 @@ from typing import Any
 
 import pytest
 from rich.text import Text
-from textual.widgets import Collapsible, Static, TabbedContent
+from textual.widgets import Collapsible, TabbedContent
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "lib"))
@@ -93,7 +93,7 @@ def test_the_lower_bound_caveat_is_on_the_panel() -> None:
     assert "only the Claude Code sessions on this machine" in _panel_text(_view([4_000, 9_000]))
 
 
-def test_the_app_shows_the_panel_on_the_hypotheses_tab_and_omits_it_without_a_view(
+def test_the_app_shows_the_panel_in_the_details_and_omits_it_without_a_view(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     seeded_tui_home(monkeypatch, tmp_path)
@@ -101,26 +101,51 @@ def test_the_app_shows_the_panel_on_the_hypotheses_tab_and_omits_it_without_a_vi
     data = tui.load_data(arguments, metrics_core_module=mr)
     assert data["weekly_meter"]["empty"] is True
 
-    async def drive(with_view: bool) -> int:
+    async def drive(with_view: bool) -> tuple[int, int, list[list[str]]]:
         shown = dict(data)
         if not with_view:
             shown["weekly_meter"] = None
         app = tui.MetricsTUIApp(mr, shown, arguments=arguments)
         async with app.run_test(size=(120, 40)) as pilot:
             await pilot.pause()
-            await pilot.press("g", "g")
-            await pilot.pause()
-            assert app.active_tab_id == "tab-hypotheses"
-            pane = app.query_one("#tab-hypotheses")
-            assert not app.query_one("#tab-panorama").query(tui.WeeklyMeterPanel)
-            if not with_view:
-                assert mr.t("hypotheses.empty", data["lang"]) in "".join(
-                    str(widget.render()) for widget in pane.query(Static)
-                )
-            return len(pane.query(tui.WeeklyMeterPanel))
+            assert not app.query("#tab-sessions WeeklyMeterPanel")
+            panels = len(app.query("#tab-panorama #hypotheses-details WeeklyMeterPanel"))
+            return (
+                panels,
+                len(app.query("#hypotheses-details")),
+                [summary.lines for summary in app.query(tui.HypothesesSummary)],
+            )
 
-    assert asyncio.run(drive(True)) == 1
-    assert asyncio.run(drive(False)) == 0
+    panels, details, lines = asyncio.run(drive(True))
+    assert (panels, details) == (1, 1)
+    assert lines == [mr.describe_hypotheses_summary(data["weekly_meter"], data["lang"])]
+    assert asyncio.run(drive(False)) == (0, 0, [])
+
+
+def test_the_summary_prints_one_line_each_and_keeps_square_brackets_literal() -> None:
+    rendered = tui.HypothesesSummary(["Weekly limit: x [y]", "Cache creation: z"]).render()
+
+    assert isinstance(rendered, Text)
+    assert rendered.plain.splitlines() == ["Weekly limit: x [y]", "Cache creation: z"]
+
+
+def test_the_summary_shows_in_every_chart_mode(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    app, _ = _hypotheses_app(monkeypatch, tmp_path)
+
+    async def drive() -> list[bool]:
+        shown = []
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause()
+            await pilot.press("g")
+            for _ in range(4):
+                shown.append(app.query_one(tui.HypothesesSummary).display)
+                await pilot.press("t")
+                await pilot.pause()
+        return shown
+
+    assert asyncio.run(drive()) == [True, True, True, True]
 
 
 def test_cycling_the_period_keeps_the_same_weekly_view(
@@ -232,7 +257,7 @@ def test_the_stacked_bar_draws_nothing_when_there_is_nothing_to_split() -> None:
     assert tui.stacked_bar_text(bar, 10).plain.splitlines()[1] == ""
 
 
-def test_the_hypotheses_tab_starts_with_every_table_closed(
+def test_the_details_start_closed_with_every_table_closed_too(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     seeded_tui_home(monkeypatch, tmp_path)
@@ -245,25 +270,23 @@ def test_the_hypotheses_tab_starts_with_every_table_closed(
         app = tui.MetricsTUIApp(mr, data, arguments=arguments)
         async with app.run_test(size=(120, 40)) as pilot:
             await pilot.pause()
-            await pilot.press("g", "g")
-            await pilot.pause()
             collapsibles = list(app.query(Collapsible))
-            focused = app.focused
             return (
                 [item.collapsed for item in collapsibles],
                 [str(item.title) for item in collapsibles],
-                "" if focused is None else str(focused.id),
+                type(app.focused).__name__,
             )
 
     collapsed, titles, focused = asyncio.run(drive())
 
     assert collapsed and all(collapsed)
+    assert mr.t("summary.details", data["lang"]) in titles
     assert data["weekly_meter"]["details_title"] in titles
     assert data["weekly_meter"]["causes"]["terms_title"] in titles
-    assert focused == "hypotheses-scroll"
+    assert focused == "Tree"
 
 
-def test_the_period_key_on_the_hypotheses_tab_keeps_the_tab_and_its_focus(
+def test_the_period_key_keeps_the_panorama_tab_and_the_chart_focus(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     seeded_tui_home(monkeypatch, tmp_path)
@@ -274,13 +297,12 @@ def test_the_period_key_on_the_hypotheses_tab_keeps_the_tab_and_its_focus(
         app = tui.MetricsTUIApp(mr, data, arguments=arguments)
         async with app.run_test(size=(120, 40)) as pilot:
             await pilot.pause()
-            await pilot.press("g", "g", "p")
+            await pilot.press("g", "p")
             await pilot.pause()
             await pilot.pause()
-            focused = app.focused
-            return app.active_tab_id, "" if focused is None else str(focused.id)
+            return app.active_tab_id, type(app.focused).__name__
 
-    assert asyncio.run(drive()) == ("tab-hypotheses", "hypotheses-scroll")
+    assert asyncio.run(drive()) == ("tab-panorama", "TrendChart")
 
 
 def test_the_window_column_is_as_wide_as_the_longest_label() -> None:
@@ -308,11 +330,7 @@ def test_the_causes_card_skips_the_headline_line_when_there_is_none() -> None:
 
 
 def test_next_tab_wraps_and_falls_back_to_the_first_for_an_unknown_value() -> None:
-    assert [tui.next_tab(tab) for tab in tui.TABS] == [
-        "tab-panorama",
-        "tab-hypotheses",
-        "tab-sessions",
-    ]
+    assert [tui.next_tab(tab) for tab in tui.TABS] == ["tab-panorama", "tab-sessions"]
     assert tui.next_tab("") == "tab-sessions"
 
 
@@ -338,15 +356,15 @@ def test_a_tab_changed_without_g_is_the_one_the_period_key_reopens_on(
         async with app.run_test(size=(120, 40)) as pilot:
             await pilot.pause()
             app.set_focus(None)
-            app.query_one(TabbedContent).active = "tab-hypotheses"
+            app.query_one(TabbedContent).active = "tab-panorama"
             await pilot.pause()
-            assert app.active_tab_id == "tab-hypotheses"
+            assert app.active_tab_id == "tab-panorama"
             await pilot.press("p")
             await pilot.pause()
             await pilot.pause()
             return app.query_one(TabbedContent).active
 
-    assert asyncio.run(drive()) == "tab-hypotheses"
+    assert asyncio.run(drive()) == "tab-panorama"
 
 
 def test_the_period_key_keeps_the_opened_tables_and_the_scroll_position(
@@ -355,11 +373,13 @@ def test_the_period_key_keeps_the_opened_tables_and_the_scroll_position(
     app, _ = _hypotheses_app(monkeypatch, tmp_path)
 
     async def drive() -> tuple[list[str], list[str], float]:
-        async with app.run_test(size=(100, 14)) as pilot:
+        async with app.run_test(size=(100, 40)) as pilot:
             await pilot.pause()
-            await pilot.press("g", "g")
+            await pilot.press("g")
             await pilot.pause()
-            first = next(iter(app.query(Collapsible)))
+            outer, first = list(app.query(Collapsible))[:2]
+            outer.collapsed = False
+            await pilot.pause()
             first.collapsed = False
             await pilot.pause()
             app.query_one("#hypotheses-scroll").scroll_to(y=3, animate=False)
@@ -373,6 +393,27 @@ def test_the_period_key_keeps_the_opened_tables_and_the_scroll_position(
 
     before, after, scroll_offset = asyncio.run(drive())
 
-    assert len(before) == 1
+    assert len(before) == 2
     assert after == before
     assert scroll_offset == 3
+
+
+def test_the_period_key_works_without_a_weekly_view(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    seeded_tui_home(monkeypatch, tmp_path)
+    arguments = tui.build_arg_parser().parse_args(["--label-budget", "0"])
+    data = tui.load_data(arguments, metrics_core_module=mr)
+    data["weekly_meter"] = None
+    data["base"]["weekly_meter"] = None
+
+    async def drive() -> tuple[int, str]:
+        app = tui.MetricsTUIApp(mr, data, arguments=arguments)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause()
+            await pilot.press("p")
+            for _ in range(4):
+                await pilot.pause()
+            return len(app.query("#hypotheses-scroll")), type(app.focused).__name__
+
+    assert asyncio.run(drive()) == (0, "Tree")

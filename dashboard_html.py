@@ -73,7 +73,9 @@ SERIES_NAMES = {
 }
 
 
-def render_composition_legend(totals: dict[str, int], *, lang: str) -> str:
+def render_composition_legend(
+    totals: dict[str, int], *, lang: str, summary_lines: tuple[str, ...] | list[str] = ()
+) -> str:
     chips = []
     for css_class, name in SERIES_NAMES.items():
         chips.append(
@@ -100,7 +102,14 @@ def render_composition_legend(totals: dict[str, int], *, lang: str) -> str:
     )
     quota_tooltip = html.escape(metrics_core_module.t("quota_tooltip", lang))
     quota_line = f'<div class="quota-line" title="{quota_tooltip}">{quota_text}</div>'
-    return quota_line + '<div class="comp-legend">' + "".join(chips) + "</div>"
+    summary = (
+        '<div class="hyp-summary">'
+        + "".join(f"<p>{html.escape(line)}</p>" for line in summary_lines)
+        + "</div>"
+        if summary_lines
+        else ""
+    )
+    return quota_line + '<div class="comp-legend">' + "".join(chips) + "</div>" + summary
 
 
 def render_floor_total(record: dict[str, Any], css_class: str, *, lang: str) -> str:
@@ -1322,10 +1331,11 @@ def render_period_filter(*, lang: str) -> str:
     return f'<div class="period-filter">{"".join(chips)}{render_backfill_note(lang=lang)}</div>'
 
 
-def _render_disclosure(title: str, body: str) -> str:
+def _render_disclosure(title: str, body: str, *, extra_class: str = "") -> str:
     """A closed native disclosure: the body stays out of sight until asked for,
     and the summary names the question and how many rows answer it."""
-    return f'<details class="meter-details"><summary>{html.escape(title)}</summary>{body}</details>'
+    classes = f"meter-details {extra_class}".strip()
+    return f'<details class="{classes}"><summary>{html.escape(title)}</summary>{body}</details>'
 
 
 def render_weekly_meter(view: dict[str, Any]) -> str:
@@ -1716,6 +1726,10 @@ def render_html(
     # `.period-block` class, so selectPeriod()'s single
     # querySelectorAll('.period-block') toggles all of them together - the
     # surfaces still cannot disagree about the period.
+    causes_view = (weekly_meter or {}).get("causes")
+    summary_lines = (
+        metrics_core_module.describe_hypotheses_summary(weekly_meter, lang) if weekly_meter else []
+    )
     trend_blocks = []
     panorama_blocks = []
     # The composition legend is the Sessions tab's own total. It used to be
@@ -1784,6 +1798,7 @@ def render_html(
                     metrics_core_module.filter_sessions_by_window(records, window)
                 ),
                 lang=lang,
+                summary_lines=summary_lines,
             )
             + "</div>"
         )
@@ -1799,18 +1814,27 @@ def render_html(
         '<span class="tab-btn" id="tab-btn-panorama" '
         'role="tab" tabindex="-1" aria-selected="false" aria-controls="tab-panorama" '
         f"onclick=\"showTab('panorama')\">{metrics_core_module.t('tab.panorama', lang)}</span>"
-        '<span class="tab-btn" id="tab-btn-hypotheses" '
-        'role="tab" tabindex="-1" aria-selected="false" aria-controls="tab-hypotheses" '
-        f"onclick=\"showTab('hypotheses')\">{metrics_core_module.t('tab.hypotheses', lang)}</span>"
         "</div>"
     )
-    causes_view = (weekly_meter or {}).get("causes")
+    # Two lines under the quota line say what the meter and the causes found;
+    # the full cards sit behind one closed disclosure beside them, so the page
+    # opens no taller than before.
+    hypotheses_details_html = (
+        _render_disclosure(
+            metrics_core_module.t("summary.details", lang),
+            render_weekly_meter(weekly_meter)
+            + (render_cache_causes(causes_view) if causes_view else ""),
+            extra_class="hypotheses-details",
+        )
+        if weekly_meter
+        else ""
+    )
     sessions_tab_html = (
         '<div class="tab-pane active" id="tab-sessions" role="tabpanel" '
         'aria-labelledby="tab-btn-sessions">'
         f"{''.join(branch_blocks)}"
         '<div class="main-row">'
-        f'<div class="session-list">{legend_blocks_html}'
+        f'<div class="session-list">{legend_blocks_html}{hypotheses_details_html}'
         f"{render_session_header(has_tmux_data, lang=lang)}{''.join(rows_html)}</div>"
         '<div class="detail-container">'
         f'<p class="detail-hint">{metrics_core_module.t("detail.hint", lang)}</p>'
@@ -1821,19 +1845,6 @@ def render_html(
     panorama_tab_html = (
         '<div class="tab-pane" id="tab-panorama" role="tabpanel" '
         f'aria-labelledby="tab-btn-panorama">{panorama_blocks_html}</div>'
-    )
-    # The meter and the causes are hypotheses about the weekly limit, not
-    # about sessions, so they have a tab of their own.
-    hypotheses_body = (
-        render_weekly_meter(weekly_meter)
-        + (render_cache_causes(causes_view) if causes_view else "")
-        if weekly_meter
-        else '<p class="meter-caveat">'
-        f"{html.escape(metrics_core_module.t('hypotheses.empty', lang))}</p>"
-    )
-    hypotheses_tab_html = (
-        '<div class="tab-pane" id="tab-hypotheses" role="tabpanel" '
-        f'aria-labelledby="tab-btn-hypotheses">{hypotheses_body}</div>'
     )
     # Opens with every token type AND every project color already
     # selected (2026-07-21: "tanto lá quanto na legenda... precisa
@@ -1872,7 +1883,6 @@ def render_html(
         f"{tabs_html}"
         f"{sessions_tab_html}"
         f"{panorama_tab_html}"
-        f"{hypotheses_tab_html}"
         "</main>"
         f"{SCRIPT}"
         "</body></html>"

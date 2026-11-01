@@ -25,7 +25,7 @@ function state() {
 }
 
 const report = { initial: state() };
-document.getElementById("tab-btn-hypotheses").click();
+document.getElementById("tab-btn-panorama").click();
 report.afterClick = state();
 
 const panorama = document.getElementById("tab-btn-panorama");
@@ -33,15 +33,9 @@ panorama.focus();
 panorama.dispatchEvent(
   new window.KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true, cancelable: true }),
 );
-report.afterArrowRight = state();
-
-const hypotheses = document.getElementById("tab-btn-hypotheses");
-hypotheses.dispatchEvent(
-  new window.KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true, cancelable: true }),
-);
 report.afterWrap = state();
 
-const summary = document.querySelector("#tab-hypotheses details > summary");
+const summary = document.querySelector("details.hypotheses-details > summary");
 report.summaryFound = summary !== null;
 if (summary) {
   const details = summary.parentElement;

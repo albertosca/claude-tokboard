@@ -20,7 +20,7 @@ The app is full-screen. It cannot run inside Claude Code.
 
 | Key | Action |
 |---|---|
-| <kbd>g</kbd> | Go to the next tab: Sessions, Overview, Hypotheses. |
+| <kbd>g</kbd> | Go to the next tab: Sessions, Overview. |
 | <kbd>t</kbd> | Change the chart mode. |
 | <kbd>p</kbd> | Change the period. |
 | <kbd>q</kbd> | Quit. |
@@ -40,7 +40,7 @@ The session table has a detail panel.
 
 In the terminal the tokens-per-branch panel sits on the **Overview** tab, with the quota line and the chart; the browser page puts it on **Sessions**.
 
-The weekly-limit meter and the cache-creation causes are on the **Hypotheses** tab, like the browser page. Their tables start closed: move to one and press <kbd>Enter</kbd> to open it.
+On the **Overview** tab, two lines sum up the weekly-limit meter and the cache-creation causes, and a closed block of details under them holds the full cards. Move to it and press <kbd>Enter</kbd> to open it; the tables inside start closed too.
 
 ## Small terminals
 
