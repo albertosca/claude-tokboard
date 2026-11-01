@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from .projects import PROJECT_COLOR_SLOTS
+from .projects import PROJECT_COLOR_SLOTS, color_group_key
 from .records import record_token_total
 
 # The chart's own slots are as many as a project's, so a branch tab reads like
@@ -16,10 +16,24 @@ from .records import record_token_total
 # never be a real branch (a branch called "others" stays a branch).
 BRANCH_COLOR_SLOTS = PROJECT_COLOR_SLOTS
 BRANCH_OTHERS_KEY = "\x00others"
+# A chart segment is one branch of one project, so two projects' `main` stay
+# two segments. The unit separator cannot occur in a path or a branch name.
+SERIES_SEPARATOR = "\x1f"
 
 
 def branch_of(record: dict[str, Any]) -> str | None:
     return record.get("git_branch") or None
+
+
+def series_key_of(record: dict[str, Any]) -> str | None:
+    """The chart segment's identity for a record: its project (a worktree
+    folds into its parent, as in the chart legend) and branch, None for no
+    branch."""
+    branch = branch_of(record)
+    if branch is None:
+        return None
+    group = color_group_key(record.get("project_path")) or ""
+    return f"{group}{SERIES_SEPARATOR}{branch}"
 
 
 def list_group_branches(records: list[dict[str, Any]]) -> list[tuple[str | None, int]]:
@@ -35,26 +49,27 @@ def list_group_branches(records: list[dict[str, Any]]) -> list[tuple[str | None,
 def assign_branch_slots(
     records: list[dict[str, Any]], slot_count: int = BRANCH_COLOR_SLOTS
 ) -> dict[str, int]:
-    """Which branches get a colour slot: the biggest spenders over `records`,
-    ties by name. "No branch" and branches with no tokens never take one."""
+    """Which project:branch segments get a colour slot: the biggest spenders
+    over `records`, ties by name. "No branch" and segments with no tokens
+    never take one."""
     totals: dict[str, int] = {}
     for record in records:
-        branch = branch_of(record)
+        key = series_key_of(record)
         tokens = record_token_total(record)
-        if branch is None or tokens <= 0:
+        if key is None or tokens <= 0:
             continue
-        totals[branch] = totals.get(branch, 0) + tokens
-    ordered = sorted(totals, key=lambda branch: (-totals[branch], branch))
-    return {branch: slot for slot, branch in enumerate(ordered[:slot_count])}
+        totals[key] = totals.get(key, 0) + tokens
+    ordered = sorted(totals, key=lambda key: (-totals[key], key))
+    return {key: slot for slot, key in enumerate(ordered[:slot_count])}
 
 
 def branch_bucket(record: dict[str, Any], slots: dict[str, int]) -> str | None:
-    """The chart segment a record's tokens go to: its slotted branch, None
-    for no branch, or BRANCH_OTHERS_KEY."""
-    branch = branch_of(record)
-    if branch is None:
+    """The chart segment a record's tokens go to: its slotted project:branch,
+    None for no branch, or BRANCH_OTHERS_KEY."""
+    key = series_key_of(record)
+    if key is None:
         return None
-    return branch if branch in slots else BRANCH_OTHERS_KEY
+    return key if key in slots else BRANCH_OTHERS_KEY
 
 
 def sum_tokens_by_branch(
@@ -72,8 +87,8 @@ def sum_tokens_by_branch(
 
 
 def compute_branch_series(records: list[dict[str, Any]], slots: dict[str, int]) -> list[str | None]:
-    """The segments `records` fill, in drawing order: slotted branches by
-    spend here (busiest first), then "no branch", then the others bucket."""
+    """The segments `records` fill, in drawing order: slotted project:branch
+    segments by spend here (busiest first), then "no branch", then the others bucket."""
     totals = sum_tokens_by_branch(records, slots)
     named = sorted(
         (key for key in totals if key is not None and key != BRANCH_OTHERS_KEY),

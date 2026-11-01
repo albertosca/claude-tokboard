@@ -66,9 +66,9 @@ def test_re_slicing_by_branch_keeps_every_bucket_as_tall_as_in_the_other_tabs() 
 def test_tooltips_name_the_branch_the_bucket_and_the_tokens() -> None:
     titles = _titles(_svg_block(_chart(_two_days()), "chart-branch-"))
 
-    assert any(title.startswith("main · ") and "300 tokens" in title for title in titles), titles
+    assert any(title.startswith("a:main · ") and "300 tokens" in title for title in titles), titles
     assert any(
-        title.startswith("feature/example · ") and "100 tokens" in title for title in titles
+        title.startswith("a:feature/example · ") and "100 tokens" in title for title in titles
     ), titles
     assert any(title.startswith("(no branch) · ") and "25 tokens" in title for title in titles), (
         titles
@@ -102,17 +102,17 @@ def test_branches_past_the_slots_share_one_others_segment_listed_last() -> None:
 
 
 def test_slots_given_by_the_page_fix_each_branchs_colour() -> None:
-    out = _chart(_two_days(), branch_slots={"feature/example": 0, "main": 1})
+    out = _chart(_two_days(), branch_slots={"/proj/a\x1ffeature/example": 0, "/proj/a\x1fmain": 1})
     svg = _svg_block(out, "chart-branch-")
 
-    assert re.search(r'class="chart-bar group-color-1"[^>]*>\s*<title>feature/example', svg)
-    assert re.search(r'class="chart-bar group-color-2"[^>]*>\s*<title>main', svg)
+    assert re.search(r'class="chart-bar group-color-1"[^>]*>\s*<title>a:feature/example', svg)
+    assert re.search(r'class="chart-bar group-color-2"[^>]*>\s*<title>a:main', svg)
 
 
 def test_a_chart_built_alone_settles_its_own_slots_by_spend() -> None:
     svg = _svg_block(_chart(_two_days()), "chart-branch-")
 
-    assert re.search(r'class="chart-bar group-color-1"[^>]*>\s*<title>main', svg)
+    assert re.search(r'class="chart-bar group-color-1"[^>]*>\s*<title>a:main', svg)
 
 
 def test_a_single_branch_still_draws_one_series() -> None:

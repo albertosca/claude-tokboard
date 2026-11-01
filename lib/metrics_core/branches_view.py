@@ -8,8 +8,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from .branches import BRANCH_OTHERS_KEY, branch_of, list_group_branches
+from .branches import BRANCH_OTHERS_KEY, SERIES_SEPARATOR, branch_of, list_group_branches
 from .i18n import t, tn
+from .projects import project_display_label
 from .records import record_token_total
 
 BRANCHES_SHOWN = 8
@@ -29,7 +30,10 @@ def branch_series_label(key: str | None, lang: str) -> str:
     """A chart segment's name, shared by the legend and the tooltips."""
     if key == BRANCH_OTHERS_KEY:
         return t("others", lang)
-    return _branch_label(key, lang)
+    if key is None:
+        return _branch_label(None, lang)
+    group, _, branch = key.partition(SERIES_SEPARATOR)
+    return f"{project_display_label(group or None, lang=lang)}:{_branch_label(branch, lang)}"
 
 
 def _share(amount: int, total: int) -> str:
