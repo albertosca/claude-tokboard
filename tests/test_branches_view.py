@@ -1,97 +1,70 @@
-"""The strings and shares both dashboards render the branch breakdown from."""
+"""The one-line branch split a project group's header carries, in both dashboards."""
 
-from collections.abc import Sequence
 from typing import Any
 
 from metrics_core import branches_view
 
-GROUP = "/Users/username/my-api"
+PROJECT = "/Users/username/my-api"
 
 
-def _breakdown(rows: Sequence[tuple[str | None, int, int]]) -> list[dict[str, Any]]:
-    branch_rows = [
-        {"branch": name, "sessions": count, "total": total} for name, count, total in rows
+def _session(branch: str | None, tokens: int) -> dict[str, Any]:
+    return {
+        "project_path": PROJECT,
+        "git_branch": branch,
+        "input_tokens": tokens,
+        "output_tokens": 0,
+        "cache_read_tokens": 0,
+        "cache_creation_tokens": 0,
+    }
+
+
+def test_a_group_with_one_branch_has_no_summary() -> None:
+    records = [_session("main", 10), _session("main", 20)]
+
+    assert branches_view.describe_branch_summary(records, "en") == ""
+    assert branches_view.describe_branch_summary([], "en") == ""
+
+
+def test_the_two_biggest_branches_are_named_with_their_share_of_tokens() -> None:
+    records = [_session("feature/example", 25), _session("main", 50), _session("main", 25)]
+
+    summary = branches_view.describe_branch_summary(records, "en")
+
+    assert summary == "main 75% · feature/example 25%"
+
+
+def test_the_branches_past_the_second_fold_into_a_count() -> None:
+    records = [
+        _session(name, tokens) for name, tokens in (("a", 50), ("b", 30), ("c", 15), ("d", 5))
     ]
-    return [{"group": GROUP, "total": sum(total for _, _, total in rows), "branches": branch_rows}]
+
+    assert branches_view.describe_branch_summary(records, "en") == "a 50% · b 30% · +2"
 
 
-def test_nothing_to_show_is_an_empty_view() -> None:
-    view = branches_view.describe_branches([], "en")
+def test_equal_branches_are_ordered_by_name() -> None:
+    records = [_session("zeta", 10), _session("alpha", 10)]
 
-    assert view["empty"] is True
-    assert view["projects"] == []
+    assert branches_view.describe_branch_summary(records, "en") == "alpha 50% · zeta 50%"
 
 
-def test_rows_carry_formatted_numbers_and_the_share_of_the_project() -> None:
-    view = branches_view.describe_branches(
-        _breakdown([("main", 3, 7_500), ("dev", 1, 2_500)]), "en"
-    )
+def test_a_session_without_tokens_does_not_count_as_a_branch() -> None:
+    records = [_session("main", 40), _session("scratch", 0)]
 
-    assert view["empty"] is False
-    assert view["projects"][0]["project"] == "my-api"
-    assert view["projects"][0]["rows"] == [
-        {"branch": "main", "sessions": "3", "tokens": "7.5k", "share": "75%"},
-        {"branch": "dev", "sessions": "1", "tokens": "2.5k", "share": "25%"},
-    ]
-    assert "last branch" in view["note"]
-    assert list(view["columns"]) == ["branch", "sessions", "tokens", "share"]
-    assert branches_view.describe_branches([], "pt")["columns"]["share"] == "Parcela"
+    assert branches_view.describe_branch_summary(records, "en") == ""
 
 
 def test_detached_and_missing_branches_are_named_in_both_languages() -> None:
-    breakdown = _breakdown([("HEAD", 1, 2), (None, 1, 1)])
+    records = [_session("HEAD", 60), _session(None, 40)]
 
-    english = branches_view.describe_branches(breakdown, "en")["projects"][0]["rows"]
-    portuguese = branches_view.describe_branches(breakdown, "pt")["projects"][0]["rows"]
-
-    assert [row["branch"] for row in english] == ["(detached)", "(no branch)"]
-    assert [row["branch"] for row in portuguese] == ["(destacado)", "(sem branch)"]
-
-
-def test_only_the_largest_projects_are_shown() -> None:
-    breakdown = [
-        {
-            "group": f"/Users/username/project-{index}",
-            "total": 100 - index,
-            "branches": [
-                {"branch": "a", "sessions": 1, "total": 50 - index},
-                {"branch": "b", "sessions": 1, "total": 50},
-            ],
-        }
-        for index in range(branches_view.PROJECTS_SHOWN + 3)
-    ]
-
-    view = branches_view.describe_branches(breakdown, "en")
-
-    assert len(view["projects"]) == branches_view.PROJECTS_SHOWN
+    assert (
+        branches_view.describe_branch_summary(records, "en") == "(detached) 60% · (no branch) 40%"
+    )
+    assert (
+        branches_view.describe_branch_summary(records, "pt") == "(destacado) 60% · (sem branch) 40%"
+    )
 
 
-def test_branches_past_the_cap_fold_into_one_others_row() -> None:
-    total_branches = branches_view.BRANCHES_SHOWN + 3
-    rows = [
-        (f"branch-{index}", 2, 1_000 * (total_branches - index)) for index in range(total_branches)
-    ]
+def test_a_branch_named_like_the_others_key_stays_a_branch() -> None:
+    records = [_session("others", 70), _session("main", 30)]
 
-    shown = branches_view.describe_branches(_breakdown(rows), "en")["projects"][0]["rows"]
-
-    assert len(shown) == branches_view.BRANCHES_SHOWN + 1
-    assert shown[-1]["branch"] == "others (3)"
-    assert shown[-1]["sessions"] == "6"
-    assert shown[-1]["tokens"] == "6.0k"
-
-
-def test_a_branch_named_like_the_others_row_stays_its_own_row() -> None:
-    rows = [("others (3)", 1, 5), ("main", 1, 4)]
-
-    shown = branches_view.describe_branches(_breakdown(rows), "en")["projects"][0]["rows"]
-
-    assert [row["branch"] for row in shown] == ["others (3)", "main"]
-
-
-def test_a_project_without_a_path_is_labelled() -> None:
-    breakdown = _breakdown([("main", 1, 2), ("dev", 1, 1)])
-    breakdown[0]["group"] = None
-
-    view = branches_view.describe_branches(breakdown, "pt")
-
-    assert view["projects"][0]["project"] == "execuções temporárias"
+    assert branches_view.describe_branch_summary(records, "en") == "others 70% · main 30%"

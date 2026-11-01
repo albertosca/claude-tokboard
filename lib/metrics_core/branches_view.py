@@ -8,15 +8,13 @@ from __future__ import annotations
 
 from typing import Any
 
-from .branches import BRANCH_OTHERS_KEY, list_group_branches
-from .format import format_tokens
+from .branches import BRANCH_OTHERS_KEY, branch_of, list_group_branches
 from .i18n import t, tn
-from .projects import project_display_label
+from .records import record_token_total
 
-PROJECTS_SHOWN = 8
 BRANCHES_SHOWN = 8
 DETACHED_BRANCH = "HEAD"
-COLUMN_KEYS = ("branch", "sessions", "tokens", "share")
+SUMMARY_BRANCHES = 2
 
 
 def _branch_label(branch: str | None, lang: str) -> str:
@@ -38,32 +36,28 @@ def _share(amount: int, total: int) -> str:
     return f"{round(100 * amount / total) if total else 0}%"
 
 
-def _row(label: str, sessions: int, amount: int, total: int) -> dict[str, str]:
-    return {
-        "branch": label,
-        "sessions": str(sessions),
-        "tokens": format_tokens(amount),
-        "share": _share(amount, total),
-    }
-
-
-def _project_rows(item: dict[str, Any], lang: str) -> list[dict[str, str]]:
-    shown = item["branches"][:BRANCHES_SHOWN]
-    rest = item["branches"][BRANCHES_SHOWN:]
-    rows = [
-        _row(_branch_label(row["branch"], lang), row["sessions"], row["total"], item["total"])
-        for row in shown
+def describe_branch_summary(records: list[dict[str, Any]], lang: str) -> str:
+    """One project group's branch split on a single line, e.g.
+    "main 73% · feat/x 16% · +2": the two biggest branches by tokens and how
+    many more there are. Empty when the group has fewer than two branches.
+    Sessions without tokens are left out, as the session list leaves them out."""
+    totals: dict[str | None, int] = {}
+    for record in records:
+        tokens = record_token_total(record)
+        if tokens > 0:
+            branch = branch_of(record)
+            totals[branch] = totals.get(branch, 0) + tokens
+    if len(totals) < 2:
+        return ""
+    ordered = sorted(totals.items(), key=lambda item: (-item[1], item[0] or ""))
+    grand_total = sum(totals.values())
+    parts = [
+        f"{_branch_label(branch, lang)} {_share(amount, grand_total)}"
+        for branch, amount in ordered[:SUMMARY_BRANCHES]
     ]
-    if rest:
-        rows.append(
-            _row(
-                t("branches.others", lang, count=len(rest)),
-                sum(row["sessions"] for row in rest),
-                sum(row["total"] for row in rest),
-                item["total"],
-            )
-        )
-    return rows
+    if len(ordered) > SUMMARY_BRANCHES:
+        parts.append(f"+{len(ordered) - SUMMARY_BRANCHES}")
+    return " · ".join(parts)
 
 
 NO_BRANCH_KEY = "-"
@@ -103,22 +97,4 @@ def _filter_rest(rest: list[tuple[str | None, int]], lang: str) -> dict[str, Any
         "branch_labels": [_branch_label(branch, lang) for branch, _ in rest],
         "label": tn("branches.filter.rest", len(rest), lang),
         "sessions": str(sum(sessions for _, sessions in rest)),
-    }
-
-
-def describe_branches(breakdown: list[dict[str, Any]], lang: str) -> dict[str, Any]:
-    projects = [
-        {
-            "project": project_display_label(item["group"], lang=lang),
-            "rows": _project_rows(item, lang),
-        }
-        for item in breakdown[:PROJECTS_SHOWN]
-    ]
-    return {
-        "empty": not projects,
-        "lang": lang,
-        "heading": t("branches.heading", lang),
-        "note": t("branches.note", lang),
-        "columns": {key: t(f"branches.col.{key}", lang) for key in COLUMN_KEYS},
-        "projects": projects,
     }

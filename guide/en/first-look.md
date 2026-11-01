@@ -43,7 +43,7 @@ That project, token type or model is highlighted across the whole chart.
 
 ## Step 5 - open the other tabs
 
-The **Sessions** tab has **tokens per branch** and a **session table**, grouped by project.
+The **Sessions** tab has a **session table**, grouped by project. A project that used more than one branch shows how its tokens split on its own line.
 
 Under the quota line, two lines sum up the **weekly-limit meter** and where your **cache creation** comes from. A closed block of details beside them holds the full cards.
 

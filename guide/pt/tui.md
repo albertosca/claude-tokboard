@@ -38,8 +38,6 @@ Aperte <kbd>t</kbd> para passar pelos quatro recortes de um dia:
 
 A tabela de sessões tem um painel de detalhe.
 
-No terminal o painel de tokens por branch fica na aba **Panorama**, com a linha de cota e o gráfico; a página do navegador o põe em **Sessões**.
-
 Na aba **Panorama**, duas linhas resumem o medidor do limite semanal e as causas do cache creation, e um bloco fechado de detalhes embaixo delas tem os cartões completos. Vá até ele e aperte <kbd>Enter</kbd> para abrir; as tabelas lá dentro também começam fechadas.
 
 ## Terminais pequenos

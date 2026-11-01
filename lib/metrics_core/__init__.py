@@ -59,11 +59,10 @@ from .branches import (
     BRANCH_OTHERS_KEY,
     assign_branch_slots,
     branch_bucket,
-    compute_branch_breakdown,
     compute_branch_series,
     sum_tokens_by_branch,
 )
-from .branches_view import branch_series_label, describe_branch_filter, describe_branches
+from .branches_view import branch_series_label, describe_branch_filter, describe_branch_summary
 from .cache_causes import compute_cache_causes
 from .cache_causes_view import describe_cache_causes
 from .calls_store import (
@@ -216,7 +215,6 @@ __all__ = [
     "cold_summary_source",
     "color_group_key",
     "compress_to_label",
-    "compute_branch_breakdown",
     "compute_branch_series",
     "compute_cache_causes",
     "compute_model_totals",
@@ -234,7 +232,7 @@ __all__ = [
     "dedupe_subagents",
     "describe_backfill_state",
     "describe_branch_filter",
-    "describe_branches",
+    "describe_branch_summary",
     "describe_cache_causes",
     "describe_hypotheses_summary",
     "describe_weekly_meter",

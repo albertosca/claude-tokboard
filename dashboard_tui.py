@@ -344,9 +344,6 @@ def apply_period(
     period_records = metrics_core_module.filter_sessions_by_window(base["records"], window)
     return {
         "records": period_records,
-        "branches": metrics_core_module.describe_branches(
-            metrics_core_module.compute_branch_breakdown(period_records), base["lang"]
-        ),
         "chart_records": metrics_core_module.filter_sessions_by_window(
             base["chart_records"], window
         ),
@@ -444,9 +441,17 @@ def group_label(group_state: dict[str, Any], metrics_core_module: ModuleType, *,
     )
     # Escaped: a bracketed branch name is a Rich markup tag to the label.
     narrowed = f" {escape('[' + group_state['branch'] + ']')}" if group_state["branch"] else ""
+    # The split is of the whole group; once narrowed to one branch it would
+    # contradict the line's own counts, so the bracket takes its place.
+    branch_summary = (
+        ""
+        if group_state["branch"]
+        else metrics_core_module.describe_branch_summary(group_state["records"], lang)
+    )
+    split = f" · {escape(branch_summary)}" if branch_summary else ""
     return (
         f"{group_state['label']} ({session_count} · "
-        f"{metrics_core_module.format_tokens(total_tokens)} tokens){narrowed}"
+        f"{metrics_core_module.format_tokens(total_tokens)} tokens){split}{narrowed}"
     )
 
 
@@ -756,40 +761,6 @@ def cause_sections(
     return [
         (causes["titles"][key], Text("\n".join(lines))) for key, lines in tables.items() if lines
     ]
-
-
-class BranchesPanel(Static):
-    """Tokens by branch inside each project: the same view dict the HTML page
-    renders (metrics_core.describe_branches), so the two cannot disagree."""
-
-    def __init__(self, view: dict[str, Any], **keyword_arguments: Any) -> None:
-        super().__init__(**keyword_arguments)
-        self.view = view
-
-    def render(self) -> RenderResult:
-        view = self.view
-        columns = view["columns"]
-        lines = [Text(view["heading"], style="bold"), Text(view["note"], style="dim")]
-        for project in view["projects"]:
-            rows = project["rows"]
-            branch_width = max([len(columns["branch"])] + [len(row["branch"]) for row in rows])
-            lines.append(Text(""))
-            lines.append(Text(project["project"], style="bold"))
-            lines.append(
-                Text(
-                    f"{columns['branch']:<{branch_width}} {columns['sessions']:>8} "
-                    f"{columns['tokens']:>8} {columns['share']:>8}",
-                    style="dim",
-                )
-            )
-            for row in rows:
-                lines.append(
-                    Text(
-                        f"{row['branch']:<{branch_width}} {row['sessions']:>8} "
-                        f"{row['tokens']:>8} {row['share']:>8}"
-                    )
-                )
-        return Text("\n").join(lines)
 
 
 class QuotaSummary(Static):
@@ -1886,8 +1857,6 @@ class MetricsTUIApp(App[None]):
                 # queued behind the recompose could leave one frame with all
                 # three legends showing (2026-09-23 review).
                 shown = legend_visibility(self.chart_mode)
-                if self.data.get("branches") and not self.data["branches"]["empty"]:
-                    yield BranchesPanel(self.data["branches"])
                 meter = self.data.get("weekly_meter")
                 quota = QuotaSummary(totals, self.metrics_core_module, lang=lang)
                 quota.display = shown["quota"]

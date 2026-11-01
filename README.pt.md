@@ -12,7 +12,7 @@ Uma contagem crua de tokens mistura leitura de cache, que é barata, com os toke
 
 Estourou o limite semanal e não sabe por quê? O tokboard também divide o seu cache creation por causa - partida a frio, reescrita após uma pausa, crescimento incremental - e acompanha a semana atual contra a faixa em que as semanas passadas bateram no limite.
 
-![O dashboard HTML: gráfico de barras empilhadas por projeto, com abas por tipo de token, modelo e branch, acima do medidor do limite semanal, das causas de criação de cache, dos tokens por branch e de uma tabela de sessões agrupada por projeto](assets/dashboard-pt.png)
+![O dashboard HTML: gráfico de barras empilhadas por projeto, com abas por tipo de token, modelo e branch, acima da linha de cota com o resumo do limite semanal e das causas de criação de cache, e de uma tabela de sessões agrupada por projeto, cuja linha mostra a divisão por branch](assets/dashboard-pt.png)
 
 <sub>O dashboard HTML. Todas as imagens são geradas a partir dos dados sintéticos de teste do próprio repositório - nenhuma sessão real.</sub>
 

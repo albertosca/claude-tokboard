@@ -10,10 +10,9 @@ Two tabs: **Sessions** and **Overview**.
 
 **Sessions** holds, from top to bottom:
 
-1. **Tokens per branch**: for projects that used 2+ branches.
-2. **The quota line** with the token-type chips, and under them **two summary lines**: what the weekly-limit meter and the cache-creation causes found, each in one sentence.
-3. **A closed block of details** with the two full cards. Open it when a summary line makes you want the numbers.
-4. **The session table**: every session, grouped by project.
+1. **The quota line** with the token-type chips, and under them **two summary lines**: what the weekly-limit meter and the cache-creation causes found, each in one sentence.
+2. **A closed block of details** with the two full cards. Open it when a summary line makes you want the numbers.
+3. **The session table**: every session, grouped by project. A project that used 2+ branches says so on its own line, as `main 73% · feat/x 16% · +2`: its two biggest branches by tokens, and how many more there are.
 
 **Overview** holds:
 
@@ -50,7 +49,7 @@ You can filter by period.
 
 ## Branches
 
-If a project used more than one git branch, a panel shows what each branch cost.
+If a project used more than one git branch, its line in the session table shows what the two biggest branches cost, as a share of the project's tokens.
 
 The session list can narrow to a single branch.
 

@@ -43,7 +43,7 @@ Aquele projeto, tipo de token ou modelo fica destacado no gráfico inteiro.
 
 ## Passo 5 - abra as outras abas
 
-A aba **Sessões** tem os **tokens por branch** e uma **tabela de sessões**, agrupada por projeto.
+A aba **Sessões** tem uma **tabela de sessões**, agrupada por projeto. Um projeto que usou mais de uma branch mostra, na própria linha, como os tokens se dividem.
 
 Embaixo da linha de cota, duas linhas resumem o **medidor do limite semanal** e de onde vem o seu **cache creation**. Um bloco fechado de detalhes ao lado tem os cartões completos.
 

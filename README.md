@@ -12,7 +12,7 @@ A raw token count mixes cheap cache reads with the tokens that count against rat
 
 Ran out of weekly limit and can't tell why? tokboard also splits your cache creation by cause - cold starts, rewrites after an idle pause, incremental growth - and tracks the current week against the range where past weeks hit the limit.
 
-![The HTML dashboard: a stacked trend chart by project, with tabs for token type, model and branch, above the weekly-limit meter, the cache-creation causes, tokens per branch and a session table grouped by project](assets/dashboard-en.png)
+![The HTML dashboard: a stacked trend chart by project, with tabs for token type, model and branch, above the quota line with the weekly-limit and cache-creation summaries, and a session table grouped by project whose line shows its branch split](assets/dashboard-en.png)
 
 <sub>The HTML dashboard. All screenshots are rendered from the repo's synthetic test data - no real sessions.</sub>
 

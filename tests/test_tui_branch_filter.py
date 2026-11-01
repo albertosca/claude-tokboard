@@ -15,7 +15,6 @@ sys.path.insert(0, str(REPO_ROOT / "lib"))
 sys.path.insert(0, str(REPO_ROOT))
 
 import metrics_core as mr  # noqa: E402
-from test_tui_branches import _session  # noqa: E402
 from test_tui_state import seeded_tui_home  # noqa: E402
 
 import dashboard_tui as tui  # noqa: E402
@@ -30,6 +29,20 @@ def _records() -> list[dict[str, Any]]:
     records = [_session(PROJECT, branch, WHEN) | {"session_id": name} for name, branch in named]
     records.append(_session(QUIET_PROJECT, "main", WHEN) | {"session_id": "quiet-one"})
     return records
+
+
+def _session(project: str, branch: str, start: str) -> dict[str, Any]:
+    return {
+        "session_id": f"{branch}-{start}",
+        "project_path": project,
+        "git_branch": branch,
+        "timestamp_start": start,
+        "timestamp_end": start,
+        "input_tokens": 10,
+        "output_tokens": 0,
+        "cache_read_tokens": 0,
+        "cache_creation_tokens": 0,
+    }
 
 
 def _drive(
@@ -89,7 +102,7 @@ def test_the_group_label_names_the_branch_and_counts_what_is_shown(
     assert "2 sessions" in outcome["labels"][0]
     assert "feature/example" in outcome["labels"][1]
     assert "3 sessions" in outcome["labels"][2]
-    assert "feature/example" not in outcome["labels"][2]
+    assert not outcome["labels"][2].endswith("]")
 
 
 def test_a_group_with_one_branch_is_left_alone_and_says_so(

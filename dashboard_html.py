@@ -272,9 +272,11 @@ def render_group_header(
         session_count = metrics_core_module.tn(
             "sessions", len(scoped), lang, n=metrics_core_module.format_tokens(len(scoped))
         )
+        branch_summary = metrics_core_module.describe_branch_summary(scoped, lang)
+        branch_text = f" · {html.escape(branch_summary)}" if branch_summary else ""
         counts.append(
             f'<span class="group-count period-block" data-period="{period.id}"{hidden_attribute}>'
-            f"({session_count} · {total_tokens} tokens)</span>"
+            f"({session_count} · {total_tokens} tokens){branch_text}</span>"
         )
     return (
         f'<div class="group-header collapsed {group["class"]}" '
@@ -1559,31 +1561,6 @@ def render_cache_causes(view: dict[str, Any]) -> str:
     )
 
 
-def render_branches(view: dict[str, Any], period_id: str) -> str:
-    """Tokens by branch inside each project. `view` is
-    metrics_core.describe_branches's dict, which the TUI renders too; the
-    heading id carries the period because the page holds one copy per period."""
-    if view["empty"]:
-        return ""
-    lang = view["lang"]
-    columns = [(label, key) for key, label in view["columns"].items()]
-    tables = "".join(
-        _render_table(
-            str(metrics_core_module.t("branches.caption", lang, project=project["project"])),
-            columns,
-            project["rows"],
-        )
-        for project in view["projects"]
-    )
-    heading_id = f"branches-heading-{period_id}"
-    return (
-        f'<section class="weekly-meter branches" aria-labelledby="{heading_id}">'
-        f'<h2 id="{heading_id}">{html.escape(view["heading"])}</h2>'
-        f'<p class="meter-caveat">{html.escape(view["note"])}</p>'
-        f"{tables}</section>"
-    )
-
-
 def render_html(
     records: list[dict[str, Any]],
     subagents_by_session: dict[Any, list[dict[str, Any]]],
@@ -1738,7 +1715,6 @@ def render_html(
     # the loudest possible way for two surfaces to disagree. It is small, so
     # one pre-rendered copy per period is the cheapest fix (2026-08-13).
     legend_blocks = []
-    branch_blocks = []
     for period in metrics_core_module.PERIODS:
         window = period_windows[period.id]
         scoped_chart = metrics_core_module.filter_sessions_by_window(chart_records, window)
@@ -1777,20 +1753,6 @@ def render_html(
             )
             + "</div>"
         )
-        branches_html = render_branches(
-            metrics_core_module.describe_branches(
-                metrics_core_module.compute_branch_breakdown(
-                    metrics_core_module.filter_sessions_by_window(records, window=window)
-                ),
-                lang,
-            ),
-            period.id,
-        )
-        if branches_html:
-            branch_blocks.append(
-                f'<div class="period-block" data-period="{period.id}"{hidden_attribute}>'
-                f"{branches_html}</div>"
-            )
         legend_blocks.append(
             f'<div class="period-block" data-period="{period.id}"{hidden_attribute}>'
             + render_composition_legend(
@@ -1832,7 +1794,6 @@ def render_html(
     sessions_tab_html = (
         '<div class="tab-pane active" id="tab-sessions" role="tabpanel" '
         'aria-labelledby="tab-btn-sessions">'
-        f"{''.join(branch_blocks)}"
         '<div class="main-row">'
         f'<div class="session-list">{legend_blocks_html}{hypotheses_details_html}'
         f"{render_session_header(has_tmux_data, lang=lang)}{''.join(rows_html)}</div>"

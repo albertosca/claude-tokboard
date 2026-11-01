@@ -36,9 +36,7 @@ Press <kbd>t</kbd> to cycle through the four slicings of a day:
 
 ## Sessions
 
-The session table has a detail panel.
-
-In the terminal the tokens-per-branch panel sits on the **Overview** tab, with the quota line and the chart; the browser page puts it on **Sessions**.
+The session table has a detail panel. A project that used more than one branch shows how its tokens split on its own line, and <kbd>b</kbd> narrows the group to one branch.
 
 On the **Overview** tab, two lines sum up the weekly-limit meter and the cache-creation causes, and a closed block of details under them holds the full cards. Move to it and press <kbd>Enter</kbd> to open it; the tables inside start closed too.
 

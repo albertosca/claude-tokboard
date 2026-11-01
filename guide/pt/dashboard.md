@@ -10,10 +10,9 @@ Duas abas: **Sessões** e **Panorama**.
 
 **Sessões** tem, de cima para baixo:
 
-1. **Tokens por branch**: para projetos que usaram 2 ou mais branches.
-2. **A linha de cota** com os chips de tipo de token e, embaixo, **duas linhas de resumo**: o que o medidor do limite semanal e as causas do cache creation encontraram, cada um numa frase.
-3. **Um bloco fechado de detalhes** com os dois cartões completos. Abra quando uma linha de resumo der vontade de ver os números.
-4. **A tabela de sessões**: todas as sessões, agrupadas por projeto.
+1. **A linha de cota** com os chips de tipo de token e, embaixo, **duas linhas de resumo**: o que o medidor do limite semanal e as causas do cache creation encontraram, cada um numa frase.
+2. **Um bloco fechado de detalhes** com os dois cartões completos. Abra quando uma linha de resumo der vontade de ver os números.
+3. **A tabela de sessões**: todas as sessões, agrupadas por projeto. Um projeto que usou 2 ou mais branches diz isso na própria linha, como `main 73% · feat/x 16% · +2`: as duas maiores por tokens e quantas mais existem.
 
 **Panorama** tem:
 
@@ -50,7 +49,7 @@ Dá para filtrar por período.
 
 ## Branches
 
-Se um projeto usou mais de uma branch do git, um painel mostra quanto cada uma custou.
+Se um projeto usou mais de uma branch do git, a linha dele na tabela de sessões mostra quanto custaram as duas maiores, como parcela dos tokens do projeto.
 
 A lista de sessões pode se restringir a uma única branch.
 
